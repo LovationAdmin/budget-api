@@ -4,7 +4,6 @@ import (
 	"log"
 	"net/http"
 
-	"budget-api/models"
 	"budget-api/services"
 
 	"github.com/gin-gonic/gin"
