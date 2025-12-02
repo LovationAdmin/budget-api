@@ -4,8 +4,8 @@ import (
 	"log"
 	"net/http"
 
-	"budget-api/internal/models"
-	"budget-api/internal/services"
+	"budget-api/models"
+	"budget-api/services"
 
 	"github.com/gin-gonic/gin"
 )

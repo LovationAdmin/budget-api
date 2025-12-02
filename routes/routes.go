@@ -1,7 +1,7 @@
 package routes
 
 import (
-	"budget-api/internal/handlers"
+	"budget-api/handlers"
 
 	"github.com/gin-gonic/gin"
 )

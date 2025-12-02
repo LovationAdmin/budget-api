@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"budget-api/internal/models"
+	"budget-api/models"
 
 	"github.com/google/uuid"
 )
