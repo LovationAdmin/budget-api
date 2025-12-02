@@ -1,35 +1,71 @@
 package routes
 
 import (
+	"database/sql"
+
 	"budget-api/handlers"
+	"budget-api/services"
 
 	"github.com/gin-gonic/gin"
 )
 
-func SetupRoutes(r *gin.Engine, h *handlers.Handler, authMiddleware gin.HandlerFunc) {
-	api := r.Group("/api/v1")
+// SetupAuthRoutes sets up public authentication routes.
+// This resolves the h.Signup and h.Login errors by using handlers.AuthHandler.
+func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB) {
+	// Use the dedicated AuthHandler
+	authHandler := &handlers.AuthHandler{DB: db}
 
-	// Auth routes (public)
-	api.POST("/auth/signup", h.Signup)
-	api.POST("/auth/login", h.Login)
+	rg.POST("/auth/signup", authHandler.Signup)
+	rg.POST("/auth/login", authHandler.Login)
+}
 
-	// Protected routes
-	protected := api.Group("")
-	protected.Use(authMiddleware)
-	{
-		// Budget routes
-		protected.GET("/budgets", h.GetBudgets)
-		protected.POST("/budgets", h.CreateBudget)
-		protected.GET("/budgets/:id", h.GetBudget)
-		protected.PUT("/budgets/:id", h.UpdateBudget)
-		protected.DELETE("/budgets/:id", h.DeleteBudget) // Vérifier que cette route existe
+// SetupBudgetRoutes sets up protected budget and related routes.
+// It initializes the main Handler which uses BudgetService and EmailService.
+func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB) {
+	// Initialize required services (assuming services.New* exist)
+	budgetService := services.NewBudgetService(db)
+	emailService := services.NewEmailService()
+	
+	h := handlers.NewHandler(budgetService, emailService)
 
-		// Budget data routes
-		protected.GET("/budgets/:id/data", h.GetBudgetData)
-		protected.PUT("/budgets/:id/data", h.UpdateBudgetData)
+	// Budget routes
+	rg.GET("/budgets", h.GetBudgets)
+	rg.POST("/budgets", h.CreateBudget)
+	rg.GET("/budgets/:id", h.GetBudget)
+	rg.PUT("/budgets/:id", h.UpdateBudget)
+	rg.DELETE("/budgets/:id", h.DeleteBudget)
 
-		// Invitation routes
-		protected.POST("/budgets/:id/invite", h.InviteMember)
-		protected.POST("/invitations/accept", h.AcceptInvitation)
-	}
+	// Budget data routes
+	rg.GET("/budgets/:id/data", h.GetBudgetData)
+	rg.PUT("/budgets/:id/data", h.UpdateBudgetData)
+
+	// Invitation routes handled by the Budget Handler (InviteMember, AcceptInvitation)
+	rg.POST("/budgets/:id/invite", h.InviteMember)
+	rg.POST("/invitations/accept", h.AcceptInvitation)
+}
+
+// SetupUserRoutes sets up protected user routes.
+func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB) {
+	// Use the dedicated UserHandler
+	userHandler := &handlers.UserHandler{DB: db}
+	
+	rg.GET("/user/profile", userHandler.GetProfile)
+	rg.PUT("/user/profile", userHandler.UpdateProfile)
+	rg.POST("/user/password", userHandler.ChangePassword) 
+	rg.POST("/user/2fa/setup", userHandler.SetupTOTP)
+	rg.POST("/user/2fa/verify", userHandler.VerifyTOTP)
+	rg.POST("/user/2fa/disable", userHandler.DisableTOTP)
+	rg.DELETE("/user/account", userHandler.DeleteAccount)
+}
+
+// SetupInvitationRoutes sets up the remaining invitation/member management routes.
+// Note: This complements SetupBudgetRoutes by adding management routes 
+// defined in handlers/invitation.go (e.g., GetInvitations, RemoveMember).
+func SetupInvitationRoutes(rg *gin.RouterGroup, db *sql.DB) {
+	// Use the dedicated InvitationHandler
+	invitationHandler := &handlers.InvitationHandler{DB: db}
+	
+	rg.GET("/budgets/:id/invitations", invitationHandler.GetInvitations)
+	rg.DELETE("/budgets/:id/invitations/:invitation_id", invitationHandler.CancelInvitation)
+	rg.DELETE("/budgets/:id/members/:member_id", invitationHandler.RemoveMember)
 }
