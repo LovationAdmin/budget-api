@@ -34,15 +34,40 @@ func main() {
 	// Initialize Gin router
 	router := gin.Default()
 
-	// CORS configuration
+	// CORS configuration - MULTIPLE ORIGINS SUPPORT
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3000" // Fallback pour dev local
+	}
+
+	// Support multiple origins (custom domain + Vercel URL)
+	allowedOrigins := []string{
+		frontendURL,
+		"https://budgetfamille.com",
+		"https://www.budgetfamille.com",
+		"https://budget-ui-two.vercel.app", // Keep for testing
+	}
+
+	log.Printf("🌐 CORS: Allowing origins:")
+	for _, origin := range allowedOrigins {
+		log.Printf("   - %s", origin)
+	}
+
 	corsConfig := cors.Config{
-		AllowOrigins:     []string{os.Getenv("FRONTEND_URL")},
+		AllowOrigins:     allowedOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
+		MaxAge:           86400, // 24 hours
 	}
 	router.Use(cors.New(corsConfig))
+
+	// Add logging middleware to debug requests
+	router.Use(func(c *gin.Context) {
+		log.Printf("📥 %s %s from %s", c.Request.Method, c.Request.URL.Path, c.ClientIP())
+		c.Next()
+	})
 
 	// Rate limiting middleware
 	router.Use(middleware.RateLimiter())
@@ -68,6 +93,7 @@ func main() {
 		c.JSON(200, gin.H{
 			"status": "ok",
 			"service": "budget-api",
+			"frontend_url": frontendURL, // Pour debug
 		})
 	})
 
@@ -78,6 +104,7 @@ func main() {
 	}
 
 	log.Printf("🚀 Server starting on port %s", port)
+	log.Printf("🌐 Frontend URL: %s", frontendURL)
 	if err := router.Run(":" + port); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}

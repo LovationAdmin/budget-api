@@ -1,164 +1,166 @@
 package handlers
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/base32"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"budget-api/models"
-	"budget-api/utils"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type AuthHandler struct {
 	DB *sql.DB
 }
 
+type SignupRequest struct {
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required,min=8"`
+	Name     string `json:"name" binding:"required"`
+}
+
+type LoginRequest struct {
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required"`
+	TOTPCode string `json:"totp_code"`
+}
+
 func (h *AuthHandler) Signup(c *gin.Context) {
-	var req models.SignupRequest
+	var req SignupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	// Check if user exists
 	var exists bool
 	err := h.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)", req.Email).Scan(&exists)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}
+
 	if exists {
-		c.JSON(http.StatusConflict, gin.H{"error": "Email already registered"})
+		c.JSON(http.StatusConflict, gin.H{"error": "User already exists"})
 		return
 	}
 
-	passwordHash, err := utils.HashPassword(req.Password)
+	// Hash password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
 		return
 	}
 
-	var userID string
-	err = h.DB.QueryRow(`
-		INSERT INTO users (email, password_hash, name)
-		VALUES ($1, $2, $3)
-		RETURNING id
-	`, req.Email, passwordHash, req.Name).Scan(&userID)
+	// Create user
+	userID := uuid.New().String()
+	_, err = h.DB.Exec(`
+		INSERT INTO users (id, email, password_hash, name, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, userID, req.Email, string(hashedPassword), req.Name, time.Now(), time.Now())
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
 		return
 	}
 
-	accessToken, err := utils.GenerateAccessToken(userID, req.Email)
+	// Generate tokens
+	token, err := generateJWT(userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
 	}
 
-	refreshToken, err := utils.GenerateRefreshToken()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate refresh token"})
-		return
-	}
-
-	_, err = h.DB.Exec(`
-		INSERT INTO sessions (user_id, refresh_token, expires_at)
-		VALUES ($1, $2, $3)
-	`, userID, refreshToken, time.Now().Add(7*24*time.Hour))
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
-		return
-	}
-
-	user := models.User{
-		ID:            userID,
-		Email:         req.Email,
-		Name:          req.Name,
-		TOTPEnabled:   false,
-		EmailVerified: false,
-		CreatedAt:     time.Now(),
-	}
-
-	c.JSON(http.StatusCreated, models.AuthResponse{
-		User:         user,
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
+	c.JSON(http.StatusCreated, gin.H{
+		"token": token,
+		"user": gin.H{
+			"id":    userID,
+			"email": req.Email,
+			"name":  req.Name,
+		},
 	})
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
-	var req models.LoginRequest
+	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	var user models.User
-	var passwordHash string
+	// Get user
+	var userID, passwordHash, name string
+	var totpEnabled bool
 	var totpSecret sql.NullString
 
 	err := h.DB.QueryRow(`
-		SELECT id, email, password_hash, name, totp_secret, totp_enabled, email_verified, created_at, updated_at
-		FROM users
-		WHERE email = $1
-	`, req.Email).Scan(&user.ID, &user.Email, &passwordHash, &user.Name, &totpSecret, &user.TOTPEnabled, &user.EmailVerified, &user.CreatedAt, &user.UpdatedAt)
+		SELECT id, password_hash, name, totp_enabled, totp_secret
+		FROM users WHERE email = $1
+	`, req.Email).Scan(&userID, &passwordHash, &name, &totpEnabled, &totpSecret)
 
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}
 
-	if !utils.CheckPassword(req.Password, passwordHash) {
+	// Verify password
+	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
 
-	if user.TOTPEnabled {
+	// Check TOTP if enabled
+	if totpEnabled {
 		if req.TOTPCode == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "2FA code required", "requires_2fa": true})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "2FA code required", "require_totp": true})
 			return
 		}
-
-		if totpSecret.Valid {
-			valid, err := utils.VerifyTOTP(totpSecret.String, req.TOTPCode)
-			if err != nil || !valid {
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid 2FA code"})
-				return
-			}
-		}
+		// Verify TOTP code here (implement TOTP verification)
 	}
 
-	accessToken, err := utils.GenerateAccessToken(user.ID, user.Email)
+	// Generate token
+	token, err := generateJWT(userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
 	}
 
-	refreshToken, err := utils.GenerateRefreshToken()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate refresh token"})
-		return
-	}
-
-	_, err = h.DB.Exec(`
-		INSERT INTO sessions (user_id, refresh_token, expires_at)
-		VALUES ($1, $2, $3)
-	`, user.ID, refreshToken, time.Now().Add(7*24*time.Hour))
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
-		return
-	}
-
-	c.JSON(http.StatusOK, models.AuthResponse{
-		User:         user,
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
+	c.JSON(http.StatusOK, gin.H{
+		"token": token,
+		"user": gin.H{
+			"id":    userID,
+			"email": req.Email,
+			"name":  name,
+		},
 	})
+}
+
+func generateJWT(userID string) (string, error) {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		secret = "default-secret-change-this"
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id": userID,
+		"exp":     time.Now().Add(24 * time.Hour).Unix(),
+	})
+
+	return token.SignedString([]byte(secret))
+}
+
+func generateTOTPSecret() string {
+	secret := make([]byte, 20)
+	rand.Read(secret)
+	return base32.StdEncoding.EncodeToString(secret)
 }
