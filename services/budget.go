@@ -151,7 +151,7 @@ func (s *BudgetService) Update(ctx context.Context, id, name string) error {
 	return err
 }
 
-// Delete deletes a budget (NOUVEAU)
+// Delete deletes a budget
 func (s *BudgetService) Delete(ctx context.Context, budgetID string) error {
 	// Delete members first (foreign key constraint)
 	_, err := s.db.ExecContext(ctx, "DELETE FROM budget_members WHERE budget_id = $1", budgetID)
@@ -165,17 +165,27 @@ func (s *BudgetService) Delete(ctx context.Context, budgetID string) error {
 		return err
 	}
 
+	// Delete budget data
+	_, err = s.db.ExecContext(ctx, "DELETE FROM budget_data WHERE budget_id = $1", budgetID)
+	if err != nil {
+		return err
+	}
+
 	// Delete budget
 	_, err = s.db.ExecContext(ctx, "DELETE FROM budgets WHERE id = $1", budgetID)
 	return err
 }
 
-// GetData gets the data for a budget
+// GetData gets the data for a budget - FIXED TO USE budget_data TABLE
 func (s *BudgetService) GetData(ctx context.Context, budgetID string) (interface{}, error) {
-	query := `SELECT data FROM budgets WHERE id = $1`
+	query := `SELECT data FROM budget_data WHERE budget_id = $1 ORDER BY updated_at DESC LIMIT 1`
 
 	var dataJSON []byte
 	err := s.db.QueryRowContext(ctx, query, budgetID).Scan(&dataJSON)
+	if err == sql.ErrNoRows {
+		// No data yet, return empty object
+		return map[string]interface{}{}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -192,20 +202,39 @@ func (s *BudgetService) GetData(ctx context.Context, budgetID string) (interface
 	return data, nil
 }
 
-// UpdateData updates the data for a budget
+// UpdateData updates the data for a budget - FIXED TO USE budget_data TABLE
 func (s *BudgetService) UpdateData(ctx context.Context, budgetID string, data interface{}) error {
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
 
-	query := `
-		UPDATE budgets
-		SET data = $1, updated_at = $2
-		WHERE id = $3
-	`
+	// Check if budget_data exists for this budget
+	var existingID string
+	checkQuery := `SELECT id FROM budget_data WHERE budget_id = $1 LIMIT 1`
+	err = s.db.QueryRowContext(ctx, checkQuery, budgetID).Scan(&existingID)
 
-	_, err = s.db.ExecContext(ctx, query, dataJSON, time.Now(), budgetID)
+	if err == sql.ErrNoRows {
+		// Insert new record
+		insertQuery := `
+			INSERT INTO budget_data (id, budget_id, data, version, updated_at)
+			VALUES ($1, $2, $3, 1, $4)
+		`
+		_, err = s.db.ExecContext(ctx, insertQuery, uuid.New().String(), budgetID, dataJSON, time.Now())
+		return err
+	}
+
+	if err != nil {
+		return err
+	}
+
+	// Update existing record
+	updateQuery := `
+		UPDATE budget_data
+		SET data = $1, version = version + 1, updated_at = $2
+		WHERE budget_id = $3
+	`
+	_, err = s.db.ExecContext(ctx, updateQuery, dataJSON, time.Now(), budgetID)
 	return err
 }
 
@@ -276,7 +305,7 @@ func (s *BudgetService) CreateInvitation(ctx context.Context, budgetID, email, i
 	return invitation, nil
 }
 
-// GetPendingInvitation gets a pending invitation (NOUVEAU)
+// GetPendingInvitation gets a pending invitation
 func (s *BudgetService) GetPendingInvitation(ctx context.Context, budgetID, email string) (*models.Invitation, error) {
 	query := `
 		SELECT id, budget_id, email, token, expires_at, created_at
@@ -306,7 +335,7 @@ func (s *BudgetService) GetPendingInvitation(ctx context.Context, budgetID, emai
 	return &invitation, nil
 }
 
-// DeleteInvitation deletes an invitation (NOUVEAU)
+// DeleteInvitation deletes an invitation
 func (s *BudgetService) DeleteInvitation(ctx context.Context, invitationID string) error {
 	query := `DELETE FROM invitations WHERE id = $1`
 	_, err := s.db.ExecContext(ctx, query, invitationID)
