@@ -145,17 +145,19 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	})
 }
 
+// handlers/auth.go (dans la fonction generateJWT)
 func generateJWT(userID string) (string, error) {
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		secret = "default-secret-change-this"
+		if os.Getenv("ENVIRONMENT") == "production" || os.Getenv("GIN_MODE") == "release" {
+			return "", fmt.Errorf("JWT_SECRET is required in production")
+		}
+		secret = "dev-only-insecure-secret"
 	}
-
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user_id": userID,
 		"exp":     time.Now().Add(24 * time.Hour).Unix(),
 	})
-
 	return token.SignedString([]byte(secret))
 }
 
