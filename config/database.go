@@ -63,6 +63,7 @@ func RunMigrations(db *sql.DB) error {
 			UNIQUE(budget_id, user_id)
 		)`,
 		
+		// Updated definition for new installs
 		`CREATE TABLE IF NOT EXISTS invitations (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			budget_id UUID REFERENCES budgets(id) ON DELETE CASCADE,
@@ -71,7 +72,8 @@ func RunMigrations(db *sql.DB) error {
 			token VARCHAR(255) UNIQUE NOT NULL,
 			status VARCHAR(50) DEFAULT 'pending',
 			expires_at TIMESTAMP NOT NULL,
-			created_at TIMESTAMP DEFAULT NOW()
+			created_at TIMESTAMP DEFAULT NOW(),
+			updated_at TIMESTAMP DEFAULT NOW()
 		)`,
 		
 		`CREATE TABLE IF NOT EXISTS budget_data (
@@ -107,6 +109,10 @@ func RunMigrations(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_invitations_token ON invitations(token)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_logs_budget_id ON audit_logs(budget_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)`,
+
+		// --- EMERGENCY FIX ---
+		// This line will add the missing column to your existing database
+		`ALTER TABLE invitations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`,
 	}
 
 	for _, migration := range migrations {
