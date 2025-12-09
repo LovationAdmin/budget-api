@@ -29,29 +29,28 @@ func (s *BudgetService) Create(ctx context.Context, name, ownerID string) (*mode
 		UpdatedAt: time.Now(),
 	}
 
-	query := `
-		INSERT INTO budgets (id, name, owner_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5)
-	`
+	// Use the transaction helper
+	err := utils.WithTransaction(s.db, func(tx *sql.Tx) error {
+		// 1. Insert Budget
+		query := `
+			INSERT INTO budgets (id, name, owner_id, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5)
+		`
+		if _, err := tx.ExecContext(ctx, query, budget.ID, budget.Name, budget.OwnerID, budget.CreatedAt, budget.UpdatedAt); err != nil {
+			return err
+		}
 
-	_, err := s.db.ExecContext(ctx, query,
-		budget.ID, budget.Name, budget.OwnerID,
-		budget.CreatedAt, budget.UpdatedAt,
-	)
+		// 2. Add Owner as Member
+		memberQuery := `
+			INSERT INTO budget_members (id, budget_id, user_id, role, joined_at)
+			VALUES ($1, $2, $3, $4, $5)
+		`
+		if _, err := tx.ExecContext(ctx, memberQuery, uuid.New().String(), budget.ID, ownerID, "owner", time.Now()); err != nil {
+			return err
+		}
 
-	if err != nil {
-		return nil, err
-	}
-
-	// Add owner as member
-	memberQuery := `
-		INSERT INTO budget_members (id, budget_id, user_id, role, joined_at)
-		VALUES ($1, $2, $3, $4, $5)
-	`
-
-	_, err = s.db.ExecContext(ctx, memberQuery,
-		uuid.New().String(), budget.ID, ownerID, "owner", time.Now(),
-	)
+		return nil
+	})
 
 	if err != nil {
 		return nil, err
