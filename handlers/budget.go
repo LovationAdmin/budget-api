@@ -201,17 +201,16 @@ func (h *Handler) InviteMember(c *gin.Context) {
 		return
 	}
 
-    // --- NEW CHECK: Is user already a member? ---
-    isMember, err := h.budgetService.IsMemberByEmail(c.Request.Context(), budgetID, req.Email)
-    if err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error checking membership"})
-        return
-    }
-    if isMember {
-        c.JSON(http.StatusConflict, gin.H{"error": "Cet utilisateur est déjà membre du budget"})
-        return
-    }
-    // --------------------------------------------
+	// Check if user is already a member
+	isMember, err := h.budgetService.IsMemberByEmail(c.Request.Context(), budgetID, req.Email)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error checking membership"})
+		return
+	}
+	if isMember {
+		c.JSON(http.StatusConflict, gin.H{"error": "Cet utilisateur est déjà membre du budget"})
+		return
+	}
 
 	// Check if there's an existing pending invitation
 	existingInvitation, _ := h.budgetService.GetPendingInvitation(c.Request.Context(), budgetID, req.Email)
