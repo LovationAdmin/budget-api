@@ -113,6 +113,7 @@ func RunMigrations(db *sql.DB) error {
 		// --- EMERGENCY FIX ---
 		// This line will add the missing column to your existing database
 		`ALTER TABLE invitations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT`,
 	}
 
 	for _, migration := range migrations {

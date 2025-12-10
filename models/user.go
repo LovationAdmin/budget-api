@@ -9,6 +9,7 @@ type User struct {
 	Email         string    `json:"email" binding:"required,email"`
 	PasswordHash  string    `json:"-"`
 	Name          string    `json:"name" binding:"required"`
+	Avatar        string    `json:"avatar"`
 	TOTPSecret    *string   `json:"-"`
 	TOTPEnabled   bool      `json:"totp_enabled"`
 	EmailVerified bool      `json:"email_verified"`

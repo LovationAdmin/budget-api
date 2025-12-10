@@ -24,10 +24,10 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 
 	var user models.User
 	err := h.DB.QueryRow(`
-		SELECT id, email, name, totp_enabled, email_verified, created_at, updated_at
+		SELECT id, email, name, COALESCE(avatar, ''), totp_enabled, email_verified, created_at, updated_at
 		FROM users
 		WHERE id = $1
-	`, userID).Scan(&user.ID, &user.Email, &user.Name, &user.TOTPEnabled,
+	`, userID).Scan(&user.ID, &user.Email, &user.Name, &user.Avatar, &user.TOTPEnabled,
 		&user.EmailVerified, &user.CreatedAt, &user.UpdatedAt)
 
 	if err == sql.ErrNoRows {
