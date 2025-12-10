@@ -70,7 +70,7 @@ func (h *Handler) GetBudget(c *gin.Context) {
 	c.JSON(http.StatusOK, budget)
 }
 
-// UpdateBudget updates a budget
+// UpdateBudget updates a budget name
 func (h *Handler) UpdateBudget(c *gin.Context) {
 	budgetID := c.Param("id")
 	userID := c.GetString("user_id")
@@ -99,7 +99,7 @@ func (h *Handler) UpdateBudget(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Budget updated successfully"})
 }
 
-// DeleteBudget deletes a budget (NOUVEAU)
+// DeleteBudget deletes a budget
 func (h *Handler) DeleteBudget(c *gin.Context) {
 	budgetID := c.Param("id")
 	userID := c.GetString("user_id")
@@ -125,7 +125,7 @@ func (h *Handler) DeleteBudget(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Budget deleted successfully"})
 }
 
-// GetBudgetData returns the data for a budget
+// GetBudgetData returns the JSON data for a budget
 func (h *Handler) GetBudgetData(c *gin.Context) {
 	budgetID := c.Param("id")
 	userID := c.GetString("user_id")
@@ -146,7 +146,7 @@ func (h *Handler) GetBudgetData(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": data})
 }
 
-// UpdateBudgetData updates the data for a budget
+// UpdateBudgetData updates the JSON data for a budget
 func (h *Handler) UpdateBudgetData(c *gin.Context) {
 	budgetID := c.Param("id")
 	userID := c.GetString("user_id")
@@ -175,7 +175,7 @@ func (h *Handler) UpdateBudgetData(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Budget data updated successfully"})
 }
 
-// InviteMember invites a member to a budget (MODIFIÉ)
+// InviteMember invites a member to a budget
 func (h *Handler) InviteMember(c *gin.Context) {
 	var req struct {
 		Email string `json:"email" binding:"required,email"`
@@ -201,10 +201,22 @@ func (h *Handler) InviteMember(c *gin.Context) {
 		return
 	}
 
-	// NOUVEAU : Check if there's an existing pending invitation
+    // --- NEW CHECK: Is user already a member? ---
+    isMember, err := h.budgetService.IsMemberByEmail(c.Request.Context(), budgetID, req.Email)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error checking membership"})
+        return
+    }
+    if isMember {
+        c.JSON(http.StatusConflict, gin.H{"error": "Cet utilisateur est déjà membre du budget"})
+        return
+    }
+    // --------------------------------------------
+
+	// Check if there's an existing pending invitation
 	existingInvitation, _ := h.budgetService.GetPendingInvitation(c.Request.Context(), budgetID, req.Email)
 	if existingInvitation != nil {
-		// Delete the old invitation
+		// Delete the old invitation to create a fresh one
 		if err := h.budgetService.DeleteInvitation(c.Request.Context(), existingInvitation.ID); err != nil {
 			log.Printf("Failed to delete old invitation: %v", err)
 		}
@@ -225,7 +237,7 @@ func (h *Handler) InviteMember(c *gin.Context) {
 
 	if err := h.emailService.SendInvitation(req.Email, inviterName, budget.Name, invitation.Token); err != nil {
 		log.Printf("Failed to send invitation email: %v", err)
-		// Don't fail the request if email fails
+		// Don't fail the request if email fails, but log it
 	}
 
 	c.JSON(http.StatusOK, gin.H{
