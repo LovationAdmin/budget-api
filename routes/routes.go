@@ -10,17 +10,18 @@ import (
 )
 
 // SetupAuthRoutes sets up public authentication routes.
-// This resolves the h.Signup and h.Login errors by using handlers.AuthHandler.
 func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	// Use the dedicated AuthHandler
 	authHandler := &handlers.AuthHandler{DB: db}
 
 	rg.POST("/auth/signup", authHandler.Signup)
 	rg.POST("/auth/login", authHandler.Login)
+	
+	// NEW: Route pour la vérification d'email
+	rg.GET("/auth/verify", authHandler.VerifyEmail)
 }
 
 // SetupBudgetRoutes sets up protected budget and related routes.
-// It initializes the main Handler which uses BudgetService and EmailService.
 func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	// Initialize required services
 	budgetService := services.NewBudgetService(db)
@@ -59,8 +60,6 @@ func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB) {
 }
 
 // SetupInvitationRoutes sets up the remaining invitation/member management routes.
-// Note: This complements SetupBudgetRoutes by adding management routes 
-// defined in handlers/invitation.go (e.g., GetInvitations, RemoveMember).
 func SetupInvitationRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	// Use the dedicated InvitationHandler
 	invitationHandler := &handlers.InvitationHandler{DB: db}
@@ -68,5 +67,4 @@ func SetupInvitationRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.GET("/budgets/:id/invitations", invitationHandler.GetInvitations)
 	rg.DELETE("/budgets/:id/invitations/:invitation_id", invitationHandler.CancelInvitation)
 	rg.DELETE("/budgets/:id/members/:member_id", invitationHandler.RemoveMember)
-	rg.GET("/auth/verify", authHandler.VerifyEmail) // Ajoutez cette ligne
 }
