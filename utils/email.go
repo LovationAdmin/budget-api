@@ -15,6 +15,7 @@ type EmailRequest struct {
 	HTML    string   `json:"html"`
 }
 
+// SendInvitationEmail envoie l'email d'invitation
 func SendInvitationEmail(toEmail, inviterName, budgetName, invitationToken string) error {
 	frontendURL := os.Getenv("FRONTEND_URL")
 	if frontendURL == "" {
@@ -30,22 +31,14 @@ func SendInvitationEmail(toEmail, inviterName, budgetName, invitationToken strin
     <style>
         body { font-family: sans-serif; }
         .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .header { background: linear-gradient(135deg, #667eea 0%%, #764ba2 100%%); color: white; padding: 30px; border-radius: 10px 10px 0 0; }
-        .content { background: #f8f9fa; padding: 30px; }
         .button { display: inline-block; background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; margin: 20px 0; }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>💰 Invitation à un Budget</h1>
-        </div>
-        <div class="content">
-            <p>Bonjour,</p>
-            <p><strong>%s</strong> vous invite à collaborer sur le budget <strong>"%s"</strong>.</p>
-            <a href="%s" class="button">Accepter l'invitation</a>
-            <p style="color: #e74c3c; margin-top: 30px;">⚠️ Ce lien expire dans 7 jours.</p>
-        </div>
+        <h1>Invitation Budget</h1>
+        <p><strong>%s</strong> vous invite sur <strong>"%s"</strong>.</p>
+        <a href="%s" class="button">Accepter l'invitation</a>
     </div>
 </body>
 </html>
@@ -54,6 +47,39 @@ func SendInvitationEmail(toEmail, inviterName, budgetName, invitationToken strin
 	return sendEmail(toEmail, fmt.Sprintf("%s vous invite à collaborer", inviterName), htmlBody)
 }
 
+// SendVerificationEmail envoie l'email de vérification
+func SendVerificationEmail(toEmail, userName, token string) error {
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3000"
+	}
+
+	verifyLink := fmt.Sprintf("%s/verify-email?token=%s", frontendURL, token)
+
+	htmlBody := fmt.Sprintf(`
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: sans-serif; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .button { display: inline-block; background: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Bienvenue %s !</h2>
+        <p>Veuillez vérifier votre email pour activer votre compte.</p>
+        <a href="%s" class="button">Vérifier mon email</a>
+    </div>
+</body>
+</html>
+	`, userName, verifyLink)
+
+	return sendEmail(toEmail, "Vérifiez votre compte", htmlBody)
+}
+
+// sendEmail (fonction privée)
 func sendEmail(to, subject, htmlBody string) error {
 	apiKey := os.Getenv("RESEND_API_KEY")
 	if apiKey == "" {
@@ -74,12 +100,12 @@ func sendEmail(to, subject, htmlBody string) error {
 
 	jsonData, err := json.Marshal(emailReq)
 	if err != nil {
-		return fmt.Errorf("failed to marshal email request: %w", err)
+		return err
 	}
 
 	req, err := http.NewRequest("POST", "https://api.resend.com/emails", bytes.NewBuffer(jsonData))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return err
 	}
 
 	req.Header.Set("Authorization", "Bearer "+apiKey)
@@ -88,12 +114,12 @@ func sendEmail(to, subject, htmlBody string) error {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send email: %w", err)
+		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("email API returned status %d", resp.StatusCode)
+		return fmt.Errorf("email API status: %d", resp.StatusCode)
 	}
 
 	return nil
