@@ -219,10 +219,10 @@ func (s *BudgetService) UpdateData(ctx context.Context, budgetID string, data in
 	return err
 }
 
-// GetMembers gets all members of a budget
+// GetMembers gets all members of a budget (Updated to fetch Avatar)
 func (s *BudgetService) GetMembers(ctx context.Context, budgetID string) ([]models.BudgetMember, error) {
 	query := `
-		SELECT bm.id, bm.user_id, bm.role, bm.joined_at, u.name, u.email
+		SELECT bm.id, bm.user_id, bm.role, bm.joined_at, u.name, u.email, COALESCE(u.avatar, '')
 		FROM budget_members bm
 		JOIN users u ON bm.user_id = u.id
 		WHERE bm.budget_id = $1
@@ -238,6 +238,9 @@ func (s *BudgetService) GetMembers(ctx context.Context, budgetID string) ([]mode
 	var members []models.BudgetMember
 	for rows.Next() {
 		var member models.BudgetMember
+		var avatar string // Local variable to capture the avatar column
+
+		// Updated Scan to include avatar
 		err := rows.Scan(
 			&member.ID,
 			&member.UserID,
@@ -245,16 +248,18 @@ func (s *BudgetService) GetMembers(ctx context.Context, budgetID string) ([]mode
 			&member.JoinedAt,
 			&member.UserName,
 			&member.UserEmail,
+			&avatar,
 		)
 		if err != nil {
 			return nil, err
 		}
 		
-		// Populate Nested User Object
+		// Populate Nested User Object with Avatar
 		member.User = &models.User{
 			ID:    member.UserID,
 			Name:  member.UserName,
 			Email: member.UserEmail,
+			Avatar: avatar,
 		}
 		
 		members = append(members, member)
@@ -405,7 +410,6 @@ func (s *BudgetService) AcceptInvitation(ctx context.Context, token, userID stri
         }
 
         // 5. NOTIFICATION TRIGGER: Update budget metadata
-        // This makes the frontend polling detect a change
         timestamp := time.Now().Format(time.RFC3339)
         notifyQuery := `
             UPDATE budget_data 
@@ -414,7 +418,6 @@ func (s *BudgetService) AcceptInvitation(ctx context.Context, token, userID stri
                 updated_at = NOW()
             WHERE budget_id = $3
         `
-        // Ignore error if no budget data exists yet (rare edge case)
         tx.ExecContext(ctx, notifyQuery, timestamp, userName, invitation.BudgetID)
 
 		return nil
