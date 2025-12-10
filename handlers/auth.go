@@ -33,6 +33,10 @@ type LoginRequest struct {
 	TOTPCode string `json:"totp_code"`
 }
 
+type ResendVerificationRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
 // --- HANDLERS ---
 
 // Signup crée un utilisateur et envoie un email de vérification
@@ -226,4 +230,58 @@ func generateJWT(userID string) (string, error) {
 		"exp":     time.Now().Add(24 * time.Hour).Unix(),
 	})
 	return token.SignedString([]byte(secret))
+}
+
+
+// ResendVerification génère un nouveau token et renvoie l'email
+func (h *AuthHandler) ResendVerification(c *gin.Context) {
+	var req ResendVerificationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 1. Vérifier si l'utilisateur existe et n'est PAS déjà vérifié
+	var userID string
+	var isVerified bool
+	var name string
+
+	err := h.DB.QueryRow("SELECT id, name, email_verified FROM users WHERE email = $1", req.Email).Scan(&userID, &name, &isVerified)
+	
+	if err == sql.ErrNoRows {
+		// Sécurité : On ne dit pas si l'email existe ou non, on renvoie OK
+		c.JSON(http.StatusOK, gin.H{"message": "Si ce compte existe, un email a été envoyé."})
+		return
+	}
+
+	if isVerified {
+		c.JSON(http.StatusConflict, gin.H{"error": "Ce compte est déjà vérifié. Connectez-vous."})
+		return
+	}
+
+	// 2. Nettoyer les anciens tokens
+	_, err = h.DB.Exec("DELETE FROM email_verifications WHERE user_id = $1", userID)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur système"})
+        return
+    }
+
+	// 3. Créer nouveau token
+	verificationToken := uuid.New().String()
+	expiresAt := time.Now().Add(24 * time.Hour)
+
+	_, err = h.DB.Exec(`
+		INSERT INTO email_verifications (user_id, token, expires_at)
+		VALUES ($1, $2, $3)
+	`, userID, verificationToken, expiresAt)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Impossible de générer le token"})
+		return
+	}
+
+	// 4. Renvoyer l'email
+	go utils.SendVerificationEmail(req.Email, name, verificationToken)
+
+	c.JSON(http.StatusOK, gin.H{"message": "Email de vérification envoyé !"})
 }

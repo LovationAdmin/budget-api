@@ -19,6 +19,7 @@ func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	
 	// NEW: Route pour la vérification d'email
 	rg.GET("/auth/verify", authHandler.VerifyEmail)
+	rg.POST("/auth/verify/resend", authHandler.ResendVerification)
 }
 
 // SetupBudgetRoutes sets up protected budget and related routes.
