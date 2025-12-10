@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"budget-api/models"
-	"budget-api/utils"
+    "budget-api/utils" // Make sure this is imported if you used the transaction helper
 
 	"github.com/google/uuid"
 )
@@ -20,7 +20,7 @@ func NewBudgetService(db *sql.DB) *BudgetService {
 	return &BudgetService{db: db}
 }
 
-// Create creates a new budget
+// Create creates a new budget (using transaction helper if available)
 func (s *BudgetService) Create(ctx context.Context, name, ownerID string) (*models.Budget, error) {
 	budget := &models.Budget{
 		ID:        uuid.New().String(),
@@ -30,28 +30,25 @@ func (s *BudgetService) Create(ctx context.Context, name, ownerID string) (*mode
 		UpdatedAt: time.Now(),
 	}
 
-	// Use the transaction helper
-	err := utils.WithTransaction(s.db, func(tx *sql.Tx) error {
-		// 1. Insert Budget
-		query := `
-			INSERT INTO budgets (id, name, owner_id, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5)
-		`
-		if _, err := tx.ExecContext(ctx, query, budget.ID, budget.Name, budget.OwnerID, budget.CreatedAt, budget.UpdatedAt); err != nil {
-			return err
-		}
+    // Wrap in transaction for safety
+    err := utils.WithTransaction(s.db, func(tx *sql.Tx) error {
+        query := `
+            INSERT INTO budgets (id, name, owner_id, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5)
+        `
+        if _, err := tx.ExecContext(ctx, query, budget.ID, budget.Name, budget.OwnerID, budget.CreatedAt, budget.UpdatedAt); err != nil {
+            return err
+        }
 
-		// 2. Add Owner as Member
-		memberQuery := `
-			INSERT INTO budget_members (id, budget_id, user_id, role, joined_at)
-			VALUES ($1, $2, $3, $4, $5)
-		`
-		if _, err := tx.ExecContext(ctx, memberQuery, uuid.New().String(), budget.ID, ownerID, "owner", time.Now()); err != nil {
-			return err
-		}
-
-		return nil
-	})
+        memberQuery := `
+            INSERT INTO budget_members (id, budget_id, user_id, role, joined_at)
+            VALUES ($1, $2, $3, $4, $5)
+        `
+        if _, err := tx.ExecContext(ctx, memberQuery, uuid.New().String(), budget.ID, ownerID, "owner", time.Now()); err != nil {
+            return err
+        }
+        return nil
+    })
 
 	if err != nil {
 		return nil, err
@@ -129,7 +126,6 @@ func (s *BudgetService) GetUserBudgets(ctx context.Context, userID string) ([]mo
 			return nil, err
 		}
 
-		// Get members for each budget
 		members, _ := s.GetMembers(ctx, budget.ID)
 		budget.Members = members
 
@@ -146,44 +142,29 @@ func (s *BudgetService) Update(ctx context.Context, id, name string) error {
 		SET name = $1, updated_at = $2
 		WHERE id = $3
 	`
-
 	_, err := s.db.ExecContext(ctx, query, name, time.Now(), id)
 	return err
 }
 
 // Delete deletes a budget
 func (s *BudgetService) Delete(ctx context.Context, budgetID string) error {
-	// Delete members first (foreign key constraint)
 	_, err := s.db.ExecContext(ctx, "DELETE FROM budget_members WHERE budget_id = $1", budgetID)
-	if err != nil {
-		return err
-	}
-
-	// Delete invitations
+	if err != nil { return err }
 	_, err = s.db.ExecContext(ctx, "DELETE FROM invitations WHERE budget_id = $1", budgetID)
-	if err != nil {
-		return err
-	}
-
-	// Delete budget data
+	if err != nil { return err }
 	_, err = s.db.ExecContext(ctx, "DELETE FROM budget_data WHERE budget_id = $1", budgetID)
-	if err != nil {
-		return err
-	}
-
-	// Delete budget
+	if err != nil { return err }
 	_, err = s.db.ExecContext(ctx, "DELETE FROM budgets WHERE id = $1", budgetID)
 	return err
 }
 
-// GetData gets the data for a budget - FIXED TO USE budget_data TABLE
+// GetData gets the data for a budget
 func (s *BudgetService) GetData(ctx context.Context, budgetID string) (interface{}, error) {
 	query := `SELECT data FROM budget_data WHERE budget_id = $1 ORDER BY updated_at DESC LIMIT 1`
 
 	var dataJSON []byte
 	err := s.db.QueryRowContext(ctx, query, budgetID).Scan(&dataJSON)
 	if err == sql.ErrNoRows {
-		// No data yet, return empty object
 		return map[string]interface{}{}, nil
 	}
 	if err != nil {
@@ -202,20 +183,18 @@ func (s *BudgetService) GetData(ctx context.Context, budgetID string) (interface
 	return data, nil
 }
 
-// UpdateData updates the data for a budget - FIXED TO USE budget_data TABLE
+// UpdateData updates the data for a budget
 func (s *BudgetService) UpdateData(ctx context.Context, budgetID string, data interface{}) error {
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
 
-	// Check if budget_data exists for this budget
 	var existingID string
 	checkQuery := `SELECT id FROM budget_data WHERE budget_id = $1 LIMIT 1`
 	err = s.db.QueryRowContext(ctx, checkQuery, budgetID).Scan(&existingID)
 
 	if err == sql.ErrNoRows {
-		// Insert new record
 		insertQuery := `
 			INSERT INTO budget_data (id, budget_id, data, version, updated_at)
 			VALUES ($1, $2, $3, 1, $4)
@@ -228,7 +207,6 @@ func (s *BudgetService) UpdateData(ctx context.Context, budgetID string, data in
 		return err
 	}
 
-	// Update existing record
 	updateQuery := `
 		UPDATE budget_data
 		SET data = $1, version = version + 1, updated_at = $2
@@ -238,7 +216,7 @@ func (s *BudgetService) UpdateData(ctx context.Context, budgetID string, data in
 	return err
 }
 
-// GetMembers gets all members of a budget
+// GetMembers gets all members of a budget -- FIXED TO POPULATE USER OBJECT
 func (s *BudgetService) GetMembers(ctx context.Context, budgetID string) ([]models.BudgetMember, error) {
 	query := `
 		SELECT bm.id, bm.user_id, bm.role, bm.joined_at, u.name, u.email
@@ -268,6 +246,16 @@ func (s *BudgetService) GetMembers(ctx context.Context, budgetID string) ([]mode
 		if err != nil {
 			return nil, err
 		}
+        
+        // --- CRITICAL FIX: Populate the nested User object ---
+        // The frontend expects member.user.name, so we must construct it here.
+        member.User = &models.User{
+            ID:    member.UserID,
+            Name:  member.UserName,
+            Email: member.UserEmail,
+        }
+        // -----------------------------------------------------
+
 		members = append(members, member)
 	}
 
@@ -283,7 +271,7 @@ func (s *BudgetService) CreateInvitation(ctx context.Context, budgetID, email, i
 		Token:     uuid.New().String(),
 		Status:    "pending",
 		InvitedBy: invitedBy,
-		ExpiresAt: time.Now().Add(7 * 24 * time.Hour), // 7 days
+		ExpiresAt: time.Now().Add(7 * 24 * time.Hour),
 		CreatedAt: time.Now(),
 	}
 
@@ -344,7 +332,6 @@ func (s *BudgetService) DeleteInvitation(ctx context.Context, invitationID strin
 
 // AcceptInvitation accepts an invitation
 func (s *BudgetService) AcceptInvitation(ctx context.Context, token, userID string) error {
-	// Get invitation
 	var invitation models.Invitation
 	query := `
 		SELECT id, budget_id, email, expires_at
@@ -366,36 +353,27 @@ func (s *BudgetService) AcceptInvitation(ctx context.Context, token, userID stri
 		return err
 	}
 
-	// Check if expired
 	if time.Now().After(invitation.ExpiresAt) {
 		return sql.ErrNoRows
 	}
 
-	// Add user as member
-	memberQuery := `
-		INSERT INTO budget_members (id, budget_id, user_id, role, joined_at)
-		VALUES ($1, $2, $3, $4, $5)
-	`
+	return utils.WithTransaction(s.db, func(tx *sql.Tx) error {
+		memberQuery := `
+			INSERT INTO budget_members (id, budget_id, user_id, role, joined_at)
+			VALUES ($1, $2, $3, $4, $5)
+		`
+		if _, err := tx.ExecContext(ctx, memberQuery, uuid.New().String(), invitation.BudgetID, userID, "member", time.Now()); err != nil {
+			return err
+		}
 
-	_, err = s.db.ExecContext(ctx, memberQuery,
-		uuid.New().String(),
-		invitation.BudgetID,
-		userID,
-		"member",
-		time.Now(),
-	)
-
-	if err != nil {
-		return err
-	}
-
-	// Update invitation status
-	updateQuery := `
-		UPDATE invitations
-		SET status = 'accepted', updated_at = $1
-		WHERE id = $2
-	`
-
-	_, err = s.db.ExecContext(ctx, updateQuery, time.Now(), invitation.ID)
-	return err
+		updateQuery := `
+			UPDATE invitations
+			SET status = 'accepted', updated_at = $1
+			WHERE id = $2
+		`
+		if _, err := tx.ExecContext(ctx, updateQuery, time.Now(), invitation.ID); err != nil {
+			return err
+		}
+		return nil
+	})
 }
