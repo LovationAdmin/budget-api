@@ -23,6 +23,7 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 	}
 
 	var user models.User
+	// Updated query to fetch Avatar
 	err := h.DB.QueryRow(`
 		SELECT id, email, name, COALESCE(avatar, ''), totp_enabled, email_verified, created_at, updated_at
 		FROM users
@@ -42,6 +43,12 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, user)
 }
 
+// UpdateProfileRequest struct to validate input
+type UpdateProfileRequest struct {
+	Name   string `json:"name" binding:"required"`
+	Avatar string `json:"avatar"` // Optional: Base64 string or Gradient CSS
+}
+
 // UpdateProfile updates user profile information
 func (h *UserHandler) UpdateProfile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
@@ -50,27 +57,31 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		Name string `json:"name" binding:"required"`
-	}
-
+	var req UpdateProfileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	// Update query including avatar
 	_, err := h.DB.Exec(`
 		UPDATE users
-		SET name = $1, updated_at = NOW()
-		WHERE id = $2
-	`, req.Name, userID)
+		SET name = $1, avatar = $2, updated_at = NOW()
+		WHERE id = $3
+	`, req.Name, req.Avatar, userID)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update profile"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Profile updated successfully"})
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Profile updated successfully",
+		"user": gin.H{
+			"name":   req.Name,
+			"avatar": req.Avatar,
+		},
+	})
 }
 
 // ChangePassword changes the user's password
