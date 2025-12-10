@@ -68,4 +68,5 @@ func SetupInvitationRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.GET("/budgets/:id/invitations", invitationHandler.GetInvitations)
 	rg.DELETE("/budgets/:id/invitations/:invitation_id", invitationHandler.CancelInvitation)
 	rg.DELETE("/budgets/:id/members/:member_id", invitationHandler.RemoveMember)
+	rg.GET("/auth/verify", authHandler.VerifyEmail) // Ajoutez cette ligne
 }

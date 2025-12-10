@@ -114,6 +114,16 @@ func RunMigrations(db *sql.DB) error {
 		// This line will add the missing column to your existing database
 		`ALTER TABLE invitations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT`,
+
+		`CREATE TABLE IF NOT EXISTS email_verifications (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+			token VARCHAR(255) NOT NULL,
+			expires_at TIMESTAMP NOT NULL,
+			created_at TIMESTAMP DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_email_verifications_token ON email_verifications(token)`,
+
 	}
 
 	for _, migration := range migrations {
