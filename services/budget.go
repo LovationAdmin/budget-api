@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"budget-api/models"
@@ -18,6 +19,11 @@ type BudgetService struct {
 
 func NewBudgetService(db *sql.DB) *BudgetService {
 	return &BudgetService{db: db}
+}
+
+// Helper struct for DB storage of encrypted blobs
+type EncryptedData struct {
+	Encrypted string `json:"encrypted"`
 }
 
 // Create creates a new budget with transactional safety
@@ -161,12 +167,12 @@ func (s *BudgetService) Delete(ctx context.Context, budgetID string) error {
 	})
 }
 
-// GetData gets the data for a budget
+// GetData gets the data for a budget and DECRYPTS it
 func (s *BudgetService) GetData(ctx context.Context, budgetID string) (interface{}, error) {
 	query := `SELECT data FROM budget_data WHERE budget_id = $1 ORDER BY updated_at DESC LIMIT 1`
 
-	var dataJSON []byte
-	err := s.db.QueryRowContext(ctx, query, budgetID).Scan(&dataJSON)
+	var rawJSON []byte
+	err := s.db.QueryRowContext(ctx, query, budgetID).Scan(&rawJSON)
 	if err == sql.ErrNoRows {
 		return map[string]interface{}{}, nil
 	}
@@ -174,25 +180,58 @@ func (s *BudgetService) GetData(ctx context.Context, budgetID string) (interface
 		return nil, err
 	}
 
-	if len(dataJSON) == 0 {
+	if len(rawJSON) == 0 {
 		return map[string]interface{}{}, nil
 	}
 
+	// 1. Try to unmarshal as EncryptedData wrapper
+	var wrapper EncryptedData
+	if err := json.Unmarshal(rawJSON, &wrapper); err == nil && wrapper.Encrypted != "" {
+		// 2. It IS encrypted -> Decrypt it
+		decryptedBytes, err := utils.Decrypt(wrapper.Encrypted)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt data: %w", err)
+		}
+		
+		// 3. Unmarshal the real data
+		var realData interface{}
+		if err := json.Unmarshal(decryptedBytes, &realData); err != nil {
+			return nil, err
+		}
+		return realData, nil
+	}
+
+	// Fallback: If it wasn't encrypted (legacy data), return it as is
 	var data interface{}
-	if err := json.Unmarshal(dataJSON, &data); err != nil {
+	if err := json.Unmarshal(rawJSON, &data); err != nil {
 		return nil, err
 	}
 
 	return data, nil
 }
 
-// UpdateData updates the data for a budget
+// UpdateData ENCRYPTS the data before saving it
 func (s *BudgetService) UpdateData(ctx context.Context, budgetID string, data interface{}) error {
-	dataJSON, err := json.Marshal(data)
+	// 1. Convert real data to JSON bytes
+	realDataJSON, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
 
+	// 2. Encrypt the bytes
+	encryptedString, err := utils.Encrypt(realDataJSON)
+	if err != nil {
+		return err
+	}
+
+	// 3. Wrap in a JSON object so Postgres JSONB column accepts it
+	wrapper := EncryptedData{Encrypted: encryptedString}
+	storageJSON, err := json.Marshal(wrapper)
+	if err != nil {
+		return err
+	}
+
+	// 4. Save to DB
 	var existingID string
 	checkQuery := `SELECT id FROM budget_data WHERE budget_id = $1 LIMIT 1`
 	err = s.db.QueryRowContext(ctx, checkQuery, budgetID).Scan(&existingID)
@@ -202,7 +241,7 @@ func (s *BudgetService) UpdateData(ctx context.Context, budgetID string, data in
 			INSERT INTO budget_data (id, budget_id, data, version, updated_at)
 			VALUES ($1, $2, $3, 1, $4)
 		`
-		_, err = s.db.ExecContext(ctx, insertQuery, uuid.New().String(), budgetID, dataJSON, time.Now())
+		_, err = s.db.ExecContext(ctx, insertQuery, uuid.New().String(), budgetID, storageJSON, time.Now())
 		return err
 	}
 
@@ -215,11 +254,11 @@ func (s *BudgetService) UpdateData(ctx context.Context, budgetID string, data in
 		SET data = $1, version = version + 1, updated_at = $2
 		WHERE budget_id = $3
 	`
-	_, err = s.db.ExecContext(ctx, updateQuery, dataJSON, time.Now(), budgetID)
+	_, err = s.db.ExecContext(ctx, updateQuery, storageJSON, time.Now(), budgetID)
 	return err
 }
 
-// GetMembers gets all members of a budget (Updated to fetch Avatar)
+// GetMembers gets all members of a budget (Populates Avatar)
 func (s *BudgetService) GetMembers(ctx context.Context, budgetID string) ([]models.BudgetMember, error) {
 	query := `
 		SELECT bm.id, bm.user_id, bm.role, bm.joined_at, u.name, u.email, COALESCE(u.avatar, '')
@@ -238,9 +277,8 @@ func (s *BudgetService) GetMembers(ctx context.Context, budgetID string) ([]mode
 	var members []models.BudgetMember
 	for rows.Next() {
 		var member models.BudgetMember
-		var avatar string // Local variable to capture the avatar column
+		var avatar string
 
-		// Updated Scan to include avatar
 		err := rows.Scan(
 			&member.ID,
 			&member.UserID,
@@ -254,7 +292,6 @@ func (s *BudgetService) GetMembers(ctx context.Context, budgetID string) ([]mode
 			return nil, err
 		}
 		
-		// Populate Nested User Object with Avatar
 		member.User = &models.User{
 			ID:    member.UserID,
 			Name:  member.UserName,
@@ -350,7 +387,7 @@ func (s *BudgetService) IsMemberByEmail(ctx context.Context, budgetID, email str
     return exists, err
 }
 
-// AcceptInvitation accepts an invitation, cleans up duplicates, AND triggers notification
+// AcceptInvitation accepts invitation, cleans up duplicates, and notifies others via "fake update"
 func (s *BudgetService) AcceptInvitation(ctx context.Context, token, userID string) error {
 	var invitation models.Invitation
 	query := `
@@ -409,7 +446,7 @@ func (s *BudgetService) AcceptInvitation(ctx context.Context, token, userID stri
             return err
         }
 
-        // 5. NOTIFICATION TRIGGER: Update budget metadata
+        // 5. NOTIFICATION TRIGGER: Update budget metadata (forces polling frontend to notice a change)
         timestamp := time.Now().Format(time.RFC3339)
         notifyQuery := `
             UPDATE budget_data 
