@@ -77,4 +77,8 @@ func SetupBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	// NEW: Plaid Specific Routes
 	rg.POST("/banking/plaid/link-token", bankingHandler.CreateLinkToken)
 	rg.POST("/banking/plaid/exchange", bankingHandler.ExchangeToken)
+    // NEW: GoCardless routes
+    rg.GET("/banking/gocardless/institutions", gcHandler.GetInstitutions)
+    rg.POST("/banking/gocardless/connect", gcHandler.CreateBankConnection)
+    rg.GET("/banking/gocardless/callback", gcHandler.CompleteConnection)
 }
