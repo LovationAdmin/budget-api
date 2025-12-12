@@ -41,6 +41,7 @@ func RunMigrations(db *sql.DB) error {
 			totp_secret VARCHAR(255),
 			totp_enabled BOOLEAN DEFAULT FALSE,
 			email_verified BOOLEAN DEFAULT FALSE,
+			avatar TEXT,
 			created_at TIMESTAMP DEFAULT NOW(),
 			updated_at TIMESTAMP DEFAULT NOW()
 		)`,
@@ -63,7 +64,6 @@ func RunMigrations(db *sql.DB) error {
 			UNIQUE(budget_id, user_id)
 		)`,
 		
-		// Updated definition for new installs
 		`CREATE TABLE IF NOT EXISTS invitations (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			budget_id UUID REFERENCES budgets(id) ON DELETE CASCADE,
@@ -110,8 +110,7 @@ func RunMigrations(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_audit_logs_budget_id ON audit_logs(budget_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)`,
 
-		// --- EMERGENCY FIX ---
-		// This line will add the missing column to your existing database
+		// Compatibility checks
 		`ALTER TABLE invitations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT`,
 
@@ -124,6 +123,35 @@ func RunMigrations(db *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_email_verifications_token ON email_verifications(token)`,
 
+		// --- NEW BANKING TABLES ---
+		`CREATE TABLE IF NOT EXISTS bank_connections (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			institution_id VARCHAR(255) NOT NULL,
+			institution_name VARCHAR(255),
+			provider_connection_id VARCHAR(255) UNIQUE NOT NULL,
+			encrypted_access_token TEXT,
+			encrypted_refresh_token TEXT,
+			expires_at TIMESTAMP,
+			status VARCHAR(50) DEFAULT 'active',
+			created_at TIMESTAMP DEFAULT NOW(),
+			updated_at TIMESTAMP DEFAULT NOW()
+		)`,
+
+		`CREATE TABLE IF NOT EXISTS bank_accounts (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			connection_id UUID NOT NULL REFERENCES bank_connections(id) ON DELETE CASCADE,
+			external_account_id VARCHAR(255) NOT NULL,
+			name VARCHAR(255),
+			mask VARCHAR(10),
+			currency VARCHAR(3) DEFAULT 'EUR',
+			balance DECIMAL(20, 2) DEFAULT 0,
+			is_savings_pool BOOLEAN DEFAULT FALSE,
+			last_synced_at TIMESTAMP DEFAULT NOW()
+		)`,
+
+		`CREATE INDEX IF NOT EXISTS idx_bank_connections_user ON bank_connections(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_bank_accounts_connection ON bank_accounts(connection_id)`,
 	}
 
 	for _, migration := range migrations {

@@ -11,7 +11,6 @@ import (
 
 // SetupAuthRoutes sets up public authentication routes.
 func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB) {
-	// Use the dedicated AuthHandler
 	authHandler := &handlers.AuthHandler{DB: db}
 
 	rg.POST("/auth/signup", authHandler.Signup)
@@ -24,7 +23,6 @@ func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB) {
 
 // SetupBudgetRoutes sets up protected budget and related routes.
 func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB) {
-	// Initialize required services
 	budgetService := services.NewBudgetService(db)
 	emailService := services.NewEmailService()
 	
@@ -48,7 +46,6 @@ func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB) {
 
 // SetupUserRoutes sets up protected user routes.
 func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB) {
-	// Use the dedicated UserHandler
 	userHandler := &handlers.UserHandler{DB: db}
 	
 	rg.GET("/user/profile", userHandler.GetProfile)
@@ -62,10 +59,19 @@ func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB) {
 
 // SetupInvitationRoutes sets up the remaining invitation/member management routes.
 func SetupInvitationRoutes(rg *gin.RouterGroup, db *sql.DB) {
-	// Use the dedicated InvitationHandler
 	invitationHandler := &handlers.InvitationHandler{DB: db}
 	
 	rg.GET("/budgets/:id/invitations", invitationHandler.GetInvitations)
 	rg.DELETE("/budgets/:id/invitations/:invitation_id", invitationHandler.CancelInvitation)
 	rg.DELETE("/budgets/:id/members/:member_id", invitationHandler.RemoveMember)
+}
+
+// SetupBankingRoutes sets up the new banking feature routes
+func SetupBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
+	bankingHandler := handlers.NewBankingHandler(db)
+
+	rg.GET("/banking/connections", bankingHandler.GetConnections)
+	rg.POST("/banking/connect", bankingHandler.InitiateConnect) 
+	rg.DELETE("/banking/connections/:id", bankingHandler.DeleteConnection)
+	rg.PUT("/banking/accounts/:id", bankingHandler.UpdateAccountPool)
 }
