@@ -47,7 +47,7 @@ func (s *PlaidService) CreateLinkToken(ctx context.Context, userID string) (stri
 	// 1. Get Base URL from Environment
 	frontendURL := os.Getenv("FRONTEND_URL")
 	
-	// DEBUG LOG 1
+	// DEBUG LOG
 	fmt.Printf("[DEBUG] Raw FRONTEND_URL env var: '%s'\n", frontendURL)
 
 	if frontendURL == "" {
@@ -60,16 +60,20 @@ func (s *PlaidService) CreateLinkToken(ctx context.Context, userID string) (stri
 		redirectURI = redirectURI + "/"
 	}
 
-	// DEBUG LOG 2
+	// DEBUG LOG
 	fmt.Printf("[DEBUG] Final Redirect URI sent to Plaid: '%s'\n", redirectURI)
 
+	// --- SANITY CHECK CONFIGURATION (US ONLY) ---
+	// We use "en" and "US" because these are guaranteed to be enabled in all Sandbox accounts.
+	// This rules out "Country Not Enabled" errors.
 	request := plaid.NewLinkTokenCreateRequest(
 		"Budget Famille",
-		"fr", // Force French language
-		[]plaid.CountryCode{plaid.COUNTRYCODE_FR, plaid.COUNTRYCODE_US},
+		"en", 
+		[]plaid.CountryCode{plaid.COUNTRYCODE_US}, 
 		user,
 	)
 
+	// We specifically ask for Transactions/Balance permissions
 	request.SetProducts([]plaid.Products{plaid.PRODUCTS_TRANSACTIONS})
 
 	// 3. Set the Dynamic Redirect URI
@@ -77,7 +81,6 @@ func (s *PlaidService) CreateLinkToken(ctx context.Context, userID string) (stri
 
 	resp, _, err := s.Client.PlaidApi.LinkTokenCreate(ctx).LinkTokenCreateRequest(*request).Execute()
 	if err != nil {
-		// DEBUG LOG 3 - Print the specific error from Plaid
 		fmt.Printf("[ERROR] Plaid CreateLinkToken Failed: %v\n", formatPlaidError(err))
 		return "", formatPlaidError(err)
 	}
@@ -112,6 +115,7 @@ func (s *PlaidService) GetBalances(ctx context.Context, accessToken string) ([]p
 // Helper for error formatting
 func formatPlaidError(err error) error {
 	if plaidErr, ok := err.(plaid.GenericOpenAPIError); ok {
+		// Try to read the body for more details
 		return fmt.Errorf("plaid error: %s", string(plaidErr.Body()))
 	}
 	return err
