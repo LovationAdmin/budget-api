@@ -70,15 +70,14 @@ func SetupInvitationRoutes(rg *gin.RouterGroup, db *sql.DB) {
 func SetupBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	bankingHandler := handlers.NewBankingHandler(db)
 
+    // Bridge API routes
+    rg.GET("/banking/bridge/banks", bridgeHandler.GetBanks)
+    rg.POST("/banking/bridge/connect", bridgeHandler.CreateConnection)
+    rg.GET("/banking/bridge/callback", bridgeHandler.HandleCallback)
+    rg.POST("/banking/bridge/refresh", bridgeHandler.RefreshBalances)
+    	
 	rg.GET("/banking/connections", bankingHandler.GetConnections)
 	rg.DELETE("/banking/connections/:id", bankingHandler.DeleteConnection)
 	rg.PUT("/banking/accounts/:id", bankingHandler.UpdateAccountPool)
 	
-	// NEW: Plaid Specific Routes
-	rg.POST("/banking/plaid/link-token", bankingHandler.CreateLinkToken)
-	rg.POST("/banking/plaid/exchange", bankingHandler.ExchangeToken)
-    // NEW: GoCardless routes
-    rg.GET("/banking/gocardless/institutions", gcHandler.GetInstitutions)
-    rg.POST("/banking/gocardless/connect", gcHandler.CreateBankConnection)
-    rg.GET("/banking/gocardless/callback", gcHandler.CompleteConnection)
 }
