@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -30,56 +31,53 @@ func NewBridgeHandler(db *sql.DB) *BridgeHandler {
 func (h *BridgeHandler) GetBanks(c *gin.Context) {
 	token, err := h.BridgeService.GetAccessToken(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to authenticate with Bridge"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to authenticate with Bridge", "details": err.Error()})
 		return
 	}
 
 	banks, err := h.BridgeService.GetBanks(c.Request.Context(), token)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch banks"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch banks", "details": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"banks": banks})
 }
 
-// 2. Créer une connexion bancaire (renvoie l'URL de redirection)
+// 2. Créer une Connect Session (renvoie l'URL Bridge)
 func (h *BridgeHandler) CreateConnection(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 
 	token, err := h.BridgeService.GetAccessToken(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to authenticate with Bridge"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to authenticate with Bridge", "details": err.Error()})
 		return
 	}
 
-	// Récupérer l'email de l'utilisateur pour préfill
+	// Récupérer l'email de l'utilisateur
 	var userEmail string
 	err = h.DB.QueryRow("SELECT email FROM users WHERE id = $1", userID).Scan(&userEmail)
 	if err != nil {
-		userEmail = "" // Pas grave si on ne trouve pas l'email
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user email", "details": err.Error()})
+		return
 	}
 
-	redirectURL, err := h.BridgeService.CreateConnectItem(c.Request.Context(), token, userEmail)
+	// Créer une Connect Session (API v3)
+	connectURL, err := h.BridgeService.CreateConnectItem(c.Request.Context(), token, userEmail)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create connection"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create Bridge session", "details": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"redirect_url": redirectURL,
+		"redirect_url": connectURL,
 	})
 }
 
-// 3. Callback après connexion bancaire
-func (h *BridgeHandler) HandleCallback(c *gin.Context) {
+// 3. Synchroniser les items et comptes après connexion Bridge
+// Cette fonction doit être appelée périodiquement ou après une connexion réussie
+func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 	userID := middleware.GetUserID(c)
-	itemID := c.Query("item_id")
-
-	if itemID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing item_id parameter"})
-		return
-	}
 
 	token, err := h.BridgeService.GetAccessToken(c.Request.Context())
 	if err != nil {
@@ -87,62 +85,103 @@ func (h *BridgeHandler) HandleCallback(c *gin.Context) {
 		return
 	}
 
-	// Récupérer les comptes de Bridge
-	accounts, err := h.BridgeService.GetAccounts(c.Request.Context(), token, userID)
+	// Récupérer tous les comptes depuis Bridge
+	accounts, err := h.BridgeService.GetAccounts(c.Request.Context(), token)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accounts from Bridge"})
 		return
 	}
 
-	// Créer une connexion en DB
-	expiresAt := time.Now().AddDate(1, 0, 0)
-	
-	connID, err := h.Service.SaveConnectionWithTokens(
-		c.Request.Context(),
-		userID,
-		itemID,
-		"Bridge Connection",
-		itemID,
-		token, // On stocke le token Bridge
-		"",
-		expiresAt,
-	)
-	
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save connection"})
+	if len(accounts) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "No accounts found. Make sure you completed the Bridge connection.",
+			"accounts_synced": 0,
+		})
 		return
 	}
 
-	// Sauvegarder chaque compte
+	// Récupérer les items pour avoir les noms des banques
+	items, err := h.BridgeService.GetItems(c.Request.Context(), token)
+	if err != nil {
+		items = []services.BridgeItem{} // Continue même sans items
+	}
+
+	// Créer un map des items par ID pour lookup rapide
+	itemMap := make(map[int64]services.BridgeItem)
+	for _, item := range items {
+		itemMap[item.ID] = item
+	}
+
+	accountsSynced := 0
+
+	// Pour chaque compte, créer ou mettre à jour en DB
 	for _, acc := range accounts {
-		iban := acc.IBAN
-		if len(iban) > 4 {
-			iban = iban[len(iban)-4:] // Garder les 4 derniers caractères
+		// Trouver le nom de la banque via l'item
+		institutionName := "Bridge Connection"
+		if item, exists := itemMap[acc.ItemID]; exists {
+			institutionName = fmt.Sprintf("Bank ID %d", item.BankID)
 		}
-		
+
+		// Vérifier si la connexion existe déjà
+		var existingConnID string
+		err := h.DB.QueryRow(
+			`SELECT id FROM bank_connections 
+			 WHERE user_id = $1 AND institution_id = $2`,
+			userID,
+			strconv.FormatInt(acc.ItemID, 10),
+		).Scan(&existingConnID)
+
+		var connID string
+		if err == sql.ErrNoRows {
+			// Créer une nouvelle connexion
+			expiresAt := time.Now().AddDate(1, 0, 0)
+			connID, err = h.Service.SaveConnectionWithTokens(
+				c.Request.Context(),
+				userID,
+				strconv.FormatInt(acc.ItemID, 10),
+				institutionName,
+				strconv.FormatInt(acc.ItemID, 10),
+				token,
+				"",
+				expiresAt,
+			)
+			if err != nil {
+				continue
+			}
+		} else {
+			connID = existingConnID
+		}
+
+		// Extraire les 4 derniers chiffres de l'IBAN
+		mask := acc.IBAN
+		if len(mask) > 4 {
+			mask = mask[len(mask)-4:]
+		}
+
+		// Sauvegarder ou mettre à jour le compte
 		err = h.Service.SaveAccount(
 			c.Request.Context(),
 			connID,
 			strconv.FormatInt(acc.ID, 10),
 			acc.Name,
-			iban,
+			mask,
 			acc.Currency,
 			acc.Balance,
 		)
-		
-		if err != nil {
-			// Log l'erreur mais continue avec les autres comptes
-			continue
+
+		if err == nil {
+			accountsSynced++
 		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Bank connected successfully",
-		"accounts_count": len(accounts),
+		"message": "Accounts synchronized successfully",
+		"accounts_synced": accountsSynced,
+		"total_accounts": len(accounts),
 	})
 }
 
-// 4. Rafraîchir les soldes de tous les comptes
+// 4. Rafraîchir les soldes
 func (h *BridgeHandler) RefreshBalances(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 
@@ -152,8 +191,8 @@ func (h *BridgeHandler) RefreshBalances(c *gin.Context) {
 		return
 	}
 
-	// Récupérer tous les comptes de l'utilisateur depuis Bridge
-	accounts, err := h.BridgeService.GetAccounts(c.Request.Context(), token, userID)
+	// Récupérer tous les comptes depuis Bridge
+	accounts, err := h.BridgeService.GetAccounts(c.Request.Context(), token)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accounts from Bridge"})
 		return
@@ -163,9 +202,9 @@ func (h *BridgeHandler) RefreshBalances(c *gin.Context) {
 	updatedCount := 0
 	for _, acc := range accounts {
 		accountID := strconv.FormatInt(acc.ID, 10)
-		
-		// Mise à jour du solde dans la table bank_accounts
-		_, err := h.DB.Exec(
+
+		// Mise à jour du solde
+		result, err := h.DB.Exec(
 			`UPDATE bank_accounts 
 			 SET balance = $1, updated_at = NOW() 
 			 WHERE external_id = $2 
@@ -176,9 +215,12 @@ func (h *BridgeHandler) RefreshBalances(c *gin.Context) {
 			accountID,
 			userID,
 		)
-		
+
 		if err == nil {
-			updatedCount++
+			rows, _ := result.RowsAffected()
+			if rows > 0 {
+				updatedCount++
+			}
 		}
 	}
 
