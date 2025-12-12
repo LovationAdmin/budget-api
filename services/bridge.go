@@ -40,15 +40,15 @@ func hashEmail(email string) string {
 
 func (s *BridgeService) setHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
-	// FIX: Use the stable version required by documentation
-	req.Header.Set("Bridge-Version", "2021-06-01") 
+	// FIX: Use the V3 version (2025) to match the /v3/ endpoints
+	req.Header.Set("Bridge-Version", "2025-01-15") 
 	req.Header.Set("Client-Id", s.ClientID)
 	req.Header.Set("Client-Secret", s.ClientSecret)
 }
 
 // 1. Get or Create User & Generate Token
 func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail string) (string, error) {
-	// FIX: Hash email to ensure valid format for external_user_id (no special chars)
+	// We use the hashed email as the unique external_user_id
 	externalID := hashEmail(userEmail)
 	var userUUID string
 
@@ -83,6 +83,7 @@ func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail stri
 	if userUUID == "" {
 		log.Printf("[Bridge] Creating new user for external_id: %s", externalID)
 		
+		// V3: Only send external_user_id (no email)
 		createPayload := map[string]string{
 			"external_user_id": externalID,
 		}
@@ -108,10 +109,7 @@ func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail stri
 			b, _ := io.ReadAll(createResp.Body)
 			log.Printf("[Bridge Error] Create User Failed: %s", string(b))
 			
-			// Retry listing if creation says Conflict (409)
 			if createResp.StatusCode == 409 {
-				// Recursive retry one time? Or just fail. 
-				// The LIST above should have caught it, but maybe race condition.
 				return "", fmt.Errorf("user conflict 409 but failed to list previously")
 			}
 			return "", fmt.Errorf("bridge user creation failed (%d): %s", createResp.StatusCode, string(b))
@@ -160,8 +158,7 @@ func (s *BridgeService) CreateConnectItem(ctx context.Context, userEmail string)
 	}
 
 	// 2. Create Link
-	// Note: We DO pass the real email here for pre-filling the UI, 
-	// even though the internal ID is hashed.
+	// V3: We pass the real user_email here for the Connect UI
 	payload := map[string]interface{}{
 		"user_email": userEmail,
 	}
@@ -207,7 +204,7 @@ type BridgeProvider struct {
 
 func (s *BridgeService) GetBanks(ctx context.Context) ([]BridgeProvider, error) {
 	req, _ := http.NewRequestWithContext(ctx, "GET", s.BaseURL+"/providers?country_code=FR", nil)
-	s.setHeaders(req)
+	s.setHeaders(req) // Client-ID/Secret only
 
 	resp, err := s.Client.Do(req)
 	if err != nil {
