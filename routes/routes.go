@@ -71,7 +71,10 @@ func SetupBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	bankingHandler := handlers.NewBankingHandler(db)
 
 	rg.GET("/banking/connections", bankingHandler.GetConnections)
-	rg.POST("/banking/connect", bankingHandler.InitiateConnect) 
 	rg.DELETE("/banking/connections/:id", bankingHandler.DeleteConnection)
 	rg.PUT("/banking/accounts/:id", bankingHandler.UpdateAccountPool)
+	
+	// NEW: Plaid Specific Routes
+	rg.POST("/banking/plaid/link-token", bankingHandler.CreateLinkToken)
+	rg.POST("/banking/plaid/exchange", bankingHandler.ExchangeToken)
 }
