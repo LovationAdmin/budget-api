@@ -64,11 +64,19 @@ func SetupInvitationRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.DELETE("/budgets/:id/members/:member_id", invitationHandler.RemoveMember)
 }
 
-// SetupBankingRoutes sets up the banking feature routes
+// SetupBankingRoutes sets up the banking feature routes with Bridge API
 func SetupBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	bankingHandler := handlers.NewBankingHandler(db)
+	bridgeHandler := handlers.NewBridgeHandler(db)
 
+	// Routes de base (gestion des connexions et comptes)
 	rg.GET("/banking/connections", bankingHandler.GetConnections)
 	rg.DELETE("/banking/connections/:id", bankingHandler.DeleteConnection)
 	rg.PUT("/banking/accounts/:id", bankingHandler.UpdateAccountPool)
+	
+	// Routes Bridge API (connexion bancaire)
+	rg.GET("/banking/bridge/banks", bridgeHandler.GetBanks)
+	rg.POST("/banking/bridge/connect", bridgeHandler.CreateConnection)
+	rg.GET("/banking/bridge/callback", bridgeHandler.HandleCallback)
+	rg.POST("/banking/bridge/refresh", bridgeHandler.RefreshBalances)
 }
