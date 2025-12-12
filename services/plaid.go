@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/plaid/plaid-go/v20/plaid"
 )
@@ -43,15 +44,32 @@ func (s *PlaidService) CreateLinkToken(ctx context.Context, userID string) (stri
 		ClientUserId: userID,
 	}
 
+	// Dynamic Redirect URI based on environment
+	// Plaid requires the Redirect URI passed here to MATCH EXACTLY what is in the Dashboard
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3000" // Default for local dev
+	}
+
+	// Ensure there is a trailing slash if your Plaid Dashboard registration has one
+	// Most setups require "https://domain.com/"
+	redirectURI := frontendURL
+	if !strings.HasSuffix(redirectURI, "/") {
+		redirectURI = redirectURI + "/"
+	}
+
 	request := plaid.NewLinkTokenCreateRequest(
 		"Budget Famille",
-		"en", // Language
+		"fr", // Force French language
 		[]plaid.CountryCode{plaid.COUNTRYCODE_FR, plaid.COUNTRYCODE_US},
 		user,
 	)
-	
+
 	// We specifically ask for Transactions/Balance permissions
-	request.SetProducts([]plaid.Products{plaid.PRODUCTS_TRANSACTIONS}) 
+	request.SetProducts([]plaid.Products{plaid.PRODUCTS_TRANSACTIONS})
+
+	// CRITICAL FIX: Explicitly set the Redirect URI
+	request.SetRedirectUri(redirectURI)
 
 	resp, _, err := s.Client.PlaidApi.LinkTokenCreate(ctx).LinkTokenCreateRequest(*request).Execute()
 	if err != nil {
@@ -88,6 +106,7 @@ func (s *PlaidService) GetBalances(ctx context.Context, accessToken string) ([]p
 // Helper for error formatting
 func formatPlaidError(err error) error {
 	if plaidErr, ok := err.(plaid.GenericOpenAPIError); ok {
+		// Try to read the body for more details
 		return fmt.Errorf("plaid error: %s", string(plaidErr.Body()))
 	}
 	return err
