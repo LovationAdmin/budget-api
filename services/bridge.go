@@ -8,8 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -23,112 +23,109 @@ type BridgeService struct {
 }
 
 func NewBridgeService() *BridgeService {
-	// SECURITY: Trim spaces to prevent 401 errors from accidental copy-pasting
+	// Security: Trim spaces to prevent 401 errors
 	return &BridgeService{
 		ClientID:     strings.TrimSpace(os.Getenv("BRIDGE_CLIENT_ID")),
 		ClientSecret: strings.TrimSpace(os.Getenv("BRIDGE_CLIENT_SECRET")),
-		BaseURL:      "https://api.bridgeapi.io/v3",
+		BaseURL:      "https://api.bridgeapi.io/v3", // V3 Base URL
 		Client:       &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
+// hashEmail creates a safe external_user_id from an email
+func hashEmail(email string) string {
+	hash := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email))))
+	return hex.EncodeToString(hash[:])
+}
+
 func (s *BridgeService) setHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
-	// FIXED: Use a valid Bridge-Version date (check Bridge dashboard for latest)
-	req.Header.Set("Bridge-Version", "2024-08-15")
+	// FIX: Use the stable version required by documentation
+	req.Header.Set("Bridge-Version", "2021-06-01") 
 	req.Header.Set("Client-Id", s.ClientID)
 	req.Header.Set("Client-Secret", s.ClientSecret)
 }
 
-// hashEmail creates a safe external_user_id from email
-// Bridge external_user_id should be alphanumeric, no special chars
-func hashEmail(email string) string {
-	hash := sha256.Sum256([]byte(strings.ToLower(email)))
-	return hex.EncodeToString(hash[:])[:32] // First 32 chars of SHA256
-}
-
 // 1. Get or Create User & Generate Token
 func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail string) (string, error) {
-	// FIXED: Use a hashed version of email as external_user_id
-	// Bridge expects alphanumeric IDs without special characters
+	// FIX: Hash email to ensure valid format for external_user_id (no special chars)
 	externalID := hashEmail(userEmail)
 	var userUUID string
 
-	// --- STEP A: Try to Create the User ---
-	// Doc: "Create a user with an external user id"
-	createPayload := map[string]string{
-		"external_user_id": externalID,
-	}
-	body, _ := json.Marshal(createPayload)
+	// --- STEP A: Check if user exists (List Users) ---
+	listURL := fmt.Sprintf("%s/aggregation/users?external_user_id=%s", s.BaseURL, externalID)
+	listReq, _ := http.NewRequestWithContext(ctx, "GET", listURL, nil)
+	s.setHeaders(listReq)
 
-	createReq, err := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/aggregation/users", bytes.NewBuffer(body))
+	log.Printf("[Bridge] Checking existence for external_id: %s", externalID)
+
+	listResp, err := s.Client.Do(listReq)
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return "", fmt.Errorf("connection error checking user: %w", err)
 	}
-	s.setHeaders(createReq)
+	defer listResp.Body.Close()
 
-	// Debug logging (remove in production)
-	fmt.Printf("[Bridge] Creating user with external_id: %s\n", externalID)
-	fmt.Printf("[Bridge] Request URL: %s\n", s.BaseURL+"/aggregation/users")
-	fmt.Printf("[Bridge] Headers: Client-Id=%s..., Bridge-Version=%s\n", s.ClientID[:8], "2024-08-15")
-
-	createResp, err := s.Client.Do(createReq)
-	if err != nil {
-		return "", fmt.Errorf("connection error creating user: %w", err)
+	if listResp.StatusCode == 200 {
+		var listRes struct {
+			Resources []struct {
+				Uuid string `json:"uuid"`
+			} `json:"resources"`
+		}
+		if err := json.NewDecoder(listResp.Body).Decode(&listRes); err == nil && len(listRes.Resources) > 0 {
+			userUUID = listRes.Resources[0].Uuid
+			log.Printf("[Bridge] Found existing user UUID: %s", userUUID)
+		}
+	} else if listResp.StatusCode == 401 {
+		return "", fmt.Errorf("bridge 401 unauthorized: check api keys")
 	}
-	defer createResp.Body.Close()
 
-	respBody, _ := io.ReadAll(createResp.Body)
-	fmt.Printf("[Bridge] Create user response: %d - %s\n", createResp.StatusCode, string(respBody))
-
-	if createResp.StatusCode == 201 || createResp.StatusCode == 200 {
-		// SUCCESS: User Created
-		var res struct {
-			Uuid string `json:"uuid"`
+	// --- STEP B: Create User if not found ---
+	if userUUID == "" {
+		log.Printf("[Bridge] Creating new user for external_id: %s", externalID)
+		
+		createPayload := map[string]string{
+			"external_user_id": externalID,
 		}
-		if err := json.Unmarshal(respBody, &res); err == nil && res.Uuid != "" {
-			userUUID = res.Uuid
-			fmt.Printf("[Bridge] User created with UUID: %s\n", userUUID)
+		body, _ := json.Marshal(createPayload)
+		createReq, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/aggregation/users", bytes.NewBuffer(body))
+		s.setHeaders(createReq)
+
+		createResp, err := s.Client.Do(createReq)
+		if err != nil {
+			return "", fmt.Errorf("user creation request failed: %w", err)
 		}
-	} else if createResp.StatusCode == 409 {
-		// CONFLICT: User already exists.
-		// We must fetch them to get their UUID using external_user_id
-		fmt.Printf("[Bridge] User exists (409), fetching by external_user_id...\n")
+		defer createResp.Body.Close()
 
-		listURL := fmt.Sprintf("%s/aggregation/users?external_user_id=%s", s.BaseURL, url.QueryEscape(externalID))
-		listReq, _ := http.NewRequestWithContext(ctx, "GET", listURL, nil)
-		s.setHeaders(listReq)
-
-		listResp, err := s.Client.Do(listReq)
-		if err == nil {
-			defer listResp.Body.Close()
-			listBody, _ := io.ReadAll(listResp.Body)
-			fmt.Printf("[Bridge] List users response: %d - %s\n", listResp.StatusCode, string(listBody))
-
-			var listRes struct {
-				Resources []struct {
-					Uuid string `json:"uuid"`
-				} `json:"resources"`
+		if createResp.StatusCode == 201 {
+			var createRes struct {
+				Uuid string `json:"uuid"`
 			}
-			if err := json.Unmarshal(listBody, &listRes); err == nil && len(listRes.Resources) > 0 {
-				userUUID = listRes.Resources[0].Uuid
-				fmt.Printf("[Bridge] Found existing user UUID: %s\n", userUUID)
+			if err := json.NewDecoder(createResp.Body).Decode(&createRes); err == nil {
+				userUUID = createRes.Uuid
 			}
+		} else {
+			// Read error body for debugging
+			b, _ := io.ReadAll(createResp.Body)
+			log.Printf("[Bridge Error] Create User Failed: %s", string(b))
+			
+			// Retry listing if creation says Conflict (409)
+			if createResp.StatusCode == 409 {
+				// Recursive retry one time? Or just fail. 
+				// The LIST above should have caught it, but maybe race condition.
+				return "", fmt.Errorf("user conflict 409 but failed to list previously")
+			}
+			return "", fmt.Errorf("bridge user creation failed (%d): %s", createResp.StatusCode, string(b))
 		}
-	} else {
-		// ERROR: Something else went wrong (e.g., 400, 401)
-		return "", fmt.Errorf("bridge user creation failed (%d): %s", createResp.StatusCode, string(respBody))
 	}
 
 	if userUUID == "" {
-		return "", fmt.Errorf("could not resolve user_uuid for external_id: %s", externalID)
+		return "", fmt.Errorf("could not resolve user_uuid")
 	}
 
-	// --- STEP B: Generate Token ---
-	// Doc: "Authenticate user with the uuid"
+	// --- STEP C: Generate Token ---
 	authPayload := map[string]string{"user_uuid": userUUID}
 	authBody, _ := json.Marshal(authPayload)
-
+	
 	authReq, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/aggregation/authorization/token", bytes.NewBuffer(authBody))
 	s.setHeaders(authReq)
 
@@ -138,17 +135,16 @@ func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail stri
 	}
 	defer authResp.Body.Close()
 
-	authRespBody, _ := io.ReadAll(authResp.Body)
-	fmt.Printf("[Bridge] Token response: %d - %s\n", authResp.StatusCode, string(authRespBody))
-
 	if authResp.StatusCode != 200 {
-		return "", fmt.Errorf("bridge token failed (%d): %s", authResp.StatusCode, string(authRespBody))
+		b, _ := io.ReadAll(authResp.Body)
+		log.Printf("[Bridge Error] Token Failed: %s", string(b))
+		return "", fmt.Errorf("token error (%d): %s", authResp.StatusCode, string(b))
 	}
 
 	var tokenRes struct {
 		AccessToken string `json:"access_token"`
 	}
-	if err := json.Unmarshal(authRespBody, &tokenRes); err != nil {
+	if err := json.NewDecoder(authResp.Body).Decode(&tokenRes); err != nil {
 		return "", fmt.Errorf("token decode error: %w", err)
 	}
 
@@ -160,34 +156,32 @@ func (s *BridgeService) CreateConnectItem(ctx context.Context, userEmail string)
 	// 1. Get Token
 	accessToken, err := s.getOrCreateUserToken(ctx, userEmail)
 	if err != nil {
-		return "", fmt.Errorf("failed to get user token: %w", err)
+		return "", err
 	}
 
-	// 2. Create Connect Session
-	// FIXED: user_email is REQUIRED for long-lived connections
+	// 2. Create Link
+	// Note: We DO pass the real email here for pre-filling the UI, 
+	// even though the internal ID is hashed.
 	payload := map[string]interface{}{
 		"user_email": userEmail,
-		// Optional: Add callback_url for redirection after sync
-		// "callback_url": os.Getenv("FRONTEND_URL") + "/banking/callback",
 	}
 
 	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/aggregation/connect-sessions", bytes.NewBuffer(body))
-
-	// Add Bearer Token for User Context
+	
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	s.setHeaders(req)
 
 	resp, err := s.Client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("connect request failed: %w", err)
+		return "", fmt.Errorf("connect session request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
-	fmt.Printf("[Bridge] Connect session response: %d - %s\n", resp.StatusCode, string(respBody))
 
 	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		log.Printf("[Bridge Error] Connect Session Failed: %s", string(respBody))
 		return "", fmt.Errorf("bridge connect error (%d): %s", resp.StatusCode, string(respBody))
 	}
 
@@ -195,13 +189,13 @@ func (s *BridgeService) CreateConnectItem(ctx context.Context, userEmail string)
 		URL string `json:"url"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return "", fmt.Errorf("connect decode failed: %w", err)
+		return "", fmt.Errorf("connect decode error: %w", err)
 	}
 
 	return result.URL, nil
 }
 
-// 3. Get Providers (Public App Auth - No Token Needed)
+// 3. Get Providers (Public App Auth - No Token)
 type BridgeProvider struct {
 	ID          int    `json:"id"`
 	Name        string `json:"name"`
@@ -213,7 +207,7 @@ type BridgeProvider struct {
 
 func (s *BridgeService) GetBanks(ctx context.Context) ([]BridgeProvider, error) {
 	req, _ := http.NewRequestWithContext(ctx, "GET", s.BaseURL+"/providers?country_code=FR", nil)
-	s.setHeaders(req) // Client-ID/Secret only
+	s.setHeaders(req)
 
 	resp, err := s.Client.Do(req)
 	if err != nil {
@@ -222,11 +216,10 @@ func (s *BridgeService) GetBanks(ctx context.Context) ([]BridgeProvider, error) 
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 401 {
-		return nil, fmt.Errorf("unauthorized: check BRIDGE_CLIENT_ID/BRIDGE_CLIENT_SECRET in environment")
+		return nil, fmt.Errorf("unauthorized: check bridge_client_id/secret in render")
 	}
 	if resp.StatusCode != 200 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("status %d", resp.StatusCode)
 	}
 
 	var result struct {
@@ -241,9 +234,9 @@ func (s *BridgeService) GetBanks(ctx context.Context) ([]BridgeProvider, error) 
 
 // 4. Get Items (Needs User Token)
 type BridgeItem struct {
-	ID         int64 `json:"id"`
-	Status     int   `json:"status"`
-	ProviderID int   `json:"provider_id"`
+	ID          int64  `json:"id"`
+	Status      int    `json:"status"`
+	ProviderID  int    `json:"provider_id"`
 }
 
 func (s *BridgeService) GetItems(ctx context.Context, userEmail string) ([]BridgeItem, error) {
@@ -263,8 +256,8 @@ func (s *BridgeService) GetItems(ctx context.Context, userEmail string) ([]Bridg
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(respBody))
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(b))
 	}
 
 	var result struct {
@@ -279,15 +272,15 @@ func (s *BridgeService) GetItems(ctx context.Context, userEmail string) ([]Bridg
 
 // 5. Get Accounts (Needs User Token)
 type BridgeAccount struct {
-	ID         int64   `json:"id"`
-	ItemID     int64   `json:"item_id"`
-	Name       string  `json:"name"`
-	Balance    float64 `json:"balance"`
-	Currency   string  `json:"currency_code"`
-	IBAN       string  `json:"iban"`
-	Type       string  `json:"type"`
-	Status     string  `json:"status"`
-	DataAccess string  `json:"data_access"`
+	ID               int64   `json:"id"`
+	ItemID           int64   `json:"item_id"`
+	Name             string  `json:"name"`
+	Balance          float64 `json:"balance"`
+	Currency         string  `json:"currency_code"`
+	IBAN             string  `json:"iban"`
+	Type             string  `json:"type"`
+	Status           string  `json:"status"`
+	DataAccess       string  `json:"data_access"`
 }
 
 func (s *BridgeService) GetAccounts(ctx context.Context, userEmail string) ([]BridgeAccount, error) {
@@ -307,8 +300,8 @@ func (s *BridgeService) GetAccounts(ctx context.Context, userEmail string) ([]Br
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(respBody))
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(b))
 	}
 
 	var result struct {
@@ -321,7 +314,7 @@ func (s *BridgeService) GetAccounts(ctx context.Context, userEmail string) ([]Br
 	return result.Resources, nil
 }
 
-// 6. Refresh Item
+// 6. Refresh
 func (s *BridgeService) RefreshAccounts(ctx context.Context, userEmail string, itemID int64) error {
 	accessToken, err := s.getOrCreateUserToken(ctx, userEmail)
 	if err != nil {
@@ -339,8 +332,7 @@ func (s *BridgeService) RefreshAccounts(ctx context.Context, userEmail string, i
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 && resp.StatusCode != 202 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("status %d: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("status %d", resp.StatusCode)
 	}
 
 	return nil
