@@ -46,18 +46,22 @@ func (s *PlaidService) CreateLinkToken(ctx context.Context, userID string) (stri
 
 	// 1. Get Base URL from Environment
 	frontendURL := os.Getenv("FRONTEND_URL")
+	
+	// DEBUG LOG 1
+	fmt.Printf("[DEBUG] Raw FRONTEND_URL env var: '%s'\n", frontendURL)
+
 	if frontendURL == "" {
 		frontendURL = "http://localhost:3000" // Default for local dev
 	}
 
 	// 2. Ensure consistency: Always append a trailing slash
-	// Plaid treats "https://domain.com" and "https://domain.com/" as different URIs.
-	// We standardize on the version WITH the slash.
-	// Make sure your Plaid Dashboard Redirect URI also has the slash!
 	redirectURI := frontendURL
 	if !strings.HasSuffix(redirectURI, "/") {
 		redirectURI = redirectURI + "/"
 	}
+
+	// DEBUG LOG 2
+	fmt.Printf("[DEBUG] Final Redirect URI sent to Plaid: '%s'\n", redirectURI)
 
 	request := plaid.NewLinkTokenCreateRequest(
 		"Budget Famille",
@@ -66,7 +70,6 @@ func (s *PlaidService) CreateLinkToken(ctx context.Context, userID string) (stri
 		user,
 	)
 
-	// We specifically ask for Transactions/Balance permissions
 	request.SetProducts([]plaid.Products{plaid.PRODUCTS_TRANSACTIONS})
 
 	// 3. Set the Dynamic Redirect URI
@@ -74,6 +77,8 @@ func (s *PlaidService) CreateLinkToken(ctx context.Context, userID string) (stri
 
 	resp, _, err := s.Client.PlaidApi.LinkTokenCreate(ctx).LinkTokenCreateRequest(*request).Execute()
 	if err != nil {
+		// DEBUG LOG 3 - Print the specific error from Plaid
+		fmt.Printf("[ERROR] Plaid CreateLinkToken Failed: %v\n", formatPlaidError(err))
 		return "", formatPlaidError(err)
 	}
 
@@ -107,7 +112,6 @@ func (s *PlaidService) GetBalances(ctx context.Context, accessToken string) ([]p
 // Helper for error formatting
 func formatPlaidError(err error) error {
 	if plaidErr, ok := err.(plaid.GenericOpenAPIError); ok {
-		// Try to read the body for more details
 		return fmt.Errorf("plaid error: %s", string(plaidErr.Body()))
 	}
 	return err
