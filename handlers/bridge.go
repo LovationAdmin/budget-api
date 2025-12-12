@@ -29,8 +29,15 @@ func NewBridgeHandler(db *sql.DB) *BridgeHandler {
 
 // 1. Lister les banques disponibles
 func (h *BridgeHandler) GetBanks(c *gin.Context) {
-	// No token needed, using direct API keys
-	banks, err := h.BridgeService.GetBanks(c.Request.Context())
+	// 1. Authenticate to get token
+	token, err := h.BridgeService.GetAccessToken(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to authenticate with Bridge", "details": err.Error()})
+		return
+	}
+
+	// 2. Use token to fetch banks
+	banks, err := h.BridgeService.GetBanks(c.Request.Context(), token)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch banks", "details": err.Error()})
 		return
@@ -53,16 +60,20 @@ func (h *BridgeHandler) GetBanks(c *gin.Context) {
 func (h *BridgeHandler) CreateConnection(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 
-	// Récupérer l'email de l'utilisateur
+	token, err := h.BridgeService.GetAccessToken(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to authenticate with Bridge", "details": err.Error()})
+		return
+	}
+
 	var userEmail string
-	err := h.DB.QueryRow("SELECT email FROM users WHERE id = $1", userID).Scan(&userEmail)
+	err = h.DB.QueryRow("SELECT email FROM users WHERE id = $1", userID).Scan(&userEmail)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user email", "details": err.Error()})
 		return
 	}
 
-	// Créer une Connect Session (API v3)
-	connectURL, err := h.BridgeService.CreateConnectItem(c.Request.Context(), userEmail)
+	connectURL, err := h.BridgeService.CreateConnectItem(c.Request.Context(), token, userEmail)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create Bridge session", "details": err.Error()})
 		return
@@ -77,8 +88,14 @@ func (h *BridgeHandler) CreateConnection(c *gin.Context) {
 func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 
+	token, err := h.BridgeService.GetAccessToken(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to authenticate with Bridge"})
+		return
+	}
+
 	// Récupérer tous les comptes depuis Bridge
-	accounts, err := h.BridgeService.GetAccounts(c.Request.Context())
+	accounts, err := h.BridgeService.GetAccounts(c.Request.Context(), token)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accounts from Bridge", "details": err.Error()})
 		return
@@ -92,14 +109,13 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 		return
 	}
 
-	// Récupérer les items pour avoir les noms des banques
-	items, err := h.BridgeService.GetItems(c.Request.Context())
+	// Récupérer les items
+	items, err := h.BridgeService.GetItems(c.Request.Context(), token)
 	if err != nil {
 		fmt.Printf("Warning: Failed to fetch items: %v\n", err)
 		items = []services.BridgeItem{} 
 	}
 
-	// Créer un map des items par ID pour lookup rapide
 	itemMap := make(map[int64]services.BridgeItem)
 	for _, item := range items {
 		itemMap[item.ID] = item
@@ -108,14 +124,12 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 	accountsSynced := 0
 
 	for _, acc := range accounts {
-		// Trouver le nom de la banque via l'item
 		institutionName := "Bridge Connection"
 		
 		if item, exists := itemMap[acc.ItemID]; exists {
 			institutionName = fmt.Sprintf("Bank ID %d", item.ProviderID)
 		}
 
-		// Vérifier si la connexion existe déjà
 		var existingConnID string
 		err := h.DB.QueryRow(
 			`SELECT id FROM bank_connections 
@@ -139,7 +153,7 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 				strconv.FormatInt(acc.ItemID, 10), 
 				institutionName,
 				providerIDStr,                     
-				"v3-no-token", // No user access token stored in this flow
+				token, 
 				"",                                
 				expiresAt,
 			)
@@ -182,8 +196,14 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 func (h *BridgeHandler) RefreshBalances(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 
-	// Récupérer tous les comptes depuis Bridge
-	accounts, err := h.BridgeService.GetAccounts(c.Request.Context())
+	token, err := h.BridgeService.GetAccessToken(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to authenticate with Bridge"})
+		return
+	}
+
+	// Récupérer tous les comptes
+	accounts, err := h.BridgeService.GetAccounts(c.Request.Context(), token)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accounts from Bridge"})
 		return
