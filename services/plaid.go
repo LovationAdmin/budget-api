@@ -40,11 +40,15 @@ func NewPlaidService() *PlaidService {
 
 // 1. Create Link Token (Frontend uses this to open the widget)
 func (s *PlaidService) CreateLinkToken(ctx context.Context, userID string) (string, error) {
+	// 1. Add Dummy Contact Info to bypass the "Layer" collection screen
+	// This helps avoid the "frozen screen" bug in Sandbox by pre-identifying the user
 	user := plaid.LinkTokenCreateRequestUser{
 		ClientUserId: userID,
+		PhoneNumber:  plaid.PtrString("+33700000000"), // Dummy French mobile
+		EmailAddress: plaid.PtrString("beta-tester@budgetfamille.com"),
 	}
 
-	// 1. Get Base URL from Environment
+	// 2. Get Base URL from Environment
 	frontendURL := os.Getenv("FRONTEND_URL")
 	
 	// DEBUG LOG
@@ -54,7 +58,7 @@ func (s *PlaidService) CreateLinkToken(ctx context.Context, userID string) (stri
 		frontendURL = "http://localhost:3000" // Default for local dev
 	}
 
-	// 2. Ensure consistency: Always append a trailing slash
+	// 3. Ensure consistency: Always append a trailing slash
 	redirectURI := frontendURL
 	if !strings.HasSuffix(redirectURI, "/") {
 		redirectURI = redirectURI + "/"
@@ -63,20 +67,18 @@ func (s *PlaidService) CreateLinkToken(ctx context.Context, userID string) (stri
 	// DEBUG LOG
 	fmt.Printf("[DEBUG] Final Redirect URI sent to Plaid: '%s'\n", redirectURI)
 
-	// --- SANITY CHECK CONFIGURATION (US ONLY) ---
-	// We use "en" and "US" because these are guaranteed to be enabled in all Sandbox accounts.
-	// This rules out "Country Not Enabled" errors.
+	// 4. Build Request
 	request := plaid.NewLinkTokenCreateRequest(
 		"Budget Famille",
-		"en", 
-		[]plaid.CountryCode{plaid.COUNTRYCODE_US}, 
+		"fr", // Force French language
+		[]plaid.CountryCode{plaid.COUNTRYCODE_FR, plaid.COUNTRYCODE_US}, // Enable France & US
 		user,
 	)
 
 	// We specifically ask for Transactions/Balance permissions
 	request.SetProducts([]plaid.Products{plaid.PRODUCTS_TRANSACTIONS})
 
-	// 3. Set the Dynamic Redirect URI
+	// 5. Set the Dynamic Redirect URI
 	request.SetRedirectUri(redirectURI)
 
 	resp, _, err := s.Client.PlaidApi.LinkTokenCreate(ctx).LinkTokenCreateRequest(*request).Execute()
