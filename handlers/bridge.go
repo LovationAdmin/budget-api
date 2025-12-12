@@ -13,12 +13,14 @@ import (
 )
 
 type BridgeHandler struct {
+    DB            *sql.DB 
     Service       *services.BankingService
     BridgeService *services.BridgeService
 }
 
 func NewBridgeHandler(db *sql.DB) *BridgeHandler {
     return &BridgeHandler{
+        DB:            db,
         Service:       services.NewBankingService(db),
         BridgeService: services.NewBridgeService(),
     }
@@ -55,7 +57,7 @@ func (h *BridgeHandler) CreateConnection(c *gin.Context) {
     var user struct {
         Email string
     }
-    h.Service.DB.QueryRow("SELECT email FROM users WHERE id = $1", userID).Scan(&user.Email)
+    h.DB.QueryRow("SELECT email FROM users WHERE id = $1", userID).Scan(&user.Email)
 
     redirectURL, err := h.BridgeService.CreateConnectItem(c.Request.Context(), token, user.Email)
     if err != nil {
