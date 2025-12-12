@@ -75,7 +75,6 @@ func (h *BridgeHandler) CreateConnection(c *gin.Context) {
 }
 
 // 3. Synchroniser les items et comptes après connexion Bridge
-// Cette fonction doit être appelée périodiquement ou après une connexion réussie
 func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 
@@ -103,7 +102,9 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 	// Récupérer les items pour avoir les noms des banques
 	items, err := h.BridgeService.GetItems(c.Request.Context(), token)
 	if err != nil {
-		items = []services.BridgeItem{} // Continue même sans items
+		// Log l'erreur mais continue sans items (les noms de banque seront génériques)
+		fmt.Printf("Warning: Failed to fetch items: %v\n", err)
+		items = []services.BridgeItem{} 
 	}
 
 	// Créer un map des items par ID pour lookup rapide
@@ -118,8 +119,10 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 	for _, acc := range accounts {
 		// Trouver le nom de la banque via l'item
 		institutionName := "Bridge Connection"
+		
+		// FIXED: Use ProviderID instead of BankID
 		if item, exists := itemMap[acc.ItemID]; exists {
-			institutionName = fmt.Sprintf("Bank ID %d", item.BankID)
+			institutionName = fmt.Sprintf("Bank ID %d", item.ProviderID)
 		}
 
 		// Vérifier si la connexion existe déjà
@@ -135,17 +138,25 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 		if err == sql.ErrNoRows {
 			// Créer une nouvelle connexion
 			expiresAt := time.Now().AddDate(1, 0, 0)
+			
+			// FIXED: Ensure ProviderID is converted to string correctly
+			providerIDStr := "0"
+			if item, exists := itemMap[acc.ItemID]; exists {
+				providerIDStr = strconv.Itoa(item.ProviderID)
+			}
+
 			connID, err = h.Service.SaveConnectionWithTokens(
 				c.Request.Context(),
 				userID,
-				strconv.FormatInt(acc.ItemID, 10),
+				strconv.FormatInt(acc.ItemID, 10), // Institution ID (Item ID for unique ref)
 				institutionName,
-				strconv.FormatInt(acc.ItemID, 10),
-				token,
-				"",
+				providerIDStr,                     // Provider ID (The bank's global ID)
+				token,                             // Access Token
+				"",                                // Refresh Token (handled internally by Bridge)
 				expiresAt,
 			)
 			if err != nil {
+				fmt.Printf("Error saving connection: %v\n", err)
 				continue
 			}
 		} else {
@@ -207,7 +218,7 @@ func (h *BridgeHandler) RefreshBalances(c *gin.Context) {
 		result, err := h.DB.Exec(
 			`UPDATE bank_accounts 
 			 SET balance = $1, updated_at = NOW() 
-			 WHERE external_id = $2 
+			 WHERE external_account_id = $2 
 			 AND connection_id IN (
 				 SELECT id FROM bank_connections WHERE user_id = $3
 			 )`,
