@@ -44,15 +44,16 @@ func (s *PlaidService) CreateLinkToken(ctx context.Context, userID string) (stri
 		ClientUserId: userID,
 	}
 
-	// Dynamic Redirect URI based on environment
-	// Plaid requires the Redirect URI passed here to MATCH EXACTLY what is in the Dashboard
+	// 1. Get Base URL from Environment
 	frontendURL := os.Getenv("FRONTEND_URL")
 	if frontendURL == "" {
 		frontendURL = "http://localhost:3000" // Default for local dev
 	}
 
-	// Ensure there is a trailing slash if your Plaid Dashboard registration has one
-	// Most setups require "https://domain.com/"
+	// 2. Ensure consistency: Always append a trailing slash
+	// Plaid treats "https://domain.com" and "https://domain.com/" as different URIs.
+	// We standardize on the version WITH the slash.
+	// Make sure your Plaid Dashboard Redirect URI also has the slash!
 	redirectURI := frontendURL
 	if !strings.HasSuffix(redirectURI, "/") {
 		redirectURI = redirectURI + "/"
@@ -68,7 +69,7 @@ func (s *PlaidService) CreateLinkToken(ctx context.Context, userID string) (stri
 	// We specifically ask for Transactions/Balance permissions
 	request.SetProducts([]plaid.Products{plaid.PRODUCTS_TRANSACTIONS})
 
-	// CRITICAL FIX: Explicitly set the Redirect URI
+	// 3. Set the Dynamic Redirect URI
 	request.SetRedirectUri(redirectURI)
 
 	resp, _, err := s.Client.PlaidApi.LinkTokenCreate(ctx).LinkTokenCreateRequest(*request).Execute()
