@@ -1,220 +1,260 @@
-package handlers
+package services
 
 import (
-	"database/sql"
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
-	"strconv"
+	"os"
 	"time"
-
-	"budget-api/middleware"
-	"budget-api/services"
-
-	"github.com/gin-gonic/gin"
 )
 
-type BridgeHandler struct {
-	DB            *sql.DB
-	Service       *services.BankingService
-	BridgeService *services.BridgeService
+type BridgeService struct {
+	ClientID     string
+	ClientSecret string
+	BaseURL      string
+	Client       *http.Client
+	AccessToken  string
+	TokenExpiry  time.Time
 }
 
-func NewBridgeHandler(db *sql.DB) *BridgeHandler {
-	return &BridgeHandler{
-		DB:            db,
-		Service:       services.NewBankingService(db),
-		BridgeService: services.NewBridgeService(),
+func NewBridgeService() *BridgeService {
+	return &BridgeService{
+		ClientID:     os.Getenv("BRIDGE_CLIENT_ID"),
+		ClientSecret: os.Getenv("BRIDGE_CLIENT_SECRET"),
+		// UPDATED: Using v3 API Base URL
+		BaseURL:      "https://api.bridgeapi.io/v3",
+		Client:       &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
-// 1. Lister les banques disponibles
-func (h *BridgeHandler) GetBanks(c *gin.Context) {
-	// No token needed, using direct API keys
-	banks, err := h.BridgeService.GetBanks(c.Request.Context())
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch banks", "details": err.Error()})
-		return
-	}
-
-	// Adapt V3 Structure for Frontend
-	var displayBanks []map[string]interface{}
-	for _, b := range banks {
-		displayBanks = append(displayBanks, map[string]interface{}{
-			"id":   b.ID,
-			"name": b.Name,
-			"logo": b.Images.Logo,
-		})
-	}
-
-	c.JSON(http.StatusOK, gin.H{"banks": displayBanks})
+// Helper to set common v3 headers
+func (s *BridgeService) setHeaders(req *http.Request) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Bridge-Version", "2025-01-15") // Latest version from your doc
+	req.Header.Set("Client-Id", s.ClientID)
+	req.Header.Set("Client-Secret", s.ClientSecret)
 }
 
-// 2. Créer une Connect Session (renvoie l'URL Bridge)
-func (h *BridgeHandler) CreateConnection(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-
-	// Récupérer l'email de l'utilisateur
-	var userEmail string
-	err := h.DB.QueryRow("SELECT email FROM users WHERE id = $1", userID).Scan(&userEmail)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user email", "details": err.Error()})
-		return
+// 1. Authentification (Get Access Token)
+// Doc: POST https://api.bridgeapi.io/v3/aggregation/authorization/token
+func (s *BridgeService) GetAccessToken(ctx context.Context) (string, error) {
+	if s.AccessToken != "" && time.Now().Before(s.TokenExpiry) {
+		return s.AccessToken, nil
 	}
 
-	// Créer une Connect Session (API v3)
-	connectURL, err := h.BridgeService.CreateConnectItem(c.Request.Context(), userEmail)
+	// NOTE: In v3, some endpoints accept Client-Id/Secret headers directly,
+	// but for operations involving users, we usually generate a token.
+	// We will use the client credentials flow if implied, or just return success
+	// if we are using header-based auth for the rest.
+	
+	// Based on migration guide: "Generate authorization tokens by sending a POST request to..."
+	req, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/aggregation/authorization/token", nil)
+	s.setHeaders(req)
+
+	resp, err := s.Client.Do(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create Bridge session", "details": err.Error()})
-		return
+		return "", fmt.Errorf("bridge auth request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("bridge auth failed (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"redirect_url": connectURL,
-	})
+	var result struct {
+		AccessToken string `json:"access_token"`
+		ExpiresAt   string `json:"expires_at"` // ISO string
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("bridge auth decode failed: %w", err)
+	}
+
+	s.AccessToken = result.AccessToken
+	// Set expiry (defaulting to 1 hour safety if parse fails)
+	s.TokenExpiry = time.Now().Add(1 * time.Hour) 
+
+	return s.AccessToken, nil
 }
 
-// 3. Synchroniser les items et comptes après connexion Bridge
-func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
-	userID := middleware.GetUserID(c)
+// 2. Create Connect Session (API v3)
+// Doc: POST https://api.bridgeapi.io/v3/aggregation/connect-sessions
+func (s *BridgeService) CreateConnectItem(ctx context.Context, accessToken, userEmail string) (string, error) {
+	payload := map[string]interface{}{
+		"user_email": userEmail, 
+        // "account_types": "all", // Optional: 'payment' or 'all'
+	}
 
-	// Récupérer tous les comptes depuis Bridge
-	accounts, err := h.BridgeService.GetAccounts(c.Request.Context())
+	body, _ := json.Marshal(payload)
+	req, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/aggregation/connect-sessions", bytes.NewBuffer(body))
+    
+    // v3 uses the token generated above + standard headers
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	s.setHeaders(req)
+
+	resp, err := s.Client.Do(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accounts from Bridge", "details": err.Error()})
-		return
+		return "", fmt.Errorf("bridge create session request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		return "", fmt.Errorf("bridge create session failed (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
-	if len(accounts) == 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "No accounts found. Make sure you completed the Bridge connection.",
-			"accounts_synced": 0,
-		})
-		return
+	var result struct {
+		URL string `json:"url"` // The redirect URL for the frontend
 	}
 
-	// Récupérer les items pour avoir les noms des banques
-	items, err := h.BridgeService.GetItems(c.Request.Context())
-	if err != nil {
-		fmt.Printf("Warning: Failed to fetch items: %v\n", err)
-		items = []services.BridgeItem{} 
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("bridge create session decode failed: %w", err)
 	}
 
-	// Créer un map des items par ID pour lookup rapide
-	itemMap := make(map[int64]services.BridgeItem)
-	for _, item := range items {
-		itemMap[item.ID] = item
-	}
-
-	accountsSynced := 0
-
-	for _, acc := range accounts {
-		// Trouver le nom de la banque via l'item
-		institutionName := "Bridge Connection"
-		
-		if item, exists := itemMap[acc.ItemID]; exists {
-			institutionName = fmt.Sprintf("Bank ID %d", item.ProviderID)
-		}
-
-		// Vérifier si la connexion existe déjà
-		var existingConnID string
-		err := h.DB.QueryRow(
-			`SELECT id FROM bank_connections 
-			 WHERE user_id = $1 AND institution_id = $2`,
-			userID,
-			strconv.FormatInt(acc.ItemID, 10),
-		).Scan(&existingConnID)
-
-		var connID string
-		if err == sql.ErrNoRows {
-			expiresAt := time.Now().AddDate(1, 0, 0)
-			
-			providerIDStr := "0"
-			if item, exists := itemMap[acc.ItemID]; exists {
-				providerIDStr = strconv.Itoa(item.ProviderID)
-			}
-
-			connID, err = h.Service.SaveConnectionWithTokens(
-				c.Request.Context(),
-				userID,
-				strconv.FormatInt(acc.ItemID, 10), 
-				institutionName,
-				providerIDStr,                     
-				"v3-no-token", // No user access token stored in this flow
-				"",                                
-				expiresAt,
-			)
-			if err != nil {
-				fmt.Printf("Error saving connection: %v\n", err)
-				continue
-			}
-		} else {
-			connID = existingConnID
-		}
-
-		mask := acc.IBAN
-		if len(mask) > 4 {
-			mask = mask[len(mask)-4:]
-		}
-
-		err = h.Service.SaveAccount(
-			c.Request.Context(),
-			connID,
-			strconv.FormatInt(acc.ID, 10),
-			acc.Name,
-			mask,
-			acc.Currency,
-			acc.Balance,
-		)
-
-		if err == nil {
-			accountsSynced++
-		}
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Accounts synchronized successfully",
-		"accounts_synced": accountsSynced,
-		"total_accounts": len(accounts),
-	})
+	return result.URL, nil
 }
 
-// 4. Rafraîchir les soldes
-func (h *BridgeHandler) RefreshBalances(c *gin.Context) {
-	userID := middleware.GetUserID(c)
+// 3. Get Items (Connected Banks)
+// Doc: GET https://api.bridgeapi.io/v3/aggregation/items
+type BridgeItem struct {
+	ID          int64  `json:"id"`
+	Status      int    `json:"status"` // v3 returns int status codes (e.g. 0 for OK)
+	ProviderID  int    `json:"provider_id"` // Renamed from bank_id in v3
+}
 
-	// Récupérer tous les comptes depuis Bridge
-	accounts, err := h.BridgeService.GetAccounts(c.Request.Context())
+func (s *BridgeService) GetItems(ctx context.Context, accessToken string) ([]BridgeItem, error) {
+	req, _ := http.NewRequestWithContext(ctx, "GET", s.BaseURL+"/aggregation/items", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	s.setHeaders(req)
+
+	resp, err := s.Client.Do(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accounts from Bridge"})
-		return
+		return nil, fmt.Errorf("bridge get items request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("bridge get items failed (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
-	updatedCount := 0
-	for _, acc := range accounts {
-		accountID := strconv.FormatInt(acc.ID, 10)
-
-		result, err := h.DB.Exec(
-			`UPDATE bank_accounts 
-			 SET balance = $1, updated_at = NOW() 
-			 WHERE external_account_id = $2 
-			 AND connection_id IN (
-				 SELECT id FROM bank_connections WHERE user_id = $3
-			 )`,
-			acc.Balance,
-			accountID,
-			userID,
-		)
-
-		if err == nil {
-			rows, _ := result.RowsAffected()
-			if rows > 0 {
-				updatedCount++
-			}
-		}
+	var result struct {
+		Resources []BridgeItem `json:"resources"`
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Balances refreshed",
-		"updated_count": updatedCount,
-	})
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("bridge get items decode failed: %w", err)
+	}
+
+	return result.Resources, nil
+}
+
+// 4. Get Accounts
+// Doc: GET https://api.bridgeapi.io/v3/aggregation/accounts
+type BridgeAccount struct {
+	ID               int64   `json:"id"`
+	ItemID           int64   `json:"item_id"`
+	Name             string  `json:"name"`
+	Balance          float64 `json:"balance"`
+	Currency         string  `json:"currency_code"`
+	IBAN             string  `json:"iban"`
+	Type             string  `json:"type"`
+	Status           string  `json:"status"` // e.g. "ok"
+    DataAccess       string  `json:"data_access"` // New in v3: 'enabled' or 'disabled'
+}
+
+func (s *BridgeService) GetAccounts(ctx context.Context, accessToken string) ([]BridgeAccount, error) {
+	req, _ := http.NewRequestWithContext(ctx, "GET", s.BaseURL+"/aggregation/accounts", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	s.setHeaders(req)
+
+	resp, err := s.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("bridge get accounts request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("bridge get accounts failed (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Resources []BridgeAccount `json:"resources"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("bridge get accounts decode failed: %w", err)
+	}
+
+	return result.Resources, nil
+}
+
+// 5. Get Providers (Replaces Banks)
+// Doc: GET https://api.bridgeapi.io/v3/providers
+type BridgeProvider struct {
+	ID               int      `json:"id"`
+	Name             string   `json:"name"`
+    CountryCode      string   `json:"country_code"` // Renamed from country in v3
+	Images           struct {
+        Logo string `json:"logo"`
+    } `json:"images"` // New structure in v3
+}
+
+func (s *BridgeService) GetBanks(ctx context.Context, accessToken string) ([]BridgeProvider, error) {
+	// v3 endpoint is /providers, param is country_code
+	req, _ := http.NewRequestWithContext(ctx, "GET", s.BaseURL+"/providers?country_code=FR", nil)
+	
+    // Providers might be public or require just client auth, but we send token if we have it
+    if accessToken != "" {
+        req.Header.Set("Authorization", "Bearer "+accessToken)
+    }
+	s.setHeaders(req)
+
+	resp, err := s.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("bridge get providers request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("bridge get providers failed (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Resources []BridgeProvider `json:"resources"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("bridge get providers decode failed: %w", err)
+	}
+
+	return result.Resources, nil
+}
+
+// 6. Refresh Accounts
+// Doc: POST https://api.bridgeapi.io/v3/aggregation/items/{id}/refresh
+func (s *BridgeService) RefreshAccounts(ctx context.Context, accessToken string, itemID int64) error {
+	req, _ := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/aggregation/items/%d/refresh", s.BaseURL, itemID), nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	s.setHeaders(req)
+
+	resp, err := s.Client.Do(req)
+	if err != nil {
+		return fmt.Errorf("bridge refresh request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 && resp.StatusCode != 202 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("bridge refresh failed (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
 }
