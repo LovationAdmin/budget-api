@@ -15,8 +15,6 @@ func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB) {
 
 	rg.POST("/auth/signup", authHandler.Signup)
 	rg.POST("/auth/login", authHandler.Login)
-	
-	// NEW: Route pour la vérification d'email
 	rg.GET("/auth/verify", authHandler.VerifyEmail)
 	rg.POST("/auth/verify/resend", authHandler.ResendVerification)
 }
@@ -39,7 +37,7 @@ func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.GET("/budgets/:id/data", h.GetBudgetData)
 	rg.PUT("/budgets/:id/data", h.UpdateBudgetData)
 
-	// Invitation routes handled by the Budget Handler (InviteMember, AcceptInvitation)
+	// Invitation routes
 	rg.POST("/budgets/:id/invite", h.InviteMember)
 	rg.POST("/invitations/accept", h.AcceptInvitation)
 }
@@ -50,7 +48,7 @@ func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	
 	rg.GET("/user/profile", userHandler.GetProfile)
 	rg.PUT("/user/profile", userHandler.UpdateProfile)
-	rg.POST("/user/password", userHandler.ChangePassword) 
+	rg.POST("/user/password", userHandler.ChangePassword)
 	rg.POST("/user/2fa/setup", userHandler.SetupTOTP)
 	rg.POST("/user/2fa/verify", userHandler.VerifyTOTP)
 	rg.POST("/user/2fa/disable", userHandler.DisableTOTP)
@@ -66,18 +64,11 @@ func SetupInvitationRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.DELETE("/budgets/:id/members/:member_id", invitationHandler.RemoveMember)
 }
 
-// SetupBankingRoutes sets up the new banking feature routes
+// SetupBankingRoutes sets up the banking feature routes
 func SetupBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	bankingHandler := handlers.NewBankingHandler(db)
 
-    // Bridge API routes
-    rg.GET("/banking/bridge/banks", bridgeHandler.GetBanks)
-    rg.POST("/banking/bridge/connect", bridgeHandler.CreateConnection)
-    rg.GET("/banking/bridge/callback", bridgeHandler.HandleCallback)
-    rg.POST("/banking/bridge/refresh", bridgeHandler.RefreshBalances)
-    	
 	rg.GET("/banking/connections", bankingHandler.GetConnections)
 	rg.DELETE("/banking/connections/:id", bankingHandler.DeleteConnection)
 	rg.PUT("/banking/accounts/:id", bankingHandler.UpdateAccountPool)
-	
 }
