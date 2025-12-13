@@ -114,7 +114,7 @@ func (s *BankingService) DeleteConnection(ctx context.Context, connectionID stri
 	})
 }
 
-// SaveConnectionWithTokens saves the connection LINKED TO A BUDGET
+// SaveConnectionWithTokens saves the connection LINKED TO A BUDGET (Upsert Logic)
 func (s *BankingService) SaveConnectionWithTokens(ctx context.Context, userID, budgetID, institutionID, institutionName, providerConnID, accessToken, refreshToken string, expiresAt time.Time) (string, error) {
 	// 1. Encrypt Tokens
 	encAccess, err := utils.Encrypt([]byte(accessToken))
@@ -126,8 +126,24 @@ func (s *BankingService) SaveConnectionWithTokens(ctx context.Context, userID, b
 		return "", err
 	}
 
-	connID := uuid.New().String()
+    // 2. Check if connection exists for this budget (Upsert Logic)
+    var existingID string
+    err = s.db.QueryRowContext(ctx, 
+        "SELECT id FROM bank_connections WHERE provider_connection_id = $1 AND budget_id = $2", 
+        providerConnID, budgetID).Scan(&existingID)
 
+    if err == nil {
+        // UPDATE Existing
+        _, err = s.db.ExecContext(ctx, `
+            UPDATE bank_connections 
+            SET encrypted_access_token = $1, encrypted_refresh_token = $2, expires_at = $3, updated_at = NOW(), status = 'active'
+            WHERE id = $4
+        `, encAccess, encRefresh, expiresAt, existingID)
+        return existingID, err
+    }
+
+    // INSERT New
+	connID := uuid.New().String()
 	query := `
 		INSERT INTO bank_connections (id, user_id, budget_id, institution_id, institution_name, provider_connection_id, encrypted_access_token, encrypted_refresh_token, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -138,6 +154,21 @@ func (s *BankingService) SaveConnectionWithTokens(ctx context.Context, userID, b
 
 // SaveAccount saves a bank account linked to a connection
 func (s *BankingService) SaveAccount(ctx context.Context, connID, externalID, name, mask, currency string, balance float64) error {
+    // Basic upsert on ID logic is tricky without a unique constraint on external_account_id
+    // For now, we attempt insert, if duplicated we might want to handle cleaning up duplicates later
+    // or add a unique constraint on (external_account_id, connection_id).
+    
+    // To be safe and simple: Check existence
+    var exists int
+    s.db.QueryRowContext(ctx, "SELECT 1 FROM bank_accounts WHERE external_account_id = $1 AND connection_id = $2", externalID, connID).Scan(&exists)
+
+    if exists == 1 {
+        _, err := s.db.ExecContext(ctx, 
+            "UPDATE bank_accounts SET balance = $1, name = $2, last_synced_at = NOW() WHERE external_account_id = $3 AND connection_id = $4",
+            balance, name, externalID, connID)
+        return err
+    }
+
 	insertQuery := `
 		INSERT INTO bank_accounts (id, connection_id, external_account_id, name, mask, currency, balance, last_synced_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
