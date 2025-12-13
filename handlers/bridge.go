@@ -72,7 +72,7 @@ func (h *BridgeHandler) CreateConnection(c *gin.Context) {
 // 3. Synchroniser les items et comptes DANS LE BUDGET ACTUEL
 func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 	userID := middleware.GetUserID(c)
-	budgetID := c.Param("id") // <--- IMPORTANT : Budget ID from URL
+	budgetID := c.Param("id")
 
 	if budgetID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Budget ID required"})
@@ -82,10 +82,11 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 	var userEmail string
 	err := h.DB.QueryRow("SELECT email FROM users WHERE id = $1", userID).Scan(&userEmail)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user email", "details": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user email"})
 		return
 	}
 
+	// 1. Récupérer TOUS les comptes depuis Bridge
 	accounts, err := h.BridgeService.GetAccounts(c.Request.Context(), userEmail)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accounts from Bridge", "details": err.Error()})
@@ -97,6 +98,7 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 		return
 	}
 
+	// 2. Récupérer les Items (pour avoir le nom des banques)
 	items, _ := h.BridgeService.GetItems(c.Request.Context(), userEmail)
 	itemMap := make(map[int64]services.BridgeItem)
 	for _, item := range items {
@@ -105,50 +107,38 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 
 	accountsSynced := 0
 
+	// 3. Boucle simplifiée : On sauvegarde (Upsert) la connexion puis le compte
 	for _, acc := range accounts {
+		// Nom de la banque
 		institutionName := "Bridge Connection"
+		providerIDStr := "0"
 		if item, exists := itemMap[acc.ItemID]; exists {
 			institutionName = fmt.Sprintf("Bank ID %d", item.ProviderID)
+			providerIDStr = strconv.Itoa(item.ProviderID)
 		}
 
-		// Check existing connection FOR THIS BUDGET
-		var existingConnID string
-		err := h.DB.QueryRow(
-			`SELECT id FROM bank_connections 
-			 WHERE budget_id = $1 AND institution_id = $2`,
+		// A. Sauvegarder/Récupérer la Connexion (UPSERT géré par le service)
+		// On utilise ItemID (string) comme identifiant unique de la connexion Bridge
+		itemIDStr := strconv.FormatInt(acc.ItemID, 10)
+		
+		connID, err := h.Service.SaveConnectionWithTokens(
+			c.Request.Context(),
+			userID,
 			budgetID,
-			strconv.FormatInt(acc.ItemID, 10),
-		).Scan(&existingConnID)
+			itemIDStr,       // Institution ID (interne)
+			institutionName, // Nom
+			itemIDStr,       // Provider Connection ID (Unique key pour l'Upsert)
+			"bridge-v3-managed", // Token placeholder
+			"",
+			time.Now().AddDate(1, 0, 0),
+		)
 
-		var connID string
-		if err == sql.ErrNoRows {
-			// CREATE NEW CONNECTION LINKED TO THIS BUDGET
-			expiresAt := time.Now().AddDate(1, 0, 0)
-			
-			providerIDStr := "0"
-			if item, exists := itemMap[acc.ItemID]; exists {
-				providerIDStr = strconv.Itoa(item.ProviderID)
-			}
-
-			connID, err = h.Service.SaveConnectionWithTokens(
-				c.Request.Context(),
-				userID,
-				budgetID, // <--- Saving Budget ID
-				strconv.FormatInt(acc.ItemID, 10), 
-				institutionName,
-				providerIDStr,                     
-				"bridge-v3-managed",
-				"",                                
-				expiresAt,
-			)
-			if err != nil {
-				fmt.Printf("Error saving connection: %v\n", err)
-				continue
-			}
-		} else {
-			connID = existingConnID
+		if err != nil {
+			fmt.Printf("Error ensuring connection for account %s: %v\n", acc.Name, err)
+			continue
 		}
 
+		// B. Sauvegarder le Compte (UPSERT géré par le service)
 		mask := acc.IBAN
 		if len(mask) > 4 {
 			mask = mask[len(mask)-4:]
@@ -157,7 +147,7 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 		err = h.Service.SaveAccount(
 			c.Request.Context(),
 			connID,
-			strconv.FormatInt(acc.ID, 10),
+			strconv.FormatInt(acc.ID, 10), // External Account ID
 			acc.Name,
 			mask,
 			acc.Currency,
@@ -166,6 +156,8 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 
 		if err == nil {
 			accountsSynced++
+		} else {
+			fmt.Printf("Error saving account %s: %v\n", acc.Name, err)
 		}
 	}
 
