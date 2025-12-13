@@ -10,6 +10,7 @@ import (
 	
 	"budget-api/config"
 	"budget-api/middleware"
+	"budget-api/handlers" // Assurez-vous que handlers inclut le nouveau ws.go
 	"budget-api/routes"
 )
 
@@ -31,24 +32,26 @@ func main() {
 		log.Fatal("Failed to run migrations:", err)
 	}
 
+	// Initialize WebSocket Handler
+	wsHandler := handlers.NewWSHandler()
+
 	// Initialize Gin router
 	router := gin.Default()
 
-	// CORS configuration - MULTIPLE ORIGINS SUPPORT
+	// CORS configuration
 	frontendURL := os.Getenv("FRONTEND_URL")
 	if frontendURL == "" {
 		frontendURL = "http://localhost:3000" // Fallback pour dev local
 	}
 
-	// Support multiple origins (custom domain + Vercel URL)
 	allowedOrigins := []string{
 		frontendURL,
 		"https://budgetfamille.com",
 		"https://www.budgetfamille.com",
-		"https://budget-ui-two.vercel.app", // Keep for testing
+		"https://budget-ui-two.vercel.app",
 	}
 
-	log.Printf("🌐 CORS: Allowing origins:")
+	log.Printf("🌍 CORS: Allowing origins:")
 	for _, origin := range allowedOrigins {
 		log.Printf("   - %s", origin)
 	}
@@ -59,13 +62,13 @@ func main() {
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
-		MaxAge:           86400, // 24 hours
+		MaxAge:           86400, 
 	}
 	router.Use(cors.New(corsConfig))
 
-	// Add logging middleware to debug requests
+	// Add logging middleware
 	router.Use(func(c *gin.Context) {
-		log.Printf("📥 %s %s from %s", c.Request.Method, c.Request.URL.Path, c.ClientIP())
+		log.Printf("📨 %s %s from %s", c.Request.Method, c.Request.URL.Path, c.ClientIP())
 		c.Next()
 	})
 
@@ -75,14 +78,18 @@ func main() {
 	// API v1 routes
 	v1 := router.Group("/api/v1")
 	{
-		// Public routes (no auth required)
+		// Public routes
 		routes.SetupAuthRoutes(v1, db)
 		
-		// Protected routes (auth required)
+		// WebSocket Route (Protected check handled inside handler or via query token)
+		v1.GET("/ws/budgets/:id", wsHandler.HandleWS)
+
+		// Protected routes
 		protected := v1.Group("/")
 		protected.Use(middleware.AuthMiddleware())
 		{
-			routes.SetupBudgetRoutes(protected, db)
+			// Note: Vous devrez mettre à jour SetupBudgetRoutes pour passer wsHandler si vous voulez broadcaster des events
+			routes.SetupBudgetRoutes(protected, db) 
 			routes.SetupUserRoutes(protected, db)
 			routes.SetupInvitationRoutes(protected, db)
 			routes.SetupBankingRoutes(protected, db)
@@ -94,7 +101,7 @@ func main() {
 		c.JSON(200, gin.H{
 			"status": "ok",
 			"service": "budget-api",
-			"frontend_url": frontendURL, // Pour debug
+			"frontend_url": frontendURL,
 		})
 	})
 
@@ -105,7 +112,6 @@ func main() {
 	}
 
 	log.Printf("🚀 Server starting on port %s", port)
-	log.Printf("🌐 Frontend URL: %s", frontendURL)
 	if err := router.Run(":" + port); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}
