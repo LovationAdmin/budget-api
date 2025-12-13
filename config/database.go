@@ -110,7 +110,6 @@ func RunMigrations(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_audit_logs_budget_id ON audit_logs(budget_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)`,
 
-		// Compatibility checks
 		`ALTER TABLE invitations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT`,
 
@@ -123,7 +122,7 @@ func RunMigrations(db *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_email_verifications_token ON email_verifications(token)`,
 
-		// --- NEW BANKING TABLES ---
+		// --- BANKING TABLES UPDATED ---
 		`CREATE TABLE IF NOT EXISTS bank_connections (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -137,6 +136,10 @@ func RunMigrations(db *sql.DB) error {
 			created_at TIMESTAMP DEFAULT NOW(),
 			updated_at TIMESTAMP DEFAULT NOW()
 		)`,
+
+        // MIGRATION CRITIQUE : Ajouter budget_id
+        `ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS budget_id UUID REFERENCES budgets(id) ON DELETE CASCADE`,
+        // Pour les anciennes données, on ne peut pas deviner le budget, elles resteront NULL ou devront être supprimées manuellement
 
 		`CREATE TABLE IF NOT EXISTS bank_accounts (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -152,12 +155,12 @@ func RunMigrations(db *sql.DB) error {
 
 		`CREATE INDEX IF NOT EXISTS idx_bank_connections_user ON bank_connections(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_bank_accounts_connection ON bank_accounts(connection_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_bank_connections_budget ON bank_connections(budget_id)`, // Nouvel index
 
-		// --- NEW: GLOBAL DICTIONARY FOR CATEGORIZATION ---
         `CREATE TABLE IF NOT EXISTS label_mappings (
             normalized_label VARCHAR(255) PRIMARY KEY,
             category VARCHAR(50) NOT NULL,
-            source VARCHAR(20) DEFAULT 'AI', -- 'STATIC', 'AI', 'MANUAL'
+            source VARCHAR(20) DEFAULT 'AI',
             created_at TIMESTAMP DEFAULT NOW()
         )`,
         `CREATE INDEX IF NOT EXISTS idx_label_mappings_label ON label_mappings(normalized_label)`,

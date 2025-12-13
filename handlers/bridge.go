@@ -29,14 +29,12 @@ func NewBridgeHandler(db *sql.DB) *BridgeHandler {
 
 // 1. Lister les banques disponibles
 func (h *BridgeHandler) GetBanks(c *gin.Context) {
-	// No args needed, uses Client Credentials internally
 	banks, err := h.BridgeService.GetBanks(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch banks", "details": err.Error()})
 		return
 	}
 
-	// Adapt V3 Structure for Frontend
 	var displayBanks []map[string]interface{}
 	for _, b := range banks {
 		displayBanks = append(displayBanks, map[string]interface{}{
@@ -49,11 +47,10 @@ func (h *BridgeHandler) GetBanks(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"banks": displayBanks})
 }
 
-// 2. Créer une Connect Session (renvoie l'URL Bridge)
+// 2. Créer une Connect Session
 func (h *BridgeHandler) CreateConnection(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 
-	// Récupérer l'email de l'utilisateur
 	var userEmail string
 	err := h.DB.QueryRow("SELECT email FROM users WHERE id = $1", userID).Scan(&userEmail)
 	if err != nil {
@@ -61,7 +58,6 @@ func (h *BridgeHandler) CreateConnection(c *gin.Context) {
 		return
 	}
 
-	// Pass userEmail to Service
 	connectURL, err := h.BridgeService.CreateConnectItem(c.Request.Context(), userEmail)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create Bridge session", "details": err.Error()})
@@ -73,11 +69,16 @@ func (h *BridgeHandler) CreateConnection(c *gin.Context) {
 	})
 }
 
-// 3. Synchroniser les items et comptes après connexion Bridge
+// 3. Synchroniser les items et comptes DANS LE BUDGET ACTUEL
 func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 	userID := middleware.GetUserID(c)
+	budgetID := c.Param("id") // <--- IMPORTANT : Budget ID from URL
 
-	// Récupérer l'email de l'utilisateur
+	if budgetID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Budget ID required"})
+		return
+	}
+
 	var userEmail string
 	err := h.DB.QueryRow("SELECT email FROM users WHERE id = $1", userID).Scan(&userEmail)
 	if err != nil {
@@ -85,7 +86,6 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 		return
 	}
 
-	// Pass userEmail to Service
 	accounts, err := h.BridgeService.GetAccounts(c.Request.Context(), userEmail)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accounts from Bridge", "details": err.Error()})
@@ -93,20 +93,11 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 	}
 
 	if len(accounts) == 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "No accounts found. Make sure you completed the Bridge connection.",
-			"accounts_synced": 0,
-		})
+		c.JSON(http.StatusOK, gin.H{"message": "No accounts found.", "accounts_synced": 0})
 		return
 	}
 
-	// Récupérer les items pour avoir les noms des banques
-	items, err := h.BridgeService.GetItems(c.Request.Context(), userEmail)
-	if err != nil {
-		fmt.Printf("Warning: Failed to fetch items: %v\n", err)
-		items = []services.BridgeItem{} 
-	}
-
+	items, _ := h.BridgeService.GetItems(c.Request.Context(), userEmail)
 	itemMap := make(map[int64]services.BridgeItem)
 	for _, item := range items {
 		itemMap[item.ID] = item
@@ -115,25 +106,23 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 	accountsSynced := 0
 
 	for _, acc := range accounts {
-		// Trouver le nom de la banque via l'item
 		institutionName := "Bridge Connection"
-		
 		if item, exists := itemMap[acc.ItemID]; exists {
 			institutionName = fmt.Sprintf("Bank ID %d", item.ProviderID)
 		}
 
-		// Vérifier si la connexion existe déjà
+		// Check existing connection FOR THIS BUDGET
 		var existingConnID string
 		err := h.DB.QueryRow(
 			`SELECT id FROM bank_connections 
-			 WHERE user_id = $1 AND institution_id = $2`,
-			userID,
+			 WHERE budget_id = $1 AND institution_id = $2`,
+			budgetID,
 			strconv.FormatInt(acc.ItemID, 10),
 		).Scan(&existingConnID)
 
 		var connID string
 		if err == sql.ErrNoRows {
-			// Créer une nouvelle connexion
+			// CREATE NEW CONNECTION LINKED TO THIS BUDGET
 			expiresAt := time.Now().AddDate(1, 0, 0)
 			
 			providerIDStr := "0"
@@ -141,15 +130,14 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 				providerIDStr = strconv.Itoa(item.ProviderID)
 			}
 
-			// NOTE: We don't have a long-lived access token here because the service handles it dynamically via email.
-			// We store a placeholder so the DB constraint is satisfied.
 			connID, err = h.Service.SaveConnectionWithTokens(
 				c.Request.Context(),
 				userID,
+				budgetID, // <--- Saving Budget ID
 				strconv.FormatInt(acc.ItemID, 10), 
 				institutionName,
 				providerIDStr,                     
-				"bridge-v3-managed", // Placeholder, service generates tokens on fly
+				"bridge-v3-managed",
 				"",                                
 				expiresAt,
 			)
@@ -161,13 +149,11 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 			connID = existingConnID
 		}
 
-		// Extraire les 4 derniers chiffres de l'IBAN
 		mask := acc.IBAN
 		if len(mask) > 4 {
 			mask = mask[len(mask)-4:]
 		}
 
-		// Sauvegarder ou mettre à jour le compte
 		err = h.Service.SaveAccount(
 			c.Request.Context(),
 			connID,
@@ -186,78 +172,47 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Accounts synchronized successfully",
 		"accounts_synced": accountsSynced,
-		"total_accounts": len(accounts),
 	})
 }
 
-// 4. Rafraîchir les soldes
+// 4. Refresh Balances (Global ou Budget scoped)
 func (h *BridgeHandler) RefreshBalances(c *gin.Context) {
 	userID := middleware.GetUserID(c)
-
-	// Récupérer l'email de l'utilisateur
 	var userEmail string
-	err := h.DB.QueryRow("SELECT email FROM users WHERE id = $1", userID).Scan(&userEmail)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user email", "details": err.Error()})
-		return
-	}
-
-	// Pass userEmail to Service
+	h.DB.QueryRow("SELECT email FROM users WHERE id = $1", userID).Scan(&userEmail)
+	
 	accounts, err := h.BridgeService.GetAccounts(c.Request.Context(), userEmail)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accounts from Bridge"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accounts"})
 		return
 	}
 
-	// Mettre à jour les soldes en DB
 	updatedCount := 0
 	for _, acc := range accounts {
 		accountID := strconv.FormatInt(acc.ID, 10)
-
-		// Mise à jour du solde
 		result, err := h.DB.Exec(
-			`UPDATE bank_accounts 
-			 SET balance = $1, updated_at = NOW() 
-			 WHERE external_account_id = $2 
-			 AND connection_id IN (
-				 SELECT id FROM bank_connections WHERE user_id = $3
-			 )`,
-			acc.Balance,
-			accountID,
-			userID,
+			`UPDATE bank_accounts SET balance = $1, updated_at = NOW() WHERE external_account_id = $2`,
+			acc.Balance, accountID,
 		)
-
 		if err == nil {
 			rows, _ := result.RowsAffected()
-			if rows > 0 {
-				updatedCount++
-			}
+			if rows > 0 { updatedCount++ }
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Balances refreshed",
-		"updated_count": updatedCount,
-	})
+	c.JSON(http.StatusOK, gin.H{"message": "Balances refreshed", "updated_count": updatedCount})
 }
 
-// 5. Lister les transactions récentes
+// 5. Get Transactions
 func (h *BridgeHandler) GetTransactions(c *gin.Context) {
 	userID := middleware.GetUserID(c)
-
 	var userEmail string
-	err := h.DB.QueryRow("SELECT email FROM users WHERE id = $1", userID).Scan(&userEmail)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "User not found"})
-		return
-	}
-
-	// Appel Service
+	h.DB.QueryRow("SELECT email FROM users WHERE id = $1", userID).Scan(&userEmail)
+	
 	transactions, err := h.BridgeService.GetTransactions(c.Request.Context(), userEmail, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch transactions", "details": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch transactions"})
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{"transactions": transactions})
 }

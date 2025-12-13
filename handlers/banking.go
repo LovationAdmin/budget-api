@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"net/http"
 
-	"budget-api/middleware"
 	"budget-api/models"
 	"budget-api/services"
 
@@ -21,21 +20,21 @@ func NewBankingHandler(db *sql.DB) *BankingHandler {
 	}
 }
 
-// GetConnections liste toutes les connexions bancaires de l'utilisateur
+// GetConnections liste les connexions DU BUDGET
 func (h *BankingHandler) GetConnections(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+	budgetID := c.Param("id") // Récupéré depuis l'URL /budgets/:id/banking/connections
+	if budgetID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Budget ID required"})
 		return
 	}
 
-	connections, err := h.Service.GetUserConnections(c.Request.Context(), userID)
+	connections, err := h.Service.GetBudgetConnections(c.Request.Context(), budgetID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch connections"})
 		return
 	}
 
-	totalReal, err := h.Service.GetRealityCheckSum(c.Request.Context(), userID)
+	totalReal, err := h.Service.GetRealityCheckSum(c.Request.Context(), budgetID)
 	if err != nil {
 		totalReal = 0
 	}
@@ -46,10 +45,9 @@ func (h *BankingHandler) GetConnections(c *gin.Context) {
 	})
 }
 
-// UpdateAccountPool met à jour le flag "is_savings_pool" d'un compte
+// UpdateAccountPool met à jour le flag "is_savings_pool"
 func (h *BankingHandler) UpdateAccountPool(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	accountID := c.Param("id")
+	accountID := c.Param("account_id")
 
 	var req models.UpdateAccountPoolRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -57,7 +55,7 @@ func (h *BankingHandler) UpdateAccountPool(c *gin.Context) {
 		return
 	}
 
-	err := h.Service.UpdateAccountPool(c.Request.Context(), accountID, userID, req.IsSavingsPool)
+	err := h.Service.UpdateAccountPool(c.Request.Context(), accountID, req.IsSavingsPool)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update account"})
 		return
@@ -68,10 +66,9 @@ func (h *BankingHandler) UpdateAccountPool(c *gin.Context) {
 
 // DeleteConnection supprime une connexion bancaire
 func (h *BankingHandler) DeleteConnection(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	connID := c.Param("id")
+	connID := c.Param("connection_id")
 
-	err := h.Service.DeleteConnection(c.Request.Context(), connID, userID)
+	err := h.Service.DeleteConnection(c.Request.Context(), connID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete connection"})
 		return
