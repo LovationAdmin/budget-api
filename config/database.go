@@ -152,6 +152,15 @@ func RunMigrations(db *sql.DB) error {
 
 		`CREATE INDEX IF NOT EXISTS idx_bank_connections_user ON bank_connections(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_bank_accounts_connection ON bank_accounts(connection_id)`,
+
+		// --- NEW: GLOBAL DICTIONARY FOR CATEGORIZATION ---
+        `CREATE TABLE IF NOT EXISTS label_mappings (
+            normalized_label VARCHAR(255) PRIMARY KEY,
+            category VARCHAR(50) NOT NULL,
+            source VARCHAR(20) DEFAULT 'AI', -- 'STATIC', 'AI', 'MANUAL'
+            created_at TIMESTAMP DEFAULT NOW()
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_label_mappings_label ON label_mappings(normalized_label)`,
 	}
 
 	for _, migration := range migrations {

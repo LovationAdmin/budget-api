@@ -11,4 +11,5 @@ require (
 	github.com/lib/pq v1.10.9
 	github.com/pquerna/otp v1.4.0
 	golang.org/x/crypto v0.17.0
+	github.com/sashabaranov/go-openai
 )

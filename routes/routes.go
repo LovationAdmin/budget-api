@@ -68,6 +68,7 @@ func SetupInvitationRoutes(rg *gin.RouterGroup, db *sql.DB) {
 func SetupBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	bankingHandler := handlers.NewBankingHandler(db)
 	bridgeHandler := handlers.NewBridgeHandler(db)
+	catHandler := handlers.NewCategorizationHandler(db)
 
 	// Routes de base (gestion des connexions et comptes)
 	rg.GET("/banking/connections", bankingHandler.GetConnections)
@@ -79,4 +80,7 @@ func SetupBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.POST("/banking/bridge/connect", bridgeHandler.CreateConnection)
 	rg.POST("/banking/bridge/sync", bridgeHandler.SyncAccounts)
 	rg.POST("/banking/bridge/refresh", bridgeHandler.RefreshBalances)
+
+	// Appelé par le frontend quand l'utilisateur perd le focus sur le champ "Label" d'une charge
+    rg.POST("/categorize", catHandler.CategorizeLabel)
 }
