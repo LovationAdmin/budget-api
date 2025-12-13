@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"time"
 
 	"budget-api/models"
@@ -98,8 +97,6 @@ func (s *BankingService) GetRealityCheckSum(ctx context.Context, budgetID string
 
 // UpdateAccountPool toggles whether an account counts towards the Reality Check
 func (s *BankingService) UpdateAccountPool(ctx context.Context, accountID string, isSavingsPool bool) error {
-    // Note: Pour simplifier, on vérifie juste que l'account existe. 
-    // Idéalement on vérifierait que l'user a accès au budget de cet account.
 	_, err := s.db.ExecContext(ctx, "UPDATE bank_accounts SET is_savings_pool = $1 WHERE id = $2", isSavingsPool, accountID)
 	return err
 }
@@ -141,15 +138,6 @@ func (s *BankingService) SaveConnectionWithTokens(ctx context.Context, userID, b
 
 // SaveAccount saves a bank account linked to a connection
 func (s *BankingService) SaveAccount(ctx context.Context, connID, externalID, name, mask, currency string, balance float64) error {
-    // Upsert (Update if exists, Insert if new) based on external_account_id AND connection_id
-    query := `
-        INSERT INTO bank_accounts (id, connection_id, external_account_id, name, mask, currency, balance, last_synced_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-        ON CONFLICT (id) DO UPDATE 
-        SET balance = $7, last_synced_at = NOW()
-    `
-    // Note: Simple insert for now as we don't have UNIQUE constraint on external_id yet in schema provided previously.
-    // Assuming clean insert for MVP.
 	insertQuery := `
 		INSERT INTO bank_accounts (id, connection_id, external_account_id, name, mask, currency, balance, last_synced_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
