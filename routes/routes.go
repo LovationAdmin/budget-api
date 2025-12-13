@@ -80,6 +80,7 @@ func SetupBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.POST("/banking/bridge/connect", bridgeHandler.CreateConnection)
 	rg.POST("/banking/bridge/sync", bridgeHandler.SyncAccounts)
 	rg.POST("/banking/bridge/refresh", bridgeHandler.RefreshBalances)
+	rg.GET("/banking/bridge/transactions", bridgeHandler.GetTransactions)
 
 	// Appelé par le frontend quand l'utilisateur perd le focus sur le champ "Label" d'une charge
     rg.POST("/categorize", catHandler.CategorizeLabel)

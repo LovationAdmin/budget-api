@@ -240,3 +240,24 @@ func (h *BridgeHandler) RefreshBalances(c *gin.Context) {
 		"updated_count": updatedCount,
 	})
 }
+
+// 5. Lister les transactions récentes
+func (h *BridgeHandler) GetTransactions(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+
+	var userEmail string
+	err := h.DB.QueryRow("SELECT email FROM users WHERE id = $1", userID).Scan(&userEmail)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "User not found"})
+		return
+	}
+
+	// Appel Service
+	transactions, err := h.BridgeService.GetTransactions(c.Request.Context(), userEmail, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch transactions", "details": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"transactions": transactions})
+}
