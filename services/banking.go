@@ -152,27 +152,20 @@ func (s *BankingService) SaveConnectionWithTokens(ctx context.Context, userID, b
 	return connID, err
 }
 
-// SaveAccount saves a bank account linked to a connection
+// SaveAccount saves a bank account using UPSERT logic (Update if exists, Insert if new)
 func (s *BankingService) SaveAccount(ctx context.Context, connID, externalID, name, mask, currency string, balance float64) error {
-    // Basic upsert on ID logic is tricky without a unique constraint on external_account_id
-    // For now, we attempt insert, if duplicated we might want to handle cleaning up duplicates later
-    // or add a unique constraint on (external_account_id, connection_id).
-    
-    // To be safe and simple: Check existence
-    var exists int
-    s.db.QueryRowContext(ctx, "SELECT 1 FROM bank_accounts WHERE external_account_id = $1 AND connection_id = $2", externalID, connID).Scan(&exists)
-
-    if exists == 1 {
-        _, err := s.db.ExecContext(ctx, 
-            "UPDATE bank_accounts SET balance = $1, name = $2, last_synced_at = NOW() WHERE external_account_id = $3 AND connection_id = $4",
-            balance, name, externalID, connID)
-        return err
-    }
-
-	insertQuery := `
+	// Syntaxe PostgreSQL pour "Si conflit, alors met à jour"
+	query := `
 		INSERT INTO bank_accounts (id, connection_id, external_account_id, name, mask, currency, balance, last_synced_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+		ON CONFLICT (connection_id, external_account_id) 
+		DO UPDATE SET 
+			balance = EXCLUDED.balance,
+			name = EXCLUDED.name,
+			last_synced_at = NOW()
 	`
-	_, err := s.db.ExecContext(ctx, insertQuery, uuid.New().String(), connID, externalID, name, mask, currency, balance)
+	
+	// On génère un nouvel UUID, mais il ne sera utilisé que si c'est une nouvelle insertion
+	_, err := s.db.ExecContext(ctx, query, uuid.New().String(), connID, externalID, name, mask, currency, balance)
 	return err
 }

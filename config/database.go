@@ -171,6 +171,10 @@ func RunMigrations(db *sql.DB) error {
             created_at TIMESTAMP DEFAULT NOW()
         )`,
         `CREATE INDEX IF NOT EXISTS idx_label_mappings_label ON label_mappings(normalized_label)`,
+
+		// FIX: Empêcher les doublons de comptes bancaires
+        `ALTER TABLE bank_accounts DROP CONSTRAINT IF EXISTS unique_account_per_connection`, // Nettoyage au cas où
+        `ALTER TABLE bank_accounts ADD CONSTRAINT unique_account_per_connection UNIQUE (connection_id, external_account_id)`,
 	}
 
 	for _, migration := range migrations {
