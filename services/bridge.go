@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -21,10 +23,11 @@ type BridgeService struct {
 }
 
 func NewBridgeService() *BridgeService {
+	// Security: Trim spaces to prevent 401 errors
 	return &BridgeService{
 		ClientID:     strings.TrimSpace(os.Getenv("BRIDGE_CLIENT_ID")),
 		ClientSecret: strings.TrimSpace(os.Getenv("BRIDGE_CLIENT_SECRET")),
-		BaseURL:      "https://api.bridgeapi.io/v3",
+		BaseURL:      "https://api.bridgeapi.io/v3", // V3 Base URL
 		Client:       &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -37,7 +40,8 @@ func hashEmail(email string) string {
 
 func (s *BridgeService) setHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Bridge-Version", "2021-06-01") // Version stable
+	// Utilisation de la version spécifiée dans votre code
+	req.Header.Set("Bridge-Version", "2025-01-15") 
 	req.Header.Set("Client-Id", s.ClientID)
 	req.Header.Set("Client-Secret", s.ClientSecret)
 }
@@ -47,14 +51,14 @@ func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail stri
 	externalID := hashEmail(userEmail)
 	var userUUID string
 
-	// A. Check Existence
+	// --- STEP A: Check if user exists (List Users) ---
 	listURL := fmt.Sprintf("%s/aggregation/users?external_user_id=%s", s.BaseURL, externalID)
 	listReq, _ := http.NewRequestWithContext(ctx, "GET", listURL, nil)
 	s.setHeaders(listReq)
 
 	listResp, err := s.Client.Do(listReq)
 	if err != nil {
-		return "", fmt.Errorf("connection error: %w", err)
+		return "", fmt.Errorf("connection error checking user: %w", err)
 	}
 	defer listResp.Body.Close()
 
@@ -69,16 +73,18 @@ func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail stri
 		}
 	}
 
-	// B. Create if not found
+	// --- STEP B: Create User if not found ---
 	if userUUID == "" {
-		createPayload := map[string]string{"external_user_id": externalID}
+		createPayload := map[string]string{
+			"external_user_id": externalID,
+		}
 		body, _ := json.Marshal(createPayload)
 		createReq, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/aggregation/users", bytes.NewBuffer(body))
 		s.setHeaders(createReq)
 
 		createResp, err := s.Client.Do(createReq)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("user creation request failed: %w", err)
 		}
 		defer createResp.Body.Close()
 
@@ -90,27 +96,43 @@ func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail stri
 				userUUID = createRes.Uuid
 			}
 		} else {
-			return "", fmt.Errorf("failed to create bridge user")
+			b, _ := io.ReadAll(createResp.Body)
+			log.Printf("[Bridge Error] Create User Failed: %s", string(b))
+			if createResp.StatusCode == 409 {
+				return "", fmt.Errorf("user conflict (409) - check bridge dashboard")
+			}
+			return "", fmt.Errorf("bridge user creation failed (%d): %s", createResp.StatusCode, string(b))
 		}
 	}
 
-	// C. Generate Token
+	if userUUID == "" {
+		return "", fmt.Errorf("could not resolve user_uuid")
+	}
+
+	// --- STEP C: Generate Token ---
 	authPayload := map[string]string{"user_uuid": userUUID}
 	authBody, _ := json.Marshal(authPayload)
+	
 	authReq, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/aggregation/authorization/token", bytes.NewBuffer(authBody))
 	s.setHeaders(authReq)
 
 	authResp, err := s.Client.Do(authReq)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("token request error: %w", err)
 	}
 	defer authResp.Body.Close()
+
+	if authResp.StatusCode != 200 {
+		b, _ := io.ReadAll(authResp.Body)
+		log.Printf("[Bridge Error] Token Failed: %s", string(b))
+		return "", fmt.Errorf("token error (%d): %s", authResp.StatusCode, string(b))
+	}
 
 	var tokenRes struct {
 		AccessToken string `json:"access_token"`
 	}
 	if err := json.NewDecoder(authResp.Body).Decode(&tokenRes); err != nil {
-		return "", err
+		return "", fmt.Errorf("token decode error: %w", err)
 	}
 
 	return tokenRes.AccessToken, nil
@@ -123,7 +145,10 @@ func (s *BridgeService) CreateConnectItem(ctx context.Context, userEmail string)
 		return "", err
 	}
 
-	payload := map[string]interface{}{"user_email": userEmail} // Pre-fill email for UI
+	payload := map[string]interface{}{
+		"user_email": userEmail,
+	}
+
 	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/aggregation/connect-sessions", bytes.NewBuffer(body))
 	
@@ -132,21 +157,28 @@ func (s *BridgeService) CreateConnectItem(ctx context.Context, userEmail string)
 
 	resp, err := s.Client.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("connect session request failed: %w", err)
 	}
 	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		log.Printf("[Bridge Error] Connect Session Failed: %s", string(respBody))
+		return "", fmt.Errorf("bridge connect error (%d)", resp.StatusCode)
+	}
 
 	var result struct {
 		URL string `json:"url"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("connect decode error: %w", err)
 	}
 
 	return result.URL, nil
 }
 
-// 3. Get Providers (Public)
+// 3. Get Providers
 type BridgeProvider struct {
 	ID          int    `json:"id"`
 	Name        string `json:"name"`
@@ -166,12 +198,17 @@ func (s *BridgeService) GetBanks(ctx context.Context) ([]BridgeProvider, error) 
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("status %d", resp.StatusCode)
+	}
+
 	var result struct {
 		Resources []BridgeProvider `json:"resources"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
+
 	return result.Resources, nil
 }
 
@@ -198,12 +235,18 @@ func (s *BridgeService) GetItems(ctx context.Context, userEmail string) ([]Bridg
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(b))
+	}
+
 	var result struct {
 		Resources []BridgeItem `json:"resources"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
+
 	return result.Resources, nil
 }
 
@@ -233,12 +276,20 @@ func (s *BridgeService) GetAccounts(ctx context.Context, userEmail string) ([]Br
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		// Important: Log body to debug
+		log.Printf("[Bridge Error] Get Accounts: %s", string(b))
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(b))
+	}
+
 	var result struct {
 		Resources []BridgeAccount `json:"resources"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
+
 	return result.Resources, nil
 }
 
@@ -248,14 +299,27 @@ func (s *BridgeService) RefreshAccounts(ctx context.Context, userEmail string, i
 	if err != nil {
 		return err
 	}
+
 	req, _ := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/aggregation/items/%d/refresh", s.BaseURL, itemID), nil)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	s.setHeaders(req)
-	s.Client.Do(req)
+
+	resp, err := s.Client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 && resp.StatusCode != 202 {
+		b, _ := io.ReadAll(resp.Body)
+		log.Printf("[Bridge Error] Refresh: %s", string(b))
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+
 	return nil
 }
 
-// 7. Get Transactions (Last 40 Days Logic)
+// 7. Get Transactions (Optimized: Last 40 Days + Pagination)
 type BridgeTransaction struct {
 	ID          int64   `json:"id"`
 	AccountID   int64   `json:"account_id"`
@@ -271,40 +335,61 @@ func (s *BridgeService) GetTransactions(ctx context.Context, userEmail string, a
 		return nil, err
 	}
 
-	// Fetch recent transactions (limit 100 to cover 40 days easily)
-	req, _ := http.NewRequestWithContext(ctx, "GET", s.BaseURL+"/aggregation/transactions?limit=100&sort=-date", nil)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	s.setHeaders(req)
+	// Calculer la date d'il y a 40 jours (Format ISO 8601 Requis par Bridge)
+	// Example format: 2024-11-24T12:46:18.971Z
+	sinceDate := time.Now().AddDate(0, 0, -40).Format(time.RFC3339)
 
-	resp, err := s.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+	var allTransactions []BridgeTransaction
+	
+	// URL initiale avec filtre de date
+	nextURI := fmt.Sprintf("/aggregation/transactions?limit=50&sort=-date&since=%s", sinceDate)
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("bridge error %d", resp.StatusCode)
-	}
+	// Boucle de pagination
+	for nextURI != "" {
+		// Construire l'URL complète
+		// Attention: next_uri de Bridge inclut déjà "/v3", parfois non. On gère le cas relatif.
+		fullURL := s.BaseURL + strings.TrimPrefix(nextURI, "/v3")
+		if strings.HasPrefix(nextURI, "http") {
+			fullURL = nextURI
+		}
 
-	var result struct {
-		Resources []BridgeTransaction `json:"resources"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
+		req, _ := http.NewRequestWithContext(ctx, "GET", fullURL, nil)
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+		s.setHeaders(req)
 
-	// Filter Logic: Last 40 Days Only
-	var recentTransactions []BridgeTransaction
-	cutoffDate := time.Now().AddDate(0, 0, -40) // 40 days ago
+		resp, err := s.Client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
 
-	for _, tx := range result.Resources {
-		// Parse transaction date
-		txDate, err := time.Parse("2006-01-02", tx.Date)
-		if err == nil && txDate.After(cutoffDate) {
-			// Keep it if it's recent
-			recentTransactions = append(recentTransactions, tx)
+		if resp.StatusCode != 200 {
+			log.Printf("[Bridge Error] Transactions: %s", string(bodyBytes))
+			return nil, fmt.Errorf("bridge error %d", resp.StatusCode)
+		}
+
+		var result struct {
+			Resources  []BridgeTransaction `json:"resources"`
+			Pagination struct {
+				NextURI *string `json:"next_uri"` // Pointeur pour gérer null
+			} `json:"pagination"`
+		}
+		
+		if err := json.Unmarshal(bodyBytes, &result); err != nil {
+			return nil, err
+		}
+
+		allTransactions = append(allTransactions, result.Resources...)
+
+		// Préparer la prochaine page
+		if result.Pagination.NextURI != nil && *result.Pagination.NextURI != "" && *result.Pagination.NextURI != "null" {
+			nextURI = *result.Pagination.NextURI
+		} else {
+			nextURI = ""
 		}
 	}
 
-	return recentTransactions, nil
+	return allTransactions, nil
 }
