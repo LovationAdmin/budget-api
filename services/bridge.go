@@ -23,6 +23,7 @@ type BridgeService struct {
 }
 
 func NewBridgeService() *BridgeService {
+	// Security: Trim spaces to prevent 401 errors
 	return &BridgeService{
 		ClientID:     strings.TrimSpace(os.Getenv("BRIDGE_CLIENT_ID")),
 		ClientSecret: strings.TrimSpace(os.Getenv("BRIDGE_CLIENT_SECRET")),
@@ -31,6 +32,7 @@ func NewBridgeService() *BridgeService {
 	}
 }
 
+// hashEmail creates a safe external_user_id from an email
 func hashEmail(email string) string {
 	hash := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email))))
 	return hex.EncodeToString(hash[:])
@@ -48,6 +50,7 @@ func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail stri
 	externalID := hashEmail(userEmail)
 	var userUUID string
 
+	// --- STEP A: Check if user exists (List Users) ---
 	listURL := fmt.Sprintf("%s/aggregation/users?external_user_id=%s", s.BaseURL, externalID)
 	listReq, _ := http.NewRequestWithContext(ctx, "GET", listURL, nil)
 	s.setHeaders(listReq)
@@ -69,6 +72,7 @@ func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail stri
 		}
 	}
 
+	// --- STEP B: Create User if not found ---
 	if userUUID == "" {
 		createPayload := map[string]string{
 			"external_user_id": externalID,
@@ -92,6 +96,7 @@ func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail stri
 			}
 		} else {
 			b, _ := io.ReadAll(createResp.Body)
+			log.Printf("[Bridge Error] Create User Failed: %s", string(b))
 			if createResp.StatusCode == 409 {
 				return "", fmt.Errorf("user conflict (409)")
 			}
@@ -103,6 +108,7 @@ func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail stri
 		return "", fmt.Errorf("could not resolve user_uuid")
 	}
 
+	// --- STEP C: Generate Token ---
 	authPayload := map[string]string{"user_uuid": userUUID}
 	authBody, _ := json.Marshal(authPayload)
 	
@@ -117,6 +123,7 @@ func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail stri
 
 	if authResp.StatusCode != 200 {
 		b, _ := io.ReadAll(authResp.Body)
+		log.Printf("[Bridge Error] Token Failed: %s", string(b))
 		return "", fmt.Errorf("token error (%d): %s", authResp.StatusCode, string(b))
 	}
 
@@ -130,7 +137,7 @@ func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail stri
 	return tokenRes.AccessToken, nil
 }
 
-// 2. Create Connect Session (CORRIGÉ: Accepte 3 arguments)
+// 2. Create Connect Session (FIXED: Accepts redirectURL)
 func (s *BridgeService) CreateConnectItem(ctx context.Context, userEmail string, redirectURL string) (string, error) {
 	accessToken, err := s.getOrCreateUserToken(ctx, userEmail)
 	if err != nil {
@@ -140,13 +147,14 @@ func (s *BridgeService) CreateConnectItem(ctx context.Context, userEmail string,
 	payload := map[string]interface{}{
 		"user_email": userEmail,
 	}
+	// Add redirect_url if provided
 	if redirectURL != "" {
 		payload["redirect_url"] = redirectURL
 	}
 
 	body, _ := json.Marshal(payload)
 	
-	// Debug Log pour voir ce qu'on envoie
+	// Debug log
 	log.Printf("[Bridge Debug] Sending Payload: %s", string(body))
 
 	req, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/aggregation/connect-sessions", bytes.NewBuffer(body))
@@ -163,7 +171,6 @@ func (s *BridgeService) CreateConnectItem(ctx context.Context, userEmail string,
 	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != 200 && resp.StatusCode != 201 {
-		// Log précis de l'erreur
 		log.Printf("[Bridge Error] Connect Session Failed: %s", string(respBody))
 		return "", fmt.Errorf("bridge connect error (%d): %s", resp.StatusCode, string(respBody))
 	}
@@ -325,7 +332,7 @@ type BridgeTransaction struct {
 	Amount      float64 `json:"amount"`
 	Currency    string  `json:"currency_code"`
 	Description string  `json:"clean_description"`
-	Date        string  `json:"date"`
+	Date        string  `json:"date"` // YYYY-MM-DD
 }
 
 func (s *BridgeService) GetTransactions(ctx context.Context, userEmail string, accountIDs []string) ([]BridgeTransaction, error) {
@@ -334,11 +341,15 @@ func (s *BridgeService) GetTransactions(ctx context.Context, userEmail string, a
 		return nil, err
 	}
 
+	// Calculate date for last 40 days
 	sinceDate := time.Now().AddDate(0, 0, -40).Format(time.RFC3339)
+
 	var allTransactions []BridgeTransaction
 	
+	// Initial URL
 	nextURI := fmt.Sprintf("/aggregation/transactions?limit=50&sort=-date&since=%s", sinceDate)
 
+	// Pagination loop
 	for nextURI != "" {
 		fullURL := s.BaseURL + strings.TrimPrefix(nextURI, "/v3")
 		if strings.HasPrefix(nextURI, "http") {

@@ -27,7 +27,7 @@ func NewBridgeHandler(db *sql.DB) *BridgeHandler {
 	}
 }
 
-// 1. Lister les banques disponibles
+// 1. List Available Banks
 func (h *BridgeHandler) GetBanks(c *gin.Context) {
 	banks, err := h.BridgeService.GetBanks(c.Request.Context())
 	if err != nil {
@@ -47,12 +47,11 @@ func (h *BridgeHandler) GetBanks(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"banks": displayBanks})
 }
 
-// Structure pour lire le JSON du frontend
 type CreateConnectionRequest struct {
 	RedirectURL string `json:"redirect_url"`
 }
 
-// 2. Créer une Connect Session
+// 2. Create Connect Session
 func (h *BridgeHandler) CreateConnection(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 
@@ -63,23 +62,20 @@ func (h *BridgeHandler) CreateConnection(c *gin.Context) {
 		return
 	}
 
-	// 1. Lire l'URL de redirection envoyée par le frontend
+	// Read Redirect URL from frontend
 	var req CreateConnectionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fmt.Println("Warning: No JSON body provided or invalid format")
 	}
 
-	// Sécurité : Si pas d'URL fournie, on ne plante pas mais Bridge risque de ne pas savoir où revenir
-	// Vous pouvez mettre une URL par défaut ici si vous voulez (ex: votre site de prod)
 	redirectURL := req.RedirectURL
 	if redirectURL == "" {
 		fmt.Println("Warning: redirect_url is empty")
 	}
 
-	// 2. Passer l'URL au service (3 arguments obligatoires maintenant)
+	// Call Service with 3 args
 	connectURL, err := h.BridgeService.CreateConnectItem(c.Request.Context(), userEmail, redirectURL)
 	if err != nil {
-		// Le message d'erreur sera loggué par le service
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create Bridge session", "details": err.Error()})
 		return
 	}
@@ -89,7 +85,7 @@ func (h *BridgeHandler) CreateConnection(c *gin.Context) {
 	})
 }
 
-// 3. Synchroniser les items et comptes DANS LE BUDGET ACTUEL
+// 3. Sync Accounts
 func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	budgetID := c.Param("id")
@@ -106,7 +102,7 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 		return
 	}
 
-	// 1. Récupérer TOUS les comptes depuis Bridge
+	// 1. Fetch Accounts from Bridge
 	accounts, err := h.BridgeService.GetAccounts(c.Request.Context(), userEmail)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accounts from Bridge", "details": err.Error()})
@@ -118,7 +114,7 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 		return
 	}
 
-	// 2. Récupérer les Items (pour avoir le nom des banques)
+	// 2. Fetch Items for Bank Names
 	items, _ := h.BridgeService.GetItems(c.Request.Context(), userEmail)
 	itemMap := make(map[int64]services.BridgeItem)
 	for _, item := range items {
@@ -127,9 +123,8 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 
 	accountsSynced := 0
 
-	// 3. Boucle simplifiée : On sauvegarde (Upsert) la connexion puis le compte
+	// 3. Loop & Upsert
 	for _, acc := range accounts {
-		// Nom de la banque et ID Provider
 		institutionName := "Bridge Connection"
 		providerIDStr := "0"
 		
@@ -138,18 +133,17 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 			providerIDStr = strconv.Itoa(item.ProviderID)
 		}
 
-		// A. Sauvegarder/Récupérer la Connexion (UPSERT géré par le service)
-		// On utilise ItemID (string) comme identifiant unique de la connexion Bridge (un Item = une connexion bancaire)
+		// Use ItemID as the unique identifier for the connection
 		itemIDStr := strconv.FormatInt(acc.ItemID, 10)
 		
 		connID, err := h.Service.SaveConnectionWithTokens(
 			c.Request.Context(),
 			userID,
 			budgetID,
-			providerIDStr,   // Institution ID (ID de la banque, ex: 5 (BNP))
-			institutionName, // Nom (ex: Bank ID 5)
-			itemIDStr,       // Provider Connection ID (Unique key pour l'Upsert: ItemID de Bridge)
-			"bridge-v3-managed", // Token placeholder
+			providerIDStr,   // Institution ID (e.g., 5)
+			institutionName, // Name
+			itemIDStr,       // Provider Connection ID (Unique Key: ItemID)
+			"bridge-v3-managed",
 			"",
 			time.Now().AddDate(1, 0, 0),
 		)
@@ -159,7 +153,6 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 			continue
 		}
 
-		// B. Sauvegarder le Compte (UPSERT géré par le service)
 		mask := acc.IBAN
 		if len(mask) > 4 {
 			mask = mask[len(mask)-4:]
@@ -188,7 +181,7 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 	})
 }
 
-// 4. Refresh Balances (Global ou Budget scoped)
+// 4. Refresh Balances
 func (h *BridgeHandler) RefreshBalances(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	var userEmail string
@@ -241,7 +234,7 @@ func (h *BridgeHandler) GetTransactions(c *gin.Context) {
 	for _, t := range transactions {
 		uniqueID := fmt.Sprintf("%d-%d", t.ID, t.AccountID)
 		if t.ID == 0 {
-			uniqueID = strconv.FormatInt(time.Now().UnixNano(), 10) // Fallback simple
+			uniqueID = strconv.FormatInt(time.Now().UnixNano(), 10)
 		}
 
 		displayTransactions = append(displayTransactions, DisplayTransaction{
