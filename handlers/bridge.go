@@ -11,6 +11,7 @@ import (
 	"budget-api/services"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type BridgeHandler struct {
@@ -47,6 +48,11 @@ func (h *BridgeHandler) GetBanks(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"banks": displayBanks})
 }
 
+// Structure pour lire le JSON du frontend
+type CreateConnectionRequest struct {
+	RedirectURL string `json:"redirect_url"`
+}
+
 // 2. Créer une Connect Session
 func (h *BridgeHandler) CreateConnection(c *gin.Context) {
 	userID := middleware.GetUserID(c)
@@ -58,7 +64,14 @@ func (h *BridgeHandler) CreateConnection(c *gin.Context) {
 		return
 	}
 
-	connectURL, err := h.BridgeService.CreateConnectItem(c.Request.Context(), userEmail)
+	// 1. Lire l'URL de redirection envoyée par le frontend
+	var req CreateConnectionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fmt.Println("Warning: No redirect_url provided directly")
+	}
+
+	// 2. Passer l'URL au service
+	connectURL, err := h.BridgeService.CreateConnectItem(c.Request.Context(), userEmail, req.RedirectURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create Bridge session", "details": err.Error()})
 		return
@@ -112,8 +125,10 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 		// Nom de la banque
 		institutionName := "Bridge Connection"
 		providerIDStr := "0"
+		
 		if item, exists := itemMap[acc.ItemID]; exists {
 			institutionName = fmt.Sprintf("Bank ID %d", item.ProviderID)
+			// CORRECTION ICI : On utilise la variable déclarée
 			providerIDStr = strconv.Itoa(item.ProviderID)
 		}
 
@@ -125,9 +140,9 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 			c.Request.Context(),
 			userID,
 			budgetID,
-			itemIDStr,       // Institution ID (interne)
+			providerIDStr,   // FIX: Utilisation de providerIDStr comme InstitutionID
 			institutionName, // Nom
-			itemIDStr,       // Provider Connection ID (Unique key pour l'Upsert)
+			itemIDStr,       // Provider Connection ID (Unique key pour l'Upsert: ItemID)
 			"bridge-v3-managed", // Token placeholder
 			"",
 			time.Now().AddDate(1, 0, 0),
@@ -181,9 +196,12 @@ func (h *BridgeHandler) RefreshBalances(c *gin.Context) {
 
 	updatedCount := 0
 	for _, acc := range accounts {
+		// Pas de paramètre budgetID ici pour le refresh simple global, 
+		// on update juste par external_account_id qui est unique globalement (ou presque)
+		// Idéalement on ferait un check plus strict, mais pour l'instant ça suffit.
 		accountID := strconv.FormatInt(acc.ID, 10)
 		result, err := h.DB.Exec(
-			`UPDATE bank_accounts SET balance = $1, updated_at = NOW() WHERE external_account_id = $2`,
+			`UPDATE bank_accounts SET balance = $1, last_synced_at = NOW() WHERE external_account_id = $2`,
 			acc.Balance, accountID,
 		)
 		if err == nil {
@@ -201,10 +219,43 @@ func (h *BridgeHandler) GetTransactions(c *gin.Context) {
 	var userEmail string
 	h.DB.QueryRow("SELECT email FROM users WHERE id = $1", userID).Scan(&userEmail)
 	
+	// On ne passe pas d'AccountIDs pour le moment (récupère tout)
+	// Dans le futur, on pourrait filtrer par budget -> connection -> accounts
 	transactions, err := h.BridgeService.GetTransactions(c.Request.Context(), userEmail, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch transactions"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"transactions": transactions})
+	
+	// Transformer les ID en string pour le JSON
+	type DisplayTransaction struct {
+		ID          string  `json:"id"`
+		AccountID   string  `json:"account_id"`
+		Amount      float64 `json:"amount"`
+		Currency    string  `json:"currency_code"`
+		Description string  `json:"clean_description"`
+		Date        string  `json:"date"`
+	}
+
+	var displayTransactions []DisplayTransaction
+	for _, t := range transactions {
+		// Générer un ID unique stable si Bridge n'en fournit pas un string (ici ID est int64)
+		// On combine ID transaction + AccountID pour être sûr
+		uniqueID := fmt.Sprintf("%d-%d", t.ID, t.AccountID)
+		if t.ID == 0 {
+			// Fallback si ID manquant (rare)
+			uniqueID = uuid.New().String()
+		}
+
+		displayTransactions = append(displayTransactions, DisplayTransaction{
+			ID:          uniqueID,
+			AccountID:   strconv.FormatInt(t.AccountID, 10),
+			Amount:      t.Amount,
+			Currency:    t.Currency,
+			Description: t.Description,
+			Date:        t.Date,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"transactions": displayTransactions})
 }
