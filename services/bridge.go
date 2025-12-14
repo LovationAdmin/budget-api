@@ -27,7 +27,7 @@ func NewBridgeService() *BridgeService {
 	return &BridgeService{
 		ClientID:     strings.TrimSpace(os.Getenv("BRIDGE_CLIENT_ID")),
 		ClientSecret: strings.TrimSpace(os.Getenv("BRIDGE_CLIENT_SECRET")),
-		BaseURL:      "https://api.bridgeapi.io/v3",
+		BaseURL:      "https://api.bridgeapi.io/v3", // V3 Base URL
 		Client:       &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -40,6 +40,7 @@ func hashEmail(email string) string {
 
 func (s *BridgeService) setHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
+	// Utilisation de la version spécifiée dans votre code
 	req.Header.Set("Bridge-Version", "2025-01-15") 
 	req.Header.Set("Client-Id", s.ClientID)
 	req.Header.Set("Client-Secret", s.ClientSecret)
@@ -137,26 +138,19 @@ func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail stri
 	return tokenRes.AccessToken, nil
 }
 
-// 2. Create Connect Session (FIXED: Accepts redirectURL)
-func (s *BridgeService) CreateConnectItem(ctx context.Context, userEmail string, redirectURL string) (string, error) {
+// 2. Create Connect Session (VERSION SIMPLE : 2 Arguments)
+func (s *BridgeService) CreateConnectItem(ctx context.Context, userEmail string) (string, error) {
 	accessToken, err := s.getOrCreateUserToken(ctx, userEmail)
 	if err != nil {
 		return "", err
 	}
 
+	// On n'envoie QUE l'email pour éviter l'erreur "Invalid body content"
 	payload := map[string]interface{}{
 		"user_email": userEmail,
 	}
-	// Add redirect_url if provided
-	if redirectURL != "" {
-		payload["redirect_url"] = redirectURL
-	}
 
 	body, _ := json.Marshal(payload)
-	
-	// Debug log
-	log.Printf("[Bridge Debug] Sending Payload: %s", string(body))
-
 	req, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/aggregation/connect-sessions", bytes.NewBuffer(body))
 	
 	req.Header.Set("Authorization", "Bearer "+accessToken)
@@ -341,15 +335,15 @@ func (s *BridgeService) GetTransactions(ctx context.Context, userEmail string, a
 		return nil, err
 	}
 
-	// Calculate date for last 40 days
+	// Calculer la date d'il y a 40 jours (Format ISO 8601 Requis par Bridge)
 	sinceDate := time.Now().AddDate(0, 0, -40).Format(time.RFC3339)
 
 	var allTransactions []BridgeTransaction
 	
-	// Initial URL
+	// URL initiale avec filtre de date
 	nextURI := fmt.Sprintf("/aggregation/transactions?limit=50&sort=-date&since=%s", sinceDate)
 
-	// Pagination loop
+	// Boucle de pagination
 	for nextURI != "" {
 		fullURL := s.BaseURL + strings.TrimPrefix(nextURI, "/v3")
 		if strings.HasPrefix(nextURI, "http") {
@@ -376,7 +370,7 @@ func (s *BridgeService) GetTransactions(ctx context.Context, userEmail string, a
 		var result struct {
 			Resources  []BridgeTransaction `json:"resources"`
 			Pagination struct {
-				NextURI *string `json:"next_uri"`
+				NextURI *string `json:"next_uri"` // Pointeur pour gérer null
 			} `json:"pagination"`
 		}
 		
