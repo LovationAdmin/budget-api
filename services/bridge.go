@@ -27,7 +27,7 @@ func NewBridgeService() *BridgeService {
 	return &BridgeService{
 		ClientID:     strings.TrimSpace(os.Getenv("BRIDGE_CLIENT_ID")),
 		ClientSecret: strings.TrimSpace(os.Getenv("BRIDGE_CLIENT_SECRET")),
-		BaseURL:      "https://api.bridgeapi.io/v3", // V3 Base URL
+		BaseURL:      "https://api.bridgeapi.io/v3",
 		Client:       &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -40,7 +40,6 @@ func hashEmail(email string) string {
 
 func (s *BridgeService) setHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
-	// Utilisation de la version spécifiée dans votre code
 	req.Header.Set("Bridge-Version", "2025-01-15") 
 	req.Header.Set("Client-Id", s.ClientID)
 	req.Header.Set("Client-Secret", s.ClientSecret)
@@ -99,6 +98,7 @@ func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail stri
 			b, _ := io.ReadAll(createResp.Body)
 			log.Printf("[Bridge Error] Create User Failed: %s", string(b))
 			if createResp.StatusCode == 409 {
+				// Conflict: User might exist but list failed or race condition. Try to proceed or fail clearly.
 				return "", fmt.Errorf("user conflict (409) - check bridge dashboard")
 			}
 			return "", fmt.Errorf("bridge user creation failed (%d): %s", createResp.StatusCode, string(b))
@@ -139,7 +139,7 @@ func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail stri
 }
 
 // 2. Create Connect Session
-// MISE A JOUR : Accepte maintenant redirectURL
+// CORRECTION : Ajout du 3ème paramètre `redirectURL` pour correspondre au Handler
 func (s *BridgeService) CreateConnectItem(ctx context.Context, userEmail string, redirectURL string) (string, error) {
 	accessToken, err := s.getOrCreateUserToken(ctx, userEmail)
 	if err != nil {
@@ -149,10 +149,10 @@ func (s *BridgeService) CreateConnectItem(ctx context.Context, userEmail string,
 	payload := map[string]interface{}{
 		"user_email": userEmail,
 	}
-    // AJOUT : Ajoute l'URL de redirection si fournie
-    if redirectURL != "" {
-        payload["redirect_url"] = redirectURL
-    }
+	// CORRECTION : On injecte l'URL si elle est fournie
+	if redirectURL != "" {
+		payload["redirect_url"] = redirectURL
+	}
 
 	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/aggregation/connect-sessions", bytes.NewBuffer(body))
@@ -283,7 +283,6 @@ func (s *BridgeService) GetAccounts(ctx context.Context, userEmail string) ([]Br
 
 	if resp.StatusCode != 200 {
 		b, _ := io.ReadAll(resp.Body)
-		// Important: Log body to debug
 		log.Printf("[Bridge Error] Get Accounts: %s", string(b))
 		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(b))
 	}
