@@ -93,6 +93,7 @@ func main() {
 			routes.SetupUserRoutes(protected, db)
 			routes.SetupInvitationRoutes(protected, db)
 			routes.SetupBankingRoutes(protected, db)
+			routes.SetupAdminRoutes(protected, db)
 		}
 	}
 
