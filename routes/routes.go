@@ -74,3 +74,11 @@ func SetupBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.POST("/categorize", catHandler.CategorizeLabel)
     rg.GET("/banking/bridge/banks", bridgeHandler.GetBanks)
 }
+
+func SetupAdminRoutes(rg *gin.RouterGroup, db *sql.DB) {
+	adminHandler := &handlers.AdminHandler{DB: db}
+	
+	// Migration endpoints
+	rg.POST("/admin/migrate-budgets", adminHandler.MigrateAllBudgets)
+	rg.POST("/admin/migrate-budget/:id", adminHandler.MigrateSingleBudget)
+}
