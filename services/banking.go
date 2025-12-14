@@ -114,29 +114,35 @@ func (s *BankingService) DeleteConnection(ctx context.Context, connectionID stri
 	})
 }
 
-// SaveConnectionWithTokens : Version UPSERT Robuste
+// SaveConnectionWithTokens saves the connection LINKED TO A BUDGET (Upsert Logic)
 func (s *BankingService) SaveConnectionWithTokens(ctx context.Context, userID, budgetID, institutionID, institutionName, providerConnID, accessToken, refreshToken string, expiresAt time.Time) (string, error) {
-	// Encrypt dummy tokens (ou réels si on les avait)
-	encAccess, _ := utils.Encrypt([]byte(accessToken))
-	encRefresh, _ := utils.Encrypt([]byte(refreshToken))
+	// 1. Encrypt Tokens
+	encAccess, err := utils.Encrypt([]byte(accessToken))
+	if err != nil {
+		return "", err
+	}
+	encRefresh, err := utils.Encrypt([]byte(refreshToken))
+	if err != nil {
+		return "", err
+	}
 
-    // 1. Chercher si la connexion existe déjà pour ce budget
+    // 2. Check if connection exists for this budget (Upsert Logic)
     var existingID string
-    err := s.db.QueryRowContext(ctx, 
+    err = s.db.QueryRowContext(ctx, 
         "SELECT id FROM bank_connections WHERE provider_connection_id = $1 AND budget_id = $2", 
         providerConnID, budgetID).Scan(&existingID)
 
     if err == nil {
-        // CAS 1 : Elle existe -> On met à jour (timestamp) et on renvoie l'ID
+        // UPDATE Existing
         _, err = s.db.ExecContext(ctx, `
             UPDATE bank_connections 
-            SET updated_at = NOW(), status = 'active', institution_name = $1
-            WHERE id = $2
-        `, institutionName, existingID)
+            SET encrypted_access_token = $1, encrypted_refresh_token = $2, expires_at = $3, updated_at = NOW(), status = 'active', institution_name = $4
+            WHERE id = $5
+        `, encAccess, encRefresh, expiresAt, institutionName, existingID)
         return existingID, err
     }
 
-    // CAS 2 : Elle n'existe pas -> On l'insère
+    // INSERT New
 	connID := uuid.New().String()
 	query := `
 		INSERT INTO bank_connections (id, user_id, budget_id, institution_id, institution_name, provider_connection_id, encrypted_access_token, encrypted_refresh_token, expires_at)
@@ -148,7 +154,8 @@ func (s *BankingService) SaveConnectionWithTokens(ctx context.Context, userID, b
 
 // SaveAccount saves a bank account using UPSERT logic (Update if exists, Insert if new)
 func (s *BankingService) SaveAccount(ctx context.Context, connID, externalID, name, mask, currency string, balance float64) error {
-	// Syntaxe PostgreSQL pour "Si conflit, alors met à jour"
+	// Syntaxe PostgreSQL pour "Si conflit sur (connection_id, external_account_id), alors met à jour"
+	// Cela nécessite que la contrainte UNIQUE soit bien présente en base (voir config/database.go)
 	query := `
 		INSERT INTO bank_accounts (id, connection_id, external_account_id, name, mask, currency, balance, last_synced_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())

@@ -36,6 +36,7 @@ func (h *BankingHandler) GetConnections(c *gin.Context) {
 
 	totalReal, err := h.Service.GetRealityCheckSum(c.Request.Context(), budgetID)
 	if err != nil {
+		// Si aucune ligne n'est trouvée (pas de compte épargne coché), le total est 0
 		totalReal = 0
 	}
 

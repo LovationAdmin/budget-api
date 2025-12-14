@@ -11,7 +11,6 @@ import (
 	"budget-api/services"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 type BridgeHandler struct {
@@ -67,12 +66,20 @@ func (h *BridgeHandler) CreateConnection(c *gin.Context) {
 	// 1. Lire l'URL de redirection envoyée par le frontend
 	var req CreateConnectionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fmt.Println("Warning: No redirect_url provided directly")
+		fmt.Println("Warning: No JSON body provided or invalid format")
 	}
 
-	// 2. Passer l'URL au service
-	connectURL, err := h.BridgeService.CreateConnectItem(c.Request.Context(), userEmail, req.RedirectURL)
+	// Sécurité : Si pas d'URL fournie, on ne plante pas mais Bridge risque de ne pas savoir où revenir
+	// Vous pouvez mettre une URL par défaut ici si vous voulez (ex: votre site de prod)
+	redirectURL := req.RedirectURL
+	if redirectURL == "" {
+		fmt.Println("Warning: redirect_url is empty")
+	}
+
+	// 2. Passer l'URL au service (3 arguments obligatoires maintenant)
+	connectURL, err := h.BridgeService.CreateConnectItem(c.Request.Context(), userEmail, redirectURL)
 	if err != nil {
+		// Le message d'erreur sera loggué par le service
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create Bridge session", "details": err.Error()})
 		return
 	}
@@ -122,27 +129,26 @@ func (h *BridgeHandler) SyncAccounts(c *gin.Context) {
 
 	// 3. Boucle simplifiée : On sauvegarde (Upsert) la connexion puis le compte
 	for _, acc := range accounts {
-		// Nom de la banque
+		// Nom de la banque et ID Provider
 		institutionName := "Bridge Connection"
 		providerIDStr := "0"
 		
 		if item, exists := itemMap[acc.ItemID]; exists {
 			institutionName = fmt.Sprintf("Bank ID %d", item.ProviderID)
-			// CORRECTION ICI : On utilise la variable déclarée
 			providerIDStr = strconv.Itoa(item.ProviderID)
 		}
 
 		// A. Sauvegarder/Récupérer la Connexion (UPSERT géré par le service)
-		// On utilise ItemID (string) comme identifiant unique de la connexion Bridge
+		// On utilise ItemID (string) comme identifiant unique de la connexion Bridge (un Item = une connexion bancaire)
 		itemIDStr := strconv.FormatInt(acc.ItemID, 10)
 		
 		connID, err := h.Service.SaveConnectionWithTokens(
 			c.Request.Context(),
 			userID,
 			budgetID,
-			providerIDStr,   // FIX: Utilisation de providerIDStr comme InstitutionID
-			institutionName, // Nom
-			itemIDStr,       // Provider Connection ID (Unique key pour l'Upsert: ItemID)
+			providerIDStr,   // Institution ID (ID de la banque, ex: 5 (BNP))
+			institutionName, // Nom (ex: Bank ID 5)
+			itemIDStr,       // Provider Connection ID (Unique key pour l'Upsert: ItemID de Bridge)
 			"bridge-v3-managed", // Token placeholder
 			"",
 			time.Now().AddDate(1, 0, 0),
@@ -196,9 +202,6 @@ func (h *BridgeHandler) RefreshBalances(c *gin.Context) {
 
 	updatedCount := 0
 	for _, acc := range accounts {
-		// Pas de paramètre budgetID ici pour le refresh simple global, 
-		// on update juste par external_account_id qui est unique globalement (ou presque)
-		// Idéalement on ferait un check plus strict, mais pour l'instant ça suffit.
 		accountID := strconv.FormatInt(acc.ID, 10)
 		result, err := h.DB.Exec(
 			`UPDATE bank_accounts SET balance = $1, last_synced_at = NOW() WHERE external_account_id = $2`,
@@ -219,15 +222,12 @@ func (h *BridgeHandler) GetTransactions(c *gin.Context) {
 	var userEmail string
 	h.DB.QueryRow("SELECT email FROM users WHERE id = $1", userID).Scan(&userEmail)
 	
-	// On ne passe pas d'AccountIDs pour le moment (récupère tout)
-	// Dans le futur, on pourrait filtrer par budget -> connection -> accounts
 	transactions, err := h.BridgeService.GetTransactions(c.Request.Context(), userEmail, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch transactions"})
 		return
 	}
 	
-	// Transformer les ID en string pour le JSON
 	type DisplayTransaction struct {
 		ID          string  `json:"id"`
 		AccountID   string  `json:"account_id"`
@@ -239,12 +239,9 @@ func (h *BridgeHandler) GetTransactions(c *gin.Context) {
 
 	var displayTransactions []DisplayTransaction
 	for _, t := range transactions {
-		// Générer un ID unique stable si Bridge n'en fournit pas un string (ici ID est int64)
-		// On combine ID transaction + AccountID pour être sûr
 		uniqueID := fmt.Sprintf("%d-%d", t.ID, t.AccountID)
 		if t.ID == 0 {
-			// Fallback si ID manquant (rare)
-			uniqueID = uuid.New().String()
+			uniqueID = strconv.FormatInt(time.Now().UnixNano(), 10) // Fallback simple
 		}
 
 		displayTransactions = append(displayTransactions, DisplayTransaction{
