@@ -23,14 +23,16 @@ type BridgeService struct {
 }
 
 func NewBridgeService() *BridgeService {
+	// Security: Trim spaces to prevent 401 errors
 	return &BridgeService{
 		ClientID:     strings.TrimSpace(os.Getenv("BRIDGE_CLIENT_ID")),
 		ClientSecret: strings.TrimSpace(os.Getenv("BRIDGE_CLIENT_SECRET")),
-		BaseURL:      "https://api.bridgeapi.io/v3",
+		BaseURL:      "https://api.bridgeapi.io/v3", // V3 Base URL
 		Client:       &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
+// hashEmail creates a safe external_user_id from an email
 func hashEmail(email string) string {
 	hash := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email))))
 	return hex.EncodeToString(hash[:])
@@ -38,24 +40,25 @@ func hashEmail(email string) string {
 
 func (s *BridgeService) setHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Bridge-Version", "2021-06-01") // Version stable que vous aviez
+	// Utilisation de la version spécifiée dans votre code
+	req.Header.Set("Bridge-Version", "2025-01-15") 
 	req.Header.Set("Client-Id", s.ClientID)
 	req.Header.Set("Client-Secret", s.ClientSecret)
 }
 
-// 1. Get or Create User
+// 1. Get or Create User & Generate Token
 func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail string) (string, error) {
 	externalID := hashEmail(userEmail)
 	var userUUID string
 
-	// A. Check Existence
+	// --- STEP A: Check if user exists (List Users) ---
 	listURL := fmt.Sprintf("%s/aggregation/users?external_user_id=%s", s.BaseURL, externalID)
 	listReq, _ := http.NewRequestWithContext(ctx, "GET", listURL, nil)
 	s.setHeaders(listReq)
 
 	listResp, err := s.Client.Do(listReq)
 	if err != nil {
-		return "", fmt.Errorf("connection error: %w", err)
+		return "", fmt.Errorf("connection error checking user: %w", err)
 	}
 	defer listResp.Body.Close()
 
@@ -70,16 +73,18 @@ func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail stri
 		}
 	}
 
-	// B. Create if not found
+	// --- STEP B: Create User if not found ---
 	if userUUID == "" {
-		createPayload := map[string]string{"external_user_id": externalID}
+		createPayload := map[string]string{
+			"external_user_id": externalID,
+		}
 		body, _ := json.Marshal(createPayload)
 		createReq, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/aggregation/users", bytes.NewBuffer(body))
 		s.setHeaders(createReq)
 
 		createResp, err := s.Client.Do(createReq)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("user creation request failed: %w", err)
 		}
 		defer createResp.Body.Close()
 
@@ -91,42 +96,60 @@ func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail stri
 				userUUID = createRes.Uuid
 			}
 		} else {
-			return "", fmt.Errorf("failed to create bridge user")
+			b, _ := io.ReadAll(createResp.Body)
+			log.Printf("[Bridge Error] Create User Failed: %s", string(b))
+			if createResp.StatusCode == 409 {
+				return "", fmt.Errorf("user conflict (409)")
+			}
+			return "", fmt.Errorf("bridge user creation failed (%d): %s", createResp.StatusCode, string(b))
 		}
 	}
 
-	// C. Generate Token
+	if userUUID == "" {
+		return "", fmt.Errorf("could not resolve user_uuid")
+	}
+
+	// --- STEP C: Generate Token ---
 	authPayload := map[string]string{"user_uuid": userUUID}
 	authBody, _ := json.Marshal(authPayload)
+	
 	authReq, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/aggregation/authorization/token", bytes.NewBuffer(authBody))
 	s.setHeaders(authReq)
 
 	authResp, err := s.Client.Do(authReq)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("token request error: %w", err)
 	}
 	defer authResp.Body.Close()
+
+	if authResp.StatusCode != 200 {
+		b, _ := io.ReadAll(authResp.Body)
+		log.Printf("[Bridge Error] Token Failed: %s", string(b))
+		return "", fmt.Errorf("token error (%d): %s", authResp.StatusCode, string(b))
+	}
 
 	var tokenRes struct {
 		AccessToken string `json:"access_token"`
 	}
 	if err := json.NewDecoder(authResp.Body).Decode(&tokenRes); err != nil {
-		return "", err
+		return "", fmt.Errorf("token decode error: %w", err)
 	}
 
 	return tokenRes.AccessToken, nil
 }
 
-// 2. Create Connect Session (RETOUR VERSION 2 ARGS)
+// 2. Create Connect Session (VERSION SIMPLE : 2 Arguments)
 func (s *BridgeService) CreateConnectItem(ctx context.Context, userEmail string) (string, error) {
 	accessToken, err := s.getOrCreateUserToken(ctx, userEmail)
 	if err != nil {
 		return "", err
 	}
 
-	// On n'envoie QUE l'email -> Fix erreur 500 Invalid Body
-	payload := map[string]interface{}{"user_email": userEmail}
-	
+	// On n'envoie QUE l'email pour éviter l'erreur "Invalid body content"
+	payload := map[string]interface{}{
+		"user_email": userEmail,
+	}
+
 	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/aggregation/connect-sessions", bytes.NewBuffer(body))
 	
@@ -135,22 +158,22 @@ func (s *BridgeService) CreateConnectItem(ctx context.Context, userEmail string)
 
 	resp, err := s.Client.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("connect session request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Lecture pour debug au cas où, mais on s'attend à un succès maintenant
-	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
-		log.Printf("Bridge Error: %s", string(b))
-		return "", fmt.Errorf("bridge error %d", resp.StatusCode)
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		log.Printf("[Bridge Error] Connect Session Failed: %s", string(respBody))
+		return "", fmt.Errorf("bridge connect error (%d): %s", resp.StatusCode, string(respBody))
 	}
 
 	var result struct {
 		URL string `json:"url"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("connect decode error: %w", err)
 	}
 
 	return result.URL, nil
@@ -176,12 +199,17 @@ func (s *BridgeService) GetBanks(ctx context.Context) ([]BridgeProvider, error) 
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("status %d", resp.StatusCode)
+	}
+
 	var result struct {
 		Resources []BridgeProvider `json:"resources"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
+
 	return result.Resources, nil
 }
 
@@ -208,12 +236,18 @@ func (s *BridgeService) GetItems(ctx context.Context, userEmail string) ([]Bridg
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(b))
+	}
+
 	var result struct {
 		Resources []BridgeItem `json:"resources"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
+
 	return result.Resources, nil
 }
 
@@ -243,12 +277,19 @@ func (s *BridgeService) GetAccounts(ctx context.Context, userEmail string) ([]Br
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		log.Printf("[Bridge Error] Get Accounts: %s", string(b))
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(b))
+	}
+
 	var result struct {
 		Resources []BridgeAccount `json:"resources"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
+
 	return result.Resources, nil
 }
 
@@ -258,10 +299,23 @@ func (s *BridgeService) RefreshAccounts(ctx context.Context, userEmail string, i
 	if err != nil {
 		return err
 	}
+
 	req, _ := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/aggregation/items/%d/refresh", s.BaseURL, itemID), nil)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	s.setHeaders(req)
-	s.Client.Do(req)
+
+	resp, err := s.Client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 && resp.StatusCode != 202 {
+		b, _ := io.ReadAll(resp.Body)
+		log.Printf("[Bridge Error] Refresh: %s", string(b))
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+
 	return nil
 }
 
@@ -272,7 +326,7 @@ type BridgeTransaction struct {
 	Amount      float64 `json:"amount"`
 	Currency    string  `json:"currency_code"`
 	Description string  `json:"clean_description"`
-	Date        string  `json:"date"`
+	Date        string  `json:"date"` // YYYY-MM-DD
 }
 
 func (s *BridgeService) GetTransactions(ctx context.Context, userEmail string, accountIDs []string) ([]BridgeTransaction, error) {
@@ -281,12 +335,15 @@ func (s *BridgeService) GetTransactions(ctx context.Context, userEmail string, a
 		return nil, err
 	}
 
-	// Logic 40 jours
+	// Calculer la date d'il y a 40 jours (Format ISO 8601 Requis par Bridge)
 	sinceDate := time.Now().AddDate(0, 0, -40).Format(time.RFC3339)
+
 	var allTransactions []BridgeTransaction
 	
+	// URL initiale avec filtre de date
 	nextURI := fmt.Sprintf("/aggregation/transactions?limit=50&sort=-date&since=%s", sinceDate)
 
+	// Boucle de pagination
 	for nextURI != "" {
 		fullURL := s.BaseURL + strings.TrimPrefix(nextURI, "/v3")
 		if strings.HasPrefix(nextURI, "http") {
@@ -306,13 +363,14 @@ func (s *BridgeService) GetTransactions(ctx context.Context, userEmail string, a
 		resp.Body.Close()
 
 		if resp.StatusCode != 200 {
+			log.Printf("[Bridge Error] Transactions: %s", string(bodyBytes))
 			return nil, fmt.Errorf("bridge error %d", resp.StatusCode)
 		}
 
 		var result struct {
 			Resources  []BridgeTransaction `json:"resources"`
 			Pagination struct {
-				NextURI *string `json:"next_uri"`
+				NextURI *string `json:"next_uri"` // Pointeur pour gérer null
 			} `json:"pagination"`
 		}
 		
