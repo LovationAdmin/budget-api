@@ -139,7 +139,8 @@ func (s *BridgeService) getOrCreateUserToken(ctx context.Context, userEmail stri
 }
 
 // 2. Create Connect Session
-func (s *BridgeService) CreateConnectItem(ctx context.Context, userEmail string) (string, error) {
+// MISE A JOUR : Accepte maintenant redirectURL
+func (s *BridgeService) CreateConnectItem(ctx context.Context, userEmail string, redirectURL string) (string, error) {
 	accessToken, err := s.getOrCreateUserToken(ctx, userEmail)
 	if err != nil {
 		return "", err
@@ -148,6 +149,10 @@ func (s *BridgeService) CreateConnectItem(ctx context.Context, userEmail string)
 	payload := map[string]interface{}{
 		"user_email": userEmail,
 	}
+    // AJOUT : Ajoute l'URL de redirection si fournie
+    if redirectURL != "" {
+        payload["redirect_url"] = redirectURL
+    }
 
 	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/aggregation/connect-sessions", bytes.NewBuffer(body))
@@ -165,7 +170,7 @@ func (s *BridgeService) CreateConnectItem(ctx context.Context, userEmail string)
 
 	if resp.StatusCode != 200 && resp.StatusCode != 201 {
 		log.Printf("[Bridge Error] Connect Session Failed: %s", string(respBody))
-		return "", fmt.Errorf("bridge connect error (%d)", resp.StatusCode)
+		return "", fmt.Errorf("bridge connect error (%d): %s", resp.StatusCode, string(respBody))
 	}
 
 	var result struct {
@@ -336,7 +341,6 @@ func (s *BridgeService) GetTransactions(ctx context.Context, userEmail string, a
 	}
 
 	// Calculer la date d'il y a 40 jours (Format ISO 8601 Requis par Bridge)
-	// Example format: 2024-11-24T12:46:18.971Z
 	sinceDate := time.Now().AddDate(0, 0, -40).Format(time.RFC3339)
 
 	var allTransactions []BridgeTransaction
@@ -346,8 +350,6 @@ func (s *BridgeService) GetTransactions(ctx context.Context, userEmail string, a
 
 	// Boucle de pagination
 	for nextURI != "" {
-		// Construire l'URL complète
-		// Attention: next_uri de Bridge inclut déjà "/v3", parfois non. On gère le cas relatif.
 		fullURL := s.BaseURL + strings.TrimPrefix(nextURI, "/v3")
 		if strings.HasPrefix(nextURI, "http") {
 			fullURL = nextURI
@@ -383,7 +385,6 @@ func (s *BridgeService) GetTransactions(ctx context.Context, userEmail string, a
 
 		allTransactions = append(allTransactions, result.Resources...)
 
-		// Préparer la prochaine page
 		if result.Pagination.NextURI != nil && *result.Pagination.NextURI != "" && *result.Pagination.NextURI != "null" {
 			nextURI = *result.Pagination.NextURI
 		} else {
