@@ -84,6 +84,8 @@ func main() {
 		// WebSocket Route (Protected check handled inside handler or via query token)
 		v1.GET("/ws/budgets/:id", wsHandler.HandleWS)
 
+		routes.SetupAdminRoutes(v1, db)
+
 		// Protected routes
 		protected := v1.Group("/")
 		protected.Use(middleware.AuthMiddleware())
@@ -93,7 +95,6 @@ func main() {
 			routes.SetupUserRoutes(protected, db)
 			routes.SetupInvitationRoutes(protected, db)
 			routes.SetupBankingRoutes(protected, db)
-			routes.SetupAdminRoutes(protected, db)
 		}
 	}
 
