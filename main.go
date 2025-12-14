@@ -84,7 +84,7 @@ func main() {
 		// WebSocket Route (Protected check handled inside handler or via query token)
 		v1.GET("/ws/budgets/:id", wsHandler.HandleWS)
 
-		routes.SetupAdminRoutes(v1, db)
+		//routes.SetupAdminRoutes(v1, db)
 
 		// Protected routes
 		protected := v1.Group("/")
