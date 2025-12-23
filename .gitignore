@@ -23,7 +23,6 @@ go.work
 .env
 .env.local
 .env.*.local
-private-key.pem
 
 # IDE files
 .idea/
