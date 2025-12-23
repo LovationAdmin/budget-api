@@ -82,3 +82,30 @@ func SetupAdminRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.POST("/admin/migrate-budgets", adminHandler.MigrateAllBudgets)
 	rg.POST("/admin/migrate-budget/:id", adminHandler.MigrateSingleBudget)
 }
+
+
+// SetupEnableBankingRoutes configure les routes Enable Banking
+func SetupEnableBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
+	handler := handlers.NewEnableBankingHandler(db)
+
+	// Liste des banques disponibles
+	rg.GET("/banking/enablebanking/banks", handler.GetBanks)
+
+	// Connexion d'une banque (création auth request)
+	rg.POST("/banking/enablebanking/connect", handler.CreateConnection)
+
+	// Callback après autorisation
+	rg.GET("/banking/enablebanking/callback", handler.HandleCallback)
+
+	// Synchronisation des comptes dans un budget
+	rg.POST("/budgets/:id/banking/enablebanking/sync", handler.SyncAccounts)
+
+	// Rafraîchissement des soldes
+	rg.POST("/banking/enablebanking/refresh", handler.RefreshBalances)
+
+	// Récupération des transactions
+	rg.GET("/banking/enablebanking/transactions", handler.GetTransactions)
+
+	// Suppression d'une connexion
+	rg.DELETE("/banking/enablebanking/connections/:id", handler.DeleteConnection)
+}
