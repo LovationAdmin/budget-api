@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
-	"strconv"
 	"time"
 
 	"budget-api/middleware"
@@ -65,7 +64,7 @@ func (h *EnableBankingHandler) GetBanks(c *gin.Context) {
 // POST /api/v1/banking/enablebanking/connect
 // Body: { "aspsp_id": "ASPSP_ID_FROM_LIST" }
 func (h *EnableBankingHandler) CreateConnection(c *gin.Context) {
-	userID := middleware.GetUserID(c)
+	//userID := middleware.GetUserID(c)
 
 	var req struct {
 		ASPSPID string `json:"aspsp_id" binding:"required"`
