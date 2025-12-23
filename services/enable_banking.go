@@ -3,80 +3,122 @@ package services
 import (
 	"bytes"
 	"context"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 type EnableBankingService struct {
-	BaseURL      string
-	ClientID     string
-	ClientSecret string
-	Client       *http.Client
+	BaseURL    string
+	AppID      string
+	PrivateKey *rsa.PrivateKey
+	Client     *http.Client
 }
 
 func NewEnableBankingService() *EnableBankingService {
+	privateKey := loadPrivateKey()
+	
 	return &EnableBankingService{
-		BaseURL:      "https://api.enablebanking.com",
-		ClientID:     os.Getenv("ENABLE_BANKING_CLIENT_ID"),
-		ClientSecret: os.Getenv("ENABLE_BANKING_CLIENT_SECRET"),
+		BaseURL:    "https://api.enablebanking.com",
+		AppID:      os.Getenv("ENABLE_BANKING_APP_ID"),
+		PrivateKey: privateKey,
 		Client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
 }
 
-// Common headers
-func (s *EnableBankingService) setHeaders(req *http.Request) {
+// Load private key from file or environment variable
+func loadPrivateKey() *rsa.PrivateKey {
+	var pemData []byte
+	
+	// Option 1: Load from base64 environment variable (for production/Render)
+	if base64Key := os.Getenv("ENABLE_BANKING_PRIVATE_KEY_BASE64"); base64Key != "" {
+		decoded, err := base64.StdEncoding.DecodeString(base64Key)
+		if err != nil {
+			log.Fatal("Failed to decode base64 private key:", err)
+		}
+		pemData = decoded
+	} else if keyPath := os.Getenv("ENABLE_BANKING_PRIVATE_KEY_PATH"); keyPath != "" {
+		// Option 2: Load from file (for local development)
+		data, err := os.ReadFile(keyPath)
+		if err != nil {
+			log.Fatal("Failed to read private key file:", err)
+		}
+		pemData = data
+	} else {
+		log.Fatal("No private key configured. Set ENABLE_BANKING_PRIVATE_KEY_BASE64 or ENABLE_BANKING_PRIVATE_KEY_PATH")
+	}
+
+	// Parse PEM
+	block, _ := pem.Decode(pemData)
+	if block == nil {
+		log.Fatal("Failed to parse PEM block containing the private key")
+	}
+
+	// Parse private key
+	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		// Try PKCS8 format
+		key, err2 := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err2 != nil {
+			log.Fatal("Failed to parse private key:", err, err2)
+		}
+		var ok bool
+		privateKey, ok = key.(*rsa.PrivateKey)
+		if !ok {
+			log.Fatal("Not an RSA private key")
+		}
+	}
+
+	return privateKey
+}
+
+// Generate JWT token signed with private key
+func (s *EnableBankingService) generateJWT() (string, error) {
+	now := time.Now()
+	
+	claims := jwt.MapClaims{
+		"iss": s.AppID,                    // Issuer = Application ID
+		"aud": "https://api.enablebanking.com", // Audience
+		"iat": now.Unix(),                 // Issued at
+		"exp": now.Add(5 * time.Minute).Unix(), // Expires in 5 minutes
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	
+	signedToken, err := token.SignedString(s.PrivateKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to sign JWT: %w", err)
+	}
+
+	return signedToken, nil
+}
+
+// Common headers with JWT authentication
+func (s *EnableBankingService) setHeaders(req *http.Request) error {
+	jwtToken, err := s.generateJWT()
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+jwtToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	return nil
 }
 
-// ========== 1. AUTHENTICATION ==========
-
-type AuthResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int    `json:"expires_in"`
-}
-
-// Get access token for Enable Banking API
-func (s *EnableBankingService) GetAccessToken(ctx context.Context) (string, error) {
-	payload := map[string]string{
-		"client_id":     s.ClientID,
-		"client_secret": s.ClientSecret,
-		"grant_type":    "client_credentials",
-	}
-
-	body, _ := json.Marshal(payload)
-	req, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/auth/token", bytes.NewBuffer(body))
-	s.setHeaders(req)
-
-	resp, err := s.Client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("token request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		respBody, _ := io.ReadAll(resp.Body)
-		log.Printf("[Enable Banking Error] Auth failed: %s", string(respBody))
-		return "", fmt.Errorf("auth failed (%d): %s", resp.StatusCode, string(respBody))
-	}
-
-	var authResp AuthResponse
-	if err := json.NewDecoder(resp.Body).Decode(&authResp); err != nil {
-		return "", fmt.Errorf("decode error: %w", err)
-	}
-
-	return authResp.AccessToken, nil
-}
-
-// ========== 2. GET ASPSPs (Banks) ==========
+// ========== 1. GET ASPSPs (Banks) ==========
 
 type ASPSP struct {
 	ID          string `json:"aspsp_id"`
@@ -89,21 +131,16 @@ type ASPSP struct {
 	PISSupport  bool   `json:"pis_support"`
 }
 
-// Get list of available banks (ASPSPs)
 func (s *EnableBankingService) GetASPSPs(ctx context.Context, country string) ([]ASPSP, error) {
-	accessToken, err := s.GetAccessToken(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	url := s.BaseURL + "/aspsps"
 	if country != "" {
 		url += "?country=" + country
 	}
 
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	s.setHeaders(req)
+	if err := s.setHeaders(req); err != nil {
+		return nil, err
+	}
 
 	resp, err := s.Client.Do(req)
 	if err != nil {
@@ -124,35 +161,30 @@ func (s *EnableBankingService) GetASPSPs(ctx context.Context, country string) ([
 	return aspsps, nil
 }
 
-// ========== 3. CREATE AUTH REQUEST ==========
+// ========== 2. CREATE AUTH REQUEST ==========
 
 type AuthRequest struct {
 	RedirectURL string   `json:"redirect_url"`
 	ASPSPID     string   `json:"aspsp_id"`
 	State       string   `json:"state"`
-	Access      []string `json:"access"` // ["accounts", "balances", "transactions"]
+	Access      []string `json:"access"`
 }
 
-type AuthResponse2 struct {
+type AuthResponse struct {
 	AuthURL string `json:"url"`
 	State   string `json:"state"`
 }
 
-// Create authorization request to connect a bank
-func (s *EnableBankingService) CreateAuthRequest(ctx context.Context, req AuthRequest) (*AuthResponse2, error) {
-	accessToken, err := s.GetAccessToken(ctx)
-	if err != nil {
-		return nil, err
-	}
-
+func (s *EnableBankingService) CreateAuthRequest(ctx context.Context, req AuthRequest) (*AuthResponse, error) {
 	if req.Access == nil {
 		req.Access = []string{"accounts", "balances", "transactions"}
 	}
 
 	body, _ := json.Marshal(req)
 	httpReq, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/auth", bytes.NewBuffer(body))
-	httpReq.Header.Set("Authorization", "Bearer "+accessToken)
-	s.setHeaders(httpReq)
+	if err := s.setHeaders(httpReq); err != nil {
+		return nil, err
+	}
 
 	resp, err := s.Client.Do(httpReq)
 	if err != nil {
@@ -167,7 +199,7 @@ func (s *EnableBankingService) CreateAuthRequest(ctx context.Context, req AuthRe
 		return nil, fmt.Errorf("auth request failed (%d): %s", resp.StatusCode, string(respBody))
 	}
 
-	var authResp AuthResponse2
+	var authResp AuthResponse
 	if err := json.Unmarshal(respBody, &authResp); err != nil {
 		return nil, err
 	}
@@ -175,15 +207,15 @@ func (s *EnableBankingService) CreateAuthRequest(ctx context.Context, req AuthRe
 	return &authResp, nil
 }
 
-// ========== 4. CREATE SESSION (After redirect back) ==========
+// ========== 3. CREATE SESSION ==========
 
 type SessionRequest struct {
-	Code        string `json:"code"`
-	State       string `json:"state"`
+	Code  string `json:"code"`
+	State string `json:"state"`
 }
 
 type SessionResponse struct {
-	SessionID string `json:"session_id"`
+	SessionID string    `json:"session_id"`
 	Accounts  []Account `json:"accounts"`
 }
 
@@ -196,13 +228,7 @@ type Account struct {
 	AccountType string  `json:"account_type"`
 }
 
-// Create session after successful authorization
 func (s *EnableBankingService) CreateSession(ctx context.Context, code, state string) (*SessionResponse, error) {
-	accessToken, err := s.GetAccessToken(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	payload := SessionRequest{
 		Code:  code,
 		State: state,
@@ -210,8 +236,9 @@ func (s *EnableBankingService) CreateSession(ctx context.Context, code, state st
 
 	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/sessions", bytes.NewBuffer(body))
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	s.setHeaders(req)
+	if err := s.setHeaders(req); err != nil {
+		return nil, err
+	}
 
 	resp, err := s.Client.Do(req)
 	if err != nil {
@@ -234,19 +261,14 @@ func (s *EnableBankingService) CreateSession(ctx context.Context, code, state st
 	return &sessionResp, nil
 }
 
-// ========== 5. GET ACCOUNTS ==========
+// ========== 4. GET ACCOUNTS ==========
 
-// Get accounts for a session
 func (s *EnableBankingService) GetAccounts(ctx context.Context, sessionID string) ([]Account, error) {
-	accessToken, err := s.GetAccessToken(ctx)
-	if err != nil {
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/sessions/%s/accounts", s.BaseURL, sessionID), nil)
+	if err := s.setHeaders(req); err != nil {
 		return nil, err
 	}
-
-	req, _ := http.NewRequestWithContext(ctx, "GET", 
-		fmt.Sprintf("%s/sessions/%s/accounts", s.BaseURL, sessionID), nil)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	s.setHeaders(req)
 
 	resp, err := s.Client.Do(req)
 	if err != nil {
@@ -267,27 +289,22 @@ func (s *EnableBankingService) GetAccounts(ctx context.Context, sessionID string
 	return accounts, nil
 }
 
-// ========== 6. GET BALANCES ==========
+// ========== 5. GET BALANCES ==========
 
 type Balance struct {
-	AccountID       string  `json:"account_id"`
-	BalanceAmount   float64 `json:"balance_amount"`
-	BalanceType     string  `json:"balance_type"`
-	Currency        string  `json:"currency"`
-	ReferenceDate   string  `json:"reference_date"`
+	AccountID     string  `json:"account_id"`
+	BalanceAmount float64 `json:"balance_amount"`
+	BalanceType   string  `json:"balance_type"`
+	Currency      string  `json:"currency"`
+	ReferenceDate string  `json:"reference_date"`
 }
 
-// Get balances for an account
 func (s *EnableBankingService) GetBalances(ctx context.Context, sessionID, accountID string) ([]Balance, error) {
-	accessToken, err := s.GetAccessToken(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	req, _ := http.NewRequestWithContext(ctx, "GET",
 		fmt.Sprintf("%s/sessions/%s/accounts/%s/balances", s.BaseURL, sessionID, accountID), nil)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	s.setHeaders(req)
+	if err := s.setHeaders(req); err != nil {
+		return nil, err
+	}
 
 	resp, err := s.Client.Do(req)
 	if err != nil {
@@ -308,35 +325,30 @@ func (s *EnableBankingService) GetBalances(ctx context.Context, sessionID, accou
 	return balances, nil
 }
 
-// ========== 7. GET TRANSACTIONS ==========
+// ========== 6. GET TRANSACTIONS ==========
 
 type Transaction struct {
-	TransactionID       string  `json:"transaction_id"`
-	AccountID           string  `json:"account_id"`
-	BookingDate         string  `json:"booking_date"`
-	ValueDate           string  `json:"value_date"`
-	TransactionAmount   float64 `json:"transaction_amount"`
-	Currency            string  `json:"currency"`
-	DebtorName          string  `json:"debtor_name"`
-	CreditorName        string  `json:"creditor_name"`
-	RemittanceInfo      string  `json:"remittance_information"`
+	TransactionID     string  `json:"transaction_id"`
+	AccountID         string  `json:"account_id"`
+	BookingDate       string  `json:"booking_date"`
+	ValueDate         string  `json:"value_date"`
+	TransactionAmount float64 `json:"transaction_amount"`
+	Currency          string  `json:"currency"`
+	DebtorName        string  `json:"debtor_name"`
+	CreditorName      string  `json:"creditor_name"`
+	RemittanceInfo    string  `json:"remittance_information"`
 }
 
-// Get transactions for an account
 func (s *EnableBankingService) GetTransactions(ctx context.Context, sessionID, accountID string, dateFrom, dateTo string) ([]Transaction, error) {
-	accessToken, err := s.GetAccessToken(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	url := fmt.Sprintf("%s/sessions/%s/accounts/%s/transactions", s.BaseURL, sessionID, accountID)
 	if dateFrom != "" && dateTo != "" {
 		url += fmt.Sprintf("?date_from=%s&date_to=%s", dateFrom, dateTo)
 	}
 
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	s.setHeaders(req)
+	if err := s.setHeaders(req); err != nil {
+		return nil, err
+	}
 
 	resp, err := s.Client.Do(req)
 	if err != nil {
@@ -357,19 +369,14 @@ func (s *EnableBankingService) GetTransactions(ctx context.Context, sessionID, a
 	return transactions, nil
 }
 
-// ========== 8. DELETE SESSION ==========
+// ========== 7. DELETE SESSION ==========
 
-// Delete a session (disconnect bank)
 func (s *EnableBankingService) DeleteSession(ctx context.Context, sessionID string) error {
-	accessToken, err := s.GetAccessToken(ctx)
-	if err != nil {
-		return err
-	}
-
 	req, _ := http.NewRequestWithContext(ctx, "DELETE",
 		fmt.Sprintf("%s/sessions/%s", s.BaseURL, sessionID), nil)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	s.setHeaders(req)
+	if err := s.setHeaders(req); err != nil {
+		return err
+	}
 
 	resp, err := s.Client.Do(req)
 	if err != nil {

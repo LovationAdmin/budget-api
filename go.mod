@@ -12,4 +12,5 @@ require (
 	github.com/pquerna/otp v1.4.0
 	golang.org/x/crypto v0.17.0
 	github.com/olahol/melody v1.1.4
+	github.com/golang-jwt/jwt/v5 v5.2.0
 )
