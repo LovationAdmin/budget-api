@@ -92,6 +92,13 @@ func (h *EnableBankingHandler) CreateConnection(c *gin.Context) {
 	// Calculer la date de validité (90 jours dans le futur)
 	validUntil := time.Now().AddDate(0, 0, 90).Format(time.RFC3339)
 
+	// Déterminer l'URL de callback (production vs développement)
+	callbackURL := os.Getenv("FRONTEND_URL")
+	if callbackURL == "" {
+		callbackURL = "https://www.budgetfamille.com" // URL de production par défaut
+	}
+	callbackURL += "/beta2/callback"
+
 	// Créer la demande d'autorisation selon le format Enable Banking
 	authReq := services.AuthRequest{
 		Access: services.Access{
@@ -102,8 +109,8 @@ func (h *EnableBankingHandler) CreateConnection(c *gin.Context) {
 			Country: "FR",        // TODO: rendre dynamique si support multi-pays
 		},
 		State:       state,
-		RedirectURL: "http://localhost:3000/beta2/callback", // TODO: utiliser env variable
-		PSUType:     "personal",                              // TODO: rendre dynamique
+		RedirectURL: callbackURL,
+		PSUType:     "personal", // TODO: rendre dynamique
 	}
 
 	authResp, err := h.EnableBankingService.CreateAuthRequest(c.Request.Context(), authReq)
