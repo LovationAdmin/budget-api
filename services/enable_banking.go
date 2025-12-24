@@ -166,15 +166,26 @@ func min(a, b int) int {
 
 // ========== 1. GET ASPSPs (Banks) ==========
 
+// SandboxUser represents a test user in sandbox environment
+type SandboxUser struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	OTP      string `json:"otp"`
+}
+
+// SandboxInfo contains sandbox environment information
+type SandboxInfo struct {
+	Users []SandboxUser `json:"users"`
+}
+
+// ASPSP represents a bank/financial institution
 type ASPSP struct {
-	ID          string `json:"aspsp_id"`
-	Name        string `json:"name"`
-	Country     string `json:"country"`
-	BIC         string `json:"bic"`
-	LogoURL     string `json:"logo_url"`
-	Sandbox     bool   `json:"sandbox"`
-	AISSupport  bool   `json:"ais_support"`
-	PISSupport  bool   `json:"pis_support"`
+	Name        string       `json:"name"`
+	Country     string       `json:"country"`
+	BIC         string       `json:"bic,omitempty"`
+	Logo        string       `json:"logo"`
+	Sandbox     *SandboxInfo `json:"sandbox,omitempty"` // Pointer because it can be null/absent
+	Beta        bool         `json:"beta"`
 }
 
 func (s *EnableBankingService) GetASPSPs(ctx context.Context, country string) ([]ASPSP, error) {
