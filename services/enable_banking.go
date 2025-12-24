@@ -244,24 +244,34 @@ func (s *EnableBankingService) GetASPSPs(ctx context.Context, country string) ([
 
 // ========== 2. CREATE AUTH REQUEST ==========
 
+// Access defines the scope and validity of account access
+type Access struct {
+	ValidUntil string `json:"valid_until"` // RFC3339 format: "2025-12-24T23:59:59Z"
+}
+
+// ASPSPIdentifier identifies the bank for auth request
+type ASPSPIdentifier struct {
+	Name    string `json:"name"`
+	Country string `json:"country"`
+}
+
+// AuthRequest is the request to create an authorization
 type AuthRequest struct {
-	RedirectURL string   `json:"redirect_url"`
-	ASPSPID     string   `json:"aspsp_id"`
-	State       string   `json:"state"`
-	Access      []string `json:"access"`
+	Access      Access          `json:"access"`
+	ASPSP       ASPSPIdentifier `json:"aspsp"`
+	State       string          `json:"state"`
+	RedirectURL string          `json:"redirect_url"`
+	PSUType     string          `json:"psu_type"` // "personal" or "business"
 }
 
 type AuthResponse struct {
-	AuthURL string `json:"url"`
-	State   string `json:"state"`
+	AuthURL         string `json:"url"`
+	State           string `json:"state"`
+	AuthorizationID string `json:"authorization_id"`
 }
 
 func (s *EnableBankingService) CreateAuthRequest(ctx context.Context, req AuthRequest) (*AuthResponse, error) {
-	if req.Access == nil {
-		req.Access = []string{"accounts", "balances", "transactions"}
-	}
-
-	log.Printf("🔐 Creating auth request for ASPSP: %s", req.ASPSPID)
+	log.Printf("🔐 Creating auth request for ASPSP: %s (%s)", req.ASPSP.Name, req.ASPSP.Country)
 
 	body, _ := json.Marshal(req)
 	log.Printf("📤 Auth request body: %s", string(body))

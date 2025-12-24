@@ -46,7 +46,7 @@ func (h *EnableBankingHandler) GetBanks(c *gin.Context) {
 	var banks []map[string]interface{}
 	for _, aspsp := range aspsps {
 		bank := map[string]interface{}{
-			"id":      aspsp.Name, // Utiliser le nom comme ID car pas d'ID séparé dans l'API
+			"id":      aspsp.Name, // Utiliser le nom comme ID
 			"name":    aspsp.Name,
 			"country": aspsp.Country,
 			"logo":    aspsp.Logo,
@@ -75,7 +75,7 @@ func (h *EnableBankingHandler) GetBanks(c *gin.Context) {
 // ========== 2. CREATE CONNECTION (Auth Request) ==========
 
 // POST /api/v1/banking/enablebanking/connect
-// Body: { "aspsp_id": "ASPSP_ID_FROM_LIST" }
+// Body: { "aspsp_id": "ASPSP_NAME" }
 func (h *EnableBankingHandler) CreateConnection(c *gin.Context) {
 	var req struct {
 		ASPSPID string `json:"aspsp_id" binding:"required"`
@@ -89,18 +89,27 @@ func (h *EnableBankingHandler) CreateConnection(c *gin.Context) {
 	// Générer un state unique pour cette demande
 	state := uuid.New().String()
 
-	// Créer la demande d'autorisation
+	// Calculer la date de validité (90 jours dans le futur)
+	validUntil := time.Now().AddDate(0, 0, 90).Format(time.RFC3339)
+
+	// Créer la demande d'autorisation selon le format Enable Banking
 	authReq := services.AuthRequest{
-		RedirectURL: "http://localhost:3000/beta2/callback", // TODO: utiliser env variable
-		ASPSPID:     req.ASPSPID,
+		Access: services.Access{
+			ValidUntil: validUntil,
+		},
+		ASPSP: services.ASPSPIdentifier{
+			Name:    req.ASPSPID, // Le frontend envoie le nom de la banque
+			Country: "FR",        // TODO: rendre dynamique si support multi-pays
+		},
 		State:       state,
-		Access:      []string{"accounts", "balances", "transactions"},
+		RedirectURL: "http://localhost:3000/beta2/callback", // TODO: utiliser env variable
+		PSUType:     "personal",                              // TODO: rendre dynamique
 	}
 
 	authResp, err := h.EnableBankingService.CreateAuthRequest(c.Request.Context(), authReq)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to create connection",
+			"error":   "Failed to create connection",
 			"details": err.Error(),
 		})
 		return
