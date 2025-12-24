@@ -255,7 +255,7 @@ type ASPSPIdentifier struct {
 	Country string `json:"country"`
 }
 
-// AuthRequest is the request to create an authorization
+// AuthRequest is the request body for POST /auth
 type AuthRequest struct {
 	Access      Access          `json:"access"`
 	ASPSP       ASPSPIdentifier `json:"aspsp"`
@@ -264,25 +264,23 @@ type AuthRequest struct {
 	PSUType     string          `json:"psu_type"` // "personal" or "business"
 }
 
+// AuthResponse is the response from POST /auth
 type AuthResponse struct {
-	AuthURL         string `json:"url"`
-	State           string `json:"state"`
-	AuthorizationID string `json:"authorization_id"`
+	AuthURL string `json:"url"`
+	State   string `json:"authorization_id"`
 }
 
 func (s *EnableBankingService) CreateAuthRequest(ctx context.Context, req AuthRequest) (*AuthResponse, error) {
-	log.Printf("🔐 Creating auth request for ASPSP: %s (%s)", req.ASPSP.Name, req.ASPSP.Country)
-
-	body, _ := json.Marshal(req)
-	log.Printf("📤 Auth request body: %s", string(body))
+	log.Printf("🔐 Creating auth request for %s (%s)", req.ASPSP.Name, req.ASPSP.Country)
 	
+	body, _ := json.Marshal(req)
 	httpReq, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/auth", bytes.NewBuffer(body))
 	if err := s.setHeaders(httpReq); err != nil {
 		log.Printf("❌ Failed to set headers: %v", err)
 		return nil, err
 	}
 
-	log.Println("📤 Sending auth request to Enable Banking...")
+	log.Println("📤 Sending auth request...")
 	resp, err := s.Client.Do(httpReq)
 	if err != nil {
 		log.Printf("❌ HTTP request failed: %v", err)
@@ -293,8 +291,8 @@ func (s *EnableBankingService) CreateAuthRequest(ctx context.Context, req AuthRe
 	respBody, _ := io.ReadAll(resp.Body)
 	log.Printf("📥 Auth response status: %d", resp.StatusCode)
 
-	if resp.StatusCode != 200 && resp.StatusCode != 201 {
-		log.Printf("❌ Auth Request Error: %s", string(respBody))
+	if resp.StatusCode != 200 {
+		log.Printf("❌ Auth Error: %s", string(respBody))
 		return nil, fmt.Errorf("auth request failed (%d): %s", resp.StatusCode, string(respBody))
 	}
 
@@ -304,15 +302,16 @@ func (s *EnableBankingService) CreateAuthRequest(ctx context.Context, req AuthRe
 		return nil, err
 	}
 
-	log.Printf("✅ Auth URL generated: %s", authResp.AuthURL[:min(50, len(authResp.AuthURL))]+"...")
+	log.Printf("✅ Auth URL generated: %s", authResp.AuthURL[:50]+"...")
 	return &authResp, nil
 }
 
-// ========== 3. CREATE SESSION ==========
+// ========== 3. CREATE SESSION (Authorize) ==========
 
+// SessionRequest is the request body for POST /sessions
 type SessionRequest struct {
 	Code  string `json:"code"`
-	State string `json:"state"`
+	State string `json:"state,omitempty"`
 }
 
 // AccountIdentification represents the account identifier (IBAN or other)
@@ -325,11 +324,12 @@ type AccountIdentification struct {
 }
 
 // Account represents a bank account returned by Enable Banking
+// Important: The structure returned by POST /sessions includes ALL account details
 type Account struct {
-	AccountID   AccountIdentification `json:"account_id"` // Changed from string to object
-	Name        string                `json:"name"`
-	Currency    string                `json:"currency"`
-	CashAccountType string            `json:"cash_account_type"`
+	AccountID       AccountIdentification `json:"account_id"` // This is an OBJECT, not a string
+	Name            string                `json:"name"`
+	Currency        string                `json:"currency"`
+	CashAccountType string                `json:"cash_account_type"`
 	
 	// Optional fields that might be useful
 	Details     string  `json:"details,omitempty"`
@@ -404,8 +404,19 @@ func (s *EnableBankingService) CreateSession(ctx context.Context, code, state st
 }
 
 // ========== 4. GET ACCOUNTS ==========
+// NOTE: Cette fonction N'EST PLUS UTILISÉE car l'endpoint GET /sessions/{id}/accounts
+// n'existe pas dans l'API Enable Banking. Les comptes sont déjà retournés dans
+// la réponse de POST /sessions (CreateSession).
+// 
+// La documentation officielle confirme que POST /sessions retourne directement
+// la liste des comptes avec tous leurs détails, incluant le UID nécessaire
+// pour appeler GET /accounts/{uid}/balances.
+//
+// Référence: https://enablebanking.com/docs/api/reference/#authorize-user-session
 
+/*
 func (s *EnableBankingService) GetAccounts(ctx context.Context, sessionID string) ([]Account, error) {
+	// CET ENDPOINT N'EXISTE PAS - NE PAS UTILISER
 	url := fmt.Sprintf("%s/sessions/%s/accounts", s.BaseURL, sessionID)
 	log.Printf("🏦 Fetching accounts for session: %s", sessionID)
 	
@@ -439,6 +450,7 @@ func (s *EnableBankingService) GetAccounts(ctx context.Context, sessionID string
 	log.Printf("✅ Retrieved %d accounts", len(accounts))
 	return accounts, nil
 }
+*/
 
 // ========== 5. GET BALANCES ==========
 
@@ -462,9 +474,12 @@ type BalancesResponse struct {
 }
 
 // GetBalances retrieves the balances for a specific account
-// Note: account_id here should be the UID from the session response
+// Note: accountUID should be the UID field from the Account object returned by CreateSession
+// The correct endpoint is: GET /accounts/{account_uid}/balances
+// Reference: https://enablebanking.com/docs/api/reference/#get-account-balances
 func (s *EnableBankingService) GetBalances(ctx context.Context, sessionID, accountUID string) ([]Balance, error) {
-	// L'endpoint est /accounts/{account_uid}/balances, PAS /sessions/.../accounts/.../balances
+	// L'endpoint est /accounts/{account_uid}/balances
+	// PAS /sessions/{session_id}/accounts/{account_id}/balances
 	url := fmt.Sprintf("%s/accounts/%s/balances", s.BaseURL, accountUID)
 	log.Printf("💰 Fetching balances for account UID: %s", accountUID)
 	
