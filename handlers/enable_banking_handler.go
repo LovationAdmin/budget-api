@@ -45,15 +45,28 @@ func (h *EnableBankingHandler) GetBanks(c *gin.Context) {
 	// Format pour le frontend
 	var banks []map[string]interface{}
 	for _, aspsp := range aspsps {
-		banks = append(banks, map[string]interface{}{
-			"id":          aspsp.ID,
-			"name":        aspsp.Name,
-			"country":     aspsp.Country,
-			"logo":        aspsp.LogoURL,
-			"sandbox":     aspsp.Sandbox,
-			"ais_support": aspsp.AISSupport,
-			"pis_support": aspsp.PISSupport,
-		})
+		bank := map[string]interface{}{
+			"id":      aspsp.Name, // Utiliser le nom comme ID car pas d'ID séparé dans l'API
+			"name":    aspsp.Name,
+			"country": aspsp.Country,
+			"logo":    aspsp.Logo,
+			"beta":    aspsp.Beta,
+		}
+		
+		// Ajouter BIC s'il existe
+		if aspsp.BIC != "" {
+			bank["bic"] = aspsp.BIC
+		}
+		
+		// Ajouter info sandbox si disponible
+		if aspsp.Sandbox != nil {
+			bank["sandbox"] = true
+			bank["sandbox_users"] = aspsp.Sandbox.Users
+		} else {
+			bank["sandbox"] = false
+		}
+		
+		banks = append(banks, bank)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"banks": banks})
@@ -64,8 +77,6 @@ func (h *EnableBankingHandler) GetBanks(c *gin.Context) {
 // POST /api/v1/banking/enablebanking/connect
 // Body: { "aspsp_id": "ASPSP_ID_FROM_LIST" }
 func (h *EnableBankingHandler) CreateConnection(c *gin.Context) {
-	//userID := middleware.GetUserID(c)
-
 	var req struct {
 		ASPSPID string `json:"aspsp_id" binding:"required"`
 	}
@@ -94,10 +105,6 @@ func (h *EnableBankingHandler) CreateConnection(c *gin.Context) {
 		})
 		return
 	}
-
-	// Sauvegarder le state temporairement (pour validation au callback)
-	// TODO: Stocker en DB ou Redis avec expiration
-	// Pour l'instant, on retourne juste l'URL
 
 	c.JSON(http.StatusOK, gin.H{
 		"redirect_url": authResp.AuthURL,
@@ -175,17 +182,16 @@ func (h *EnableBankingHandler) SyncAccounts(c *gin.Context) {
 	// 2. Pour chaque compte, créer/mettre à jour dans la DB
 	for _, acc := range accounts {
 		// A. Créer/récupérer la connexion
-		// On utilise le session_id comme provider_connection_id
 		connID, err := h.Service.SaveConnectionWithTokens(
 			c.Request.Context(),
 			userID,
 			budgetID,
-			acc.AccountID,           // provider_id (on utilise l'account_id comme identifiant)
-			"Enable Banking",        // institution_name
-			req.SessionID,           // provider_connection_id (le session_id Enable Banking)
-			"enablebanking-managed", // access_token (placeholder)
-			"",                      // refresh_token
-			time.Now().AddDate(0, 3, 0), // expires_at (3 mois)
+			acc.AccountID,
+			"Enable Banking",
+			req.SessionID,
+			"enablebanking-managed",
+			"",
+			time.Now().AddDate(0, 3, 0),
 		)
 
 		if err != nil {
