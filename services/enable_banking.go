@@ -32,7 +32,7 @@ func NewEnableBankingService() *EnableBankingService {
 	if appID == "" {
 		log.Fatal("❌ ENABLE_BANKING_APP_ID environment variable is not set")
 	}
-	log.Printf("✅ App ID configured: %s", appID[:8]+"...") // Log only first 8 chars for security
+	log.Printf("✅ App ID configured: %s...", appID[:8])
 	
 	privateKey := loadPrivateKey()
 	
@@ -113,17 +113,25 @@ func loadPrivateKey() *rsa.PrivateKey {
 }
 
 // Generate JWT token signed with private key
+// According to Enable Banking documentation:
+// - Header must contain: kid (application ID)
+// - Body must contain: iss = "enablebanking.com", aud = "api.enablebanking.com"
 func (s *EnableBankingService) generateJWT() (string, error) {
 	now := time.Now()
 	
+	// JWT Body/Claims - According to Enable Banking spec
 	claims := jwt.MapClaims{
-		"iss": s.AppID,                         // Issuer = Application ID
-		"aud": "https://api.enablebanking.com", // Audience
-		"iat": now.Unix(),                      // Issued at
-		"exp": now.Add(5 * time.Minute).Unix(), // Expires in 5 minutes
+		"iss": "enablebanking.com",           // Issuer - MUST be "enablebanking.com"
+		"aud": "api.enablebanking.com",       // Audience - MUST be "api.enablebanking.com"
+		"iat": now.Unix(),                    // Issued at
+		"exp": now.Add(5 * time.Minute).Unix(), // Expires in 5 minutes (max 24h)
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	
+	// JWT Header - Add the 'kid' (Key ID) which must be the Application ID
+	// This is REQUIRED by Enable Banking API
+	token.Header["kid"] = s.AppID
 	
 	signedToken, err := token.SignedString(s.PrivateKey)
 	if err != nil {
@@ -131,7 +139,7 @@ func (s *EnableBankingService) generateJWT() (string, error) {
 		return "", fmt.Errorf("failed to sign JWT: %w", err)
 	}
 
-	log.Printf("✅ JWT token generated successfully (length: %d)", len(signedToken))
+	log.Printf("✅ JWT token generated successfully with kid=%s (length: %d)", s.AppID[:8]+"...", len(signedToken))
 	return signedToken, nil
 }
 
