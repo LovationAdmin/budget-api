@@ -315,18 +315,37 @@ type SessionRequest struct {
 	State string `json:"state"`
 }
 
+// AccountIdentification represents the account identifier (IBAN or other)
+type AccountIdentification struct {
+	IBAN  string `json:"iban,omitempty"`
+	Other *struct {
+		Identification string `json:"identification"`
+		SchemeName     string `json:"scheme_name"`
+	} `json:"other,omitempty"`
+}
+
+// Account represents a bank account returned by Enable Banking
+type Account struct {
+	AccountID   AccountIdentification `json:"account_id"` // Changed from string to object
+	Name        string                `json:"name"`
+	Currency    string                `json:"currency"`
+	CashAccountType string            `json:"cash_account_type"`
+	
+	// Optional fields that might be useful
+	Details     string  `json:"details,omitempty"`
+	Product     string  `json:"product,omitempty"`
+	UID         string  `json:"uid,omitempty"` // This is what we'll use for API calls
+}
+
+// SessionResponse is the response from POST /sessions
 type SessionResponse struct {
 	SessionID string    `json:"session_id"`
 	Accounts  []Account `json:"accounts"`
-}
-
-type Account struct {
-	AccountID   string  `json:"account_id"`
-	IBAN        string  `json:"iban"`
-	Name        string  `json:"name"`
-	Currency    string  `json:"currency"`
-	Balance     float64 `json:"balance"`
-	AccountType string  `json:"account_type"`
+	ASPSP     struct {
+		Name    string `json:"name"`
+		Country string `json:"country"`
+	} `json:"aspsp"`
+	PSUType string `json:"psu_type"`
 }
 
 func (s *EnableBankingService) CreateSession(ctx context.Context, code, state string) (*SessionResponse, error) {
@@ -360,13 +379,27 @@ func (s *EnableBankingService) CreateSession(ctx context.Context, code, state st
 		return nil, fmt.Errorf("session creation failed (%d): %s", resp.StatusCode, string(respBody))
 	}
 
+	// Log response preview for debugging
+	log.Printf("📄 Response preview: %s", string(respBody[:min(500, len(respBody))]))
+
 	var sessionResp SessionResponse
 	if err := json.Unmarshal(respBody, &sessionResp); err != nil {
 		log.Printf("❌ Failed to parse session response: %v", err)
+		log.Printf("📄 Full response: %s", string(respBody))
 		return nil, err
 	}
 
 	log.Printf("✅ Session created: %s with %d accounts", sessionResp.SessionID, len(sessionResp.Accounts))
+	
+	// Log each account
+	for i, acc := range sessionResp.Accounts {
+		iban := acc.AccountID.IBAN
+		if iban == "" && acc.AccountID.Other != nil {
+			iban = acc.AccountID.Other.Identification
+		}
+		log.Printf("   📊 Account %d: %s | IBAN: %s | UID: %s", i+1, acc.Name, iban, acc.UID)
+	}
+	
 	return &sessionResp, nil
 }
 
@@ -409,20 +442,35 @@ func (s *EnableBankingService) GetAccounts(ctx context.Context, sessionID string
 
 // ========== 5. GET BALANCES ==========
 
-type Balance struct {
-	AccountID     string  `json:"account_id"`
-	BalanceAmount float64 `json:"balance_amount"`
-	BalanceType   string  `json:"balance_type"`
-	Currency      string  `json:"currency"`
-	ReferenceDate string  `json:"reference_date"`
+// AmountType represents a monetary amount with currency
+type AmountType struct {
+	Currency string `json:"currency"`
+	Amount   string `json:"amount"` // String pour éviter les problèmes de précision
 }
 
-func (s *EnableBankingService) GetBalances(ctx context.Context, sessionID, accountID string) ([]Balance, error) {
-	url := fmt.Sprintf("%s/sessions/%s/accounts/%s/balances", s.BaseURL, sessionID, accountID)
-	log.Printf("💰 Fetching balances for account: %s", accountID)
+// Balance represents an account balance
+type Balance struct {
+	Name          string     `json:"name"`           // "Booked balance", "Available balance", etc.
+	BalanceAmount AmountType `json:"balance_amount"`
+	BalanceType   string     `json:"balance_type"` // "CLAV", "CLBD", etc.
+	ReferenceDate string     `json:"reference_date,omitempty"`
+}
+
+// BalancesResponse is the response from GET /accounts/{account_id}/balances
+type BalancesResponse struct {
+	Balances []Balance `json:"balances"`
+}
+
+// GetBalances retrieves the balances for a specific account
+// Note: account_id here should be the UID from the session response
+func (s *EnableBankingService) GetBalances(ctx context.Context, sessionID, accountUID string) ([]Balance, error) {
+	// L'endpoint est /accounts/{account_uid}/balances, PAS /sessions/.../accounts/.../balances
+	url := fmt.Sprintf("%s/accounts/%s/balances", s.BaseURL, accountUID)
+	log.Printf("💰 Fetching balances for account UID: %s", accountUID)
 	
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err := s.setHeaders(req); err != nil {
+		log.Printf("❌ Failed to set headers: %v", err)
 		return nil, err
 	}
 
@@ -433,20 +481,27 @@ func (s *EnableBankingService) GetBalances(ctx context.Context, sessionID, accou
 	}
 	defer resp.Body.Close()
 
+	respBody, _ := io.ReadAll(resp.Body)
+	log.Printf("📥 Balances response status: %d", resp.StatusCode)
+
 	if resp.StatusCode != 200 {
-		respBody, _ := io.ReadAll(resp.Body)
 		log.Printf("❌ Error response: %s", string(respBody))
 		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	var balances []Balance
-	if err := json.NewDecoder(resp.Body).Decode(&balances); err != nil {
+	var balancesResp BalancesResponse
+	if err := json.Unmarshal(respBody, &balancesResp); err != nil {
 		log.Printf("❌ Failed to parse balances: %v", err)
+		log.Printf("📄 Response: %s", string(respBody))
 		return nil, err
 	}
 
-	log.Printf("✅ Retrieved %d balances", len(balances))
-	return balances, nil
+	log.Printf("✅ Retrieved %d balances", len(balancesResp.Balances))
+	for i, bal := range balancesResp.Balances {
+		log.Printf("   💰 Balance %d: %s = %s %s", i+1, bal.Name, bal.BalanceAmount.Amount, bal.BalanceAmount.Currency)
+	}
+	
+	return balancesResp.Balances, nil
 }
 
 // ========== 6. GET TRANSACTIONS ==========

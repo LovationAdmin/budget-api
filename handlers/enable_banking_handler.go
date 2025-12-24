@@ -3,9 +3,10 @@ package handlers
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
+	"strconv"
 	"time"
-	"os"
 
 	"budget-api/middleware"
 	"budget-api/services"
@@ -198,26 +199,63 @@ func (h *EnableBankingHandler) SyncAccounts(c *gin.Context) {
 
 	// 2. Pour chaque compte, créer/mettre à jour dans la DB
 	for _, acc := range accounts {
+		// Extraire l'IBAN ou autre identifiant
+		accountIdentifier := acc.AccountID.IBAN
+		if accountIdentifier == "" && acc.AccountID.Other != nil {
+			accountIdentifier = acc.AccountID.Other.Identification
+		}
+		
+		// Utiliser l'UID comme external_account_id (c'est ce qu'on utilise pour les API calls)
+		externalAccountID := acc.UID
+		if externalAccountID == "" {
+			// Fallback sur l'IBAN si UID pas disponible
+			externalAccountID = accountIdentifier
+		}
+		
+		log.Printf("💳 Processing account: %s (ID: %s)", acc.Name, externalAccountID)
+		
 		// A. Créer/récupérer la connexion
 		connID, err := h.Service.SaveConnectionWithTokens(
 			c.Request.Context(),
 			userID,
 			budgetID,
-			acc.AccountID,
-			"Enable Banking",
-			req.SessionID,
-			"enablebanking-managed",
-			"",
-			time.Now().AddDate(0, 3, 0),
+			externalAccountID,           // provider_id
+			"Enable Banking",             // institution_name
+			req.SessionID,                // provider_connection_id
+			"enablebanking-managed",      // access_token
+			"",                           // refresh_token
+			time.Now().AddDate(0, 3, 0), // expires_at
 		)
 
 		if err != nil {
-			fmt.Printf("Error creating connection for account %s: %v\n", acc.Name, err)
+			log.Printf("❌ Error creating connection for account %s: %v", acc.Name, err)
 			continue
 		}
 
-		// B. Sauvegarder le compte
-		mask := acc.IBAN
+		// B. Récupérer le solde depuis Enable Banking
+		balance := 0.0
+		balances, err := h.EnableBankingService.GetBalances(
+			c.Request.Context(),
+			req.SessionID,
+			externalAccountID,
+		)
+		
+		if err != nil {
+			log.Printf("⚠️  Could not fetch balance for %s: %v", acc.Name, err)
+			// Continue quand même sans balance
+		} else if len(balances) > 0 {
+			// Prendre le premier solde disponible (généralement "Booked balance")
+			amountStr := balances[0].BalanceAmount.Amount
+			if parsed, err := strconv.ParseFloat(amountStr, 64); err == nil {
+				balance = parsed
+				log.Printf("💰 Balance for %s: %.2f %s", acc.Name, balance, balances[0].BalanceAmount.Currency)
+			} else {
+				log.Printf("⚠️  Could not parse balance amount '%s': %v", amountStr, err)
+			}
+		}
+
+		// C. Sauvegarder le compte
+		mask := accountIdentifier
 		if len(mask) > 4 {
 			mask = mask[len(mask)-4:]
 		}
@@ -225,17 +263,22 @@ func (h *EnableBankingHandler) SyncAccounts(c *gin.Context) {
 		err = h.Service.SaveAccount(
 			c.Request.Context(),
 			connID,
-			acc.AccountID,
+			externalAccountID,
 			acc.Name,
 			mask,
 			acc.Currency,
-			acc.Balance,
+			balance,
 		)
 
-		if err == nil {
+		if err != nil {
+			log.Printf("❌ Error saving account %s: %v", acc.Name, err)
+		} else {
+			log.Printf("✅ Account saved: %s (%.2f %s)", acc.Name, balance, acc.Currency)
 			accountsSynced++
 		}
 	}
+
+	log.Printf("🎉 Sync complete: %d/%d accounts synced", accountsSynced, len(accounts))
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Accounts synchronized successfully",
