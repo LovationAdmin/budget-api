@@ -216,15 +216,19 @@ func (s *EnableBankingService) GetASPSPs(ctx context.Context, country string) ([
 	log.Printf("✅ Received response, size: %d bytes", len(respBody))
 	log.Printf("📄 Response preview: %s", string(respBody[:min(200, len(respBody))]))
 
-	var aspsps []ASPSP
-	if err := json.Unmarshal(respBody, &aspsps); err != nil {
+	// L'API retourne {"aspsps": [...]} et non directement un tableau
+	var response struct {
+		ASPSPs []ASPSP `json:"aspsps"`
+	}
+	
+	if err := json.Unmarshal(respBody, &response); err != nil {
 		log.Printf("❌ JSON parsing failed: %v", err)
 		log.Printf("📄 Full response: %s", string(respBody))
 		return nil, fmt.Errorf("failed to parse JSON: %w", err)
 	}
 
-	log.Printf("✅ Successfully parsed %d ASPSPs", len(aspsps))
-	return aspsps, nil
+	log.Printf("✅ Successfully parsed %d ASPSPs", len(response.ASPSPs))
+	return response.ASPSPs, nil
 }
 
 // ========== 2. CREATE AUTH REQUEST ==========
