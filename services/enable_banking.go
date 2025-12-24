@@ -264,6 +264,8 @@ func (s *EnableBankingService) CreateAuthRequest(ctx context.Context, req AuthRe
 	log.Printf("🔐 Creating auth request for ASPSP: %s", req.ASPSPID)
 
 	body, _ := json.Marshal(req)
+	log.Printf("📤 Auth request body: %s", string(body))
+	
 	httpReq, _ := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/auth", bytes.NewBuffer(body))
 	if err := s.setHeaders(httpReq); err != nil {
 		log.Printf("❌ Failed to set headers: %v", err)
