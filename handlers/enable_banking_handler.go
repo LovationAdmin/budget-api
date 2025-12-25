@@ -558,22 +558,22 @@ func (h *EnableBankingHandler) RefreshBalances(c *gin.Context) {
 // ============================================================================
 
 func (h *EnableBankingHandler) GetTransactions(c *gin.Context) {
-	budgetID := c.Query("budget_id")
-	userID := middleware.GetUserID(c)
+    budgetID := c.Query("budget_id")
+    userID := middleware.GetUserID(c)
 
-	log.Printf("💳 Fetching transactions for budget: %s", budgetID)
+    log.Printf("💳 Fetching transactions for budget: %s", budgetID)
 
-	// Récupérer tous les comptes Enable Banking de l'utilisateur
-	rows, err := h.DB.Query(`
-		SELECT bc.session_id, ba.external_account_id, ba.id, ba.name
-		FROM banking_accounts ba
-		JOIN banking_connections bc ON ba.connection_id = bc.id
-		WHERE bc.user_id = $1 
-		  AND bc.budget_id = $2 
-	`, userID, budgetID)
+    // FIX: Change 'ba.external_account_id' to 'ba.account_id'
+    rows, err := h.DB.Query(`
+        SELECT bc.session_id, ba.account_id, ba.id, ba.name
+        FROM banking_accounts ba
+        JOIN banking_connections bc ON ba.connection_id = bc.id
+        WHERE bc.user_id = $1 
+          AND bc.budget_id = $2 
+    `, userID, budgetID)
 
-	if err != nil {
-		log.Printf("❌ Failed to fetch accounts: %v", err)
+    if err != nil {
+        log.Printf("❌ Failed to fetch accounts: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accounts"})
 		return
 	}
