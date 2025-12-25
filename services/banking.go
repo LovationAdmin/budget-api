@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"time"
+	"fmt"
 
 	"budget-api/models"
 	"budget-api/utils"
 
-	"github.com/google/uuid"
 )
 
 type BankingService struct {
@@ -156,7 +156,7 @@ func (s *BankingService) SaveConnectionWithTokens(
 	`
 	
 	var connectionID string
-	err := s.DB.QueryRowContext(
+	err := s.db.QueryRowContext(
 		ctx,
 		query,
 		userID,
@@ -206,7 +206,7 @@ func (s *BankingService) SaveAccount(
 			last_sync_at = NOW()
 	`
 	
-	_, err := s.DB.ExecContext(
+	_, err := s.db.ExecContext(
 		ctx,
 		query,
 		connectionID,
