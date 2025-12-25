@@ -147,15 +147,27 @@ func (s *EnableBankingService) setHeaders(req *http.Request) error {
 // DATA STRUCTURES
 // ============================================================================
 
+type SandboxUser struct {
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	OTP      string `json:"otp,omitempty"`
+}
+
+type SandboxUser struct {
+    Username string `json:"username,omitempty"`
+    Password string `json:"password,omitempty"`
+    OTP      string `json:"otp,omitempty"`
+}
+
 type ASPSP struct {
-	Name    string `json:"name"`
-	Country string `json:"country"`
-	Logo    string `json:"logo"`
-	BIC     string `json:"bic,omitempty"`
-	Sandbox *struct {
-		Users []string `json:"users"`
-	} `json:"sandbox,omitempty"`
-	Beta bool `json:"beta"`
+    Name    string `json:"name"`
+    Country string `json:"country"`
+    Logo    string `json:"logo"`
+    BIC     string `json:"bic,omitempty"`
+    Sandbox *struct {
+        Users []SandboxUser `json:"users"`  // ✅ CORRECT
+    } `json:"sandbox,omitempty"`
+    Beta bool `json:"beta"`
 }
 
 type Access struct {

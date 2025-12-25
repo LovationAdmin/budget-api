@@ -122,13 +122,13 @@ func RunMigrations(db *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_email_verifications_token ON email_verifications(token)`,
 
-		// --- BANKING TABLES ---
+		// --- BRIDGE API BANKING TABLES (existing) ---
 		`CREATE TABLE IF NOT EXISTS bank_connections (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			institution_id VARCHAR(255) NOT NULL,
 			institution_name VARCHAR(255),
-			provider_connection_id VARCHAR(255) NOT NULL, -- NOTE: Removed UNIQUE constraint here manually in migration below
+			provider_connection_id VARCHAR(255) NOT NULL,
 			encrypted_access_token TEXT,
 			encrypted_refresh_token TEXT,
 			expires_at TIMESTAMP,
@@ -137,16 +137,11 @@ func RunMigrations(db *sql.DB) error {
 			updated_at TIMESTAMP DEFAULT NOW()
 		)`,
 
-        // MIGRATION: Add budget_id support
-        `ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS budget_id UUID REFERENCES budgets(id) ON DELETE CASCADE`,
+		`ALTER TABLE bank_connections ADD COLUMN IF NOT EXISTS budget_id UUID REFERENCES budgets(id) ON DELETE CASCADE`,
 
-        // MIGRATION: Fix Unique Constraints for Multi-Budget
-        // 1. Drop the old strict constraint (if it exists from previous runs)
-        `ALTER TABLE bank_connections DROP CONSTRAINT IF EXISTS bank_connections_provider_connection_id_key`,
-        // 2. Drop our custom constraint if it exists (to ensure clean recreate)
-        `ALTER TABLE bank_connections DROP CONSTRAINT IF EXISTS unique_provider_connection_per_budget`,
-        // 3. Add the new composite constraint (Unique ProviderID + BudgetID)
-        `ALTER TABLE bank_connections ADD CONSTRAINT unique_provider_connection_per_budget UNIQUE (provider_connection_id, budget_id)`,
+		`ALTER TABLE bank_connections DROP CONSTRAINT IF EXISTS bank_connections_provider_connection_id_key`,
+		`ALTER TABLE bank_connections DROP CONSTRAINT IF EXISTS unique_provider_connection_per_budget`,
+		`ALTER TABLE bank_connections ADD CONSTRAINT unique_provider_connection_per_budget UNIQUE (provider_connection_id, budget_id)`,
 
 		`CREATE TABLE IF NOT EXISTS bank_accounts (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -162,25 +157,77 @@ func RunMigrations(db *sql.DB) error {
 
 		`CREATE INDEX IF NOT EXISTS idx_bank_connections_user ON bank_connections(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_bank_accounts_connection ON bank_accounts(connection_id)`,
-        `CREATE INDEX IF NOT EXISTS idx_bank_connections_budget ON bank_connections(budget_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_bank_connections_budget ON bank_connections(budget_id)`,
 
-        `CREATE TABLE IF NOT EXISTS label_mappings (
-            normalized_label VARCHAR(255) PRIMARY KEY,
-            category VARCHAR(50) NOT NULL,
-            source VARCHAR(20) DEFAULT 'AI',
-            created_at TIMESTAMP DEFAULT NOW()
-        )`,
-        `CREATE INDEX IF NOT EXISTS idx_label_mappings_label ON label_mappings(normalized_label)`,
+		`CREATE TABLE IF NOT EXISTS label_mappings (
+			normalized_label VARCHAR(255) PRIMARY KEY,
+			category VARCHAR(50) NOT NULL,
+			source VARCHAR(20) DEFAULT 'AI',
+			created_at TIMESTAMP DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_label_mappings_label ON label_mappings(normalized_label)`,
 
-		// FIX: Empêcher les doublons de comptes bancaires
-        `ALTER TABLE bank_accounts DROP CONSTRAINT IF EXISTS unique_account_per_connection`, // Nettoyage au cas où
-        `ALTER TABLE bank_accounts ADD CONSTRAINT unique_account_per_connection UNIQUE (connection_id, external_account_id)`,
+		`ALTER TABLE bank_accounts DROP CONSTRAINT IF EXISTS unique_account_per_connection`,
+		`ALTER TABLE bank_accounts ADD CONSTRAINT unique_account_per_connection UNIQUE (connection_id, external_account_id)`,
+
+		// ============================================================================
+		// --- ENABLE BANKING API TABLES (new) ---
+		// ============================================================================
+		// Note: Tables nommées "banking_connections" et "banking_accounts" 
+		// (avec "ing") pour les différencier de l'intégration Bridge API
+		// ============================================================================
+
+		`CREATE TABLE IF NOT EXISTS banking_connections (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			budget_id UUID NOT NULL REFERENCES budgets(id) ON DELETE CASCADE,
+			aspsp_name VARCHAR(255) NOT NULL,
+			aspsp_country VARCHAR(2) NOT NULL,
+			session_id UUID NOT NULL,
+			access_token TEXT,
+			refresh_token TEXT,
+			expires_at TIMESTAMP,
+			status VARCHAR(50) DEFAULT 'active',
+			created_at TIMESTAMP DEFAULT NOW(),
+			updated_at TIMESTAMP DEFAULT NOW()
+		)`,
+
+		// Index pour améliorer les performances
+		`CREATE INDEX IF NOT EXISTS idx_banking_connections_user_budget ON banking_connections(user_id, budget_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_banking_connections_session ON banking_connections(session_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_banking_connections_status ON banking_connections(status)`,
+
+		// Contrainte unique : une seule connexion par utilisateur/budget/banque/pays
+		`ALTER TABLE banking_connections DROP CONSTRAINT IF EXISTS unique_banking_connection_per_budget`,
+		`ALTER TABLE banking_connections ADD CONSTRAINT unique_banking_connection_per_budget 
+			UNIQUE (user_id, budget_id, aspsp_name, aspsp_country)`,
+
+		`CREATE TABLE IF NOT EXISTS banking_accounts (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			connection_id UUID NOT NULL REFERENCES banking_connections(id) ON DELETE CASCADE,
+			account_id UUID NOT NULL,
+			account_name VARCHAR(255),
+			account_type VARCHAR(50),
+			currency VARCHAR(3),
+			balance DECIMAL(15,2),
+			last_sync_at TIMESTAMP,
+			created_at TIMESTAMP DEFAULT NOW()
+		)`,
+
+		// Index pour améliorer les performances
+		`CREATE INDEX IF NOT EXISTS idx_banking_accounts_connection ON banking_accounts(connection_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_banking_accounts_last_sync ON banking_accounts(last_sync_at)`,
+
+		// Contrainte unique : un seul compte par connexion et account_id
+		`ALTER TABLE banking_accounts DROP CONSTRAINT IF EXISTS unique_banking_account_per_connection`,
+		`ALTER TABLE banking_accounts ADD CONSTRAINT unique_banking_account_per_connection 
+			UNIQUE (connection_id, account_id)`,
 	}
 
 	for _, migration := range migrations {
 		if _, err := db.Exec(migration); err != nil {
-            // We log errors but don't fail hard, as some "DROP CONSTRAINT" might fail if constraint doesn't exist
-            // which is expected on a fresh DB vs an existing one.
+			// We log errors but don't fail hard, as some "DROP CONSTRAINT" might fail if constraint doesn't exist
+			// which is expected on a fresh DB vs an existing one.
 			fmt.Printf("Migration notice: %v\n", err)
 		}
 	}
