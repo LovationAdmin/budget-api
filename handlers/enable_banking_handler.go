@@ -565,7 +565,7 @@ func (h *EnableBankingHandler) GetTransactions(c *gin.Context) {
 
     // FIX: Change 'ba.external_account_id' to 'ba.account_id'
     rows, err := h.DB.Query(`
-        SELECT bc.session_id, ba.account_id, ba.id, ba.name
+        SELECT bc.session_id, ba.account_id, ba.id, ba.account_name
         FROM banking_accounts ba
         JOIN banking_connections bc ON ba.connection_id = bc.id
         WHERE bc.user_id = $1 
