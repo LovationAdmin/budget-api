@@ -148,12 +148,6 @@ func (s *EnableBankingService) setHeaders(req *http.Request) error {
 // ============================================================================
 
 type SandboxUser struct {
-	Username string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
-	OTP      string `json:"otp,omitempty"`
-}
-
-type SandboxUser struct {
     Username string `json:"username,omitempty"`
     Password string `json:"password,omitempty"`
     OTP      string `json:"otp,omitempty"`
