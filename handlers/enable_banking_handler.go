@@ -537,17 +537,122 @@ func (h *EnableBankingHandler) RefreshBalances(c *gin.Context) {
 // ============================================================================
 
 func (h *EnableBankingHandler) GetTransactions(c *gin.Context) {
-    // ...
-    log.Printf("💳 Fetching transactions for budget: %s", budgetID)
+	budgetID := c.Query("budget_id")
+	userID := middleware.GetUserID(c)
 
-    rows, err := h.DB.Query(`
-        SELECT bc.session_id, ba.external_account_id, ba.id, ba.name
-        FROM banking_accounts ba
-        JOIN banking_connections bc ON ba.connection_id = bc.id
-        WHERE bc.user_id = $1 
-          AND bc.budget_id = $2 
-    `, userID, budgetID)
+	log.Printf("💳 Fetching transactions for budget: %s", budgetID)
 
+	// Récupérer tous les comptes Enable Banking de l'utilisateur
+	rows, err := h.DB.Query(`
+		SELECT bc.session_id, ba.external_account_id, ba.id, ba.name
+		FROM banking_accounts ba
+		JOIN banking_connections bc ON ba.connection_id = bc.id
+		WHERE bc.user_id = $1 
+		  AND bc.budget_id = $2 
+	`, userID, budgetID)
+
+	if err != nil {
+		log.Printf("❌ Failed to fetch accounts: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accounts"})
+		return
+	}
+	defer rows.Close()
+
+	type TransactionDisplay struct {
+		ID          string  `json:"id"`
+		AccountID   string  `json:"account_id"`
+		AccountName string  `json:"account_name"`
+		Amount      float64 `json:"amount"`
+		Currency    string  `json:"currency_code"`
+		Description string  `json:"clean_description"`
+		Date        string  `json:"date"`
+		Type        string  `json:"type"` // DBIT ou CRDT
+	}
+
+	var allTransactions []TransactionDisplay
+	transactionID := 1
+
+	// Récupérer les transactions des 90 derniers jours
+	dateFrom := time.Now().AddDate(0, 0, -90).Format("2006-01-02")
+	dateTo := time.Now().Format("2006-01-02")
+
+	for rows.Next() {
+		var sessionID, accountUID, accountID, accountName string
+		if err := rows.Scan(&sessionID, &accountUID, &accountID, &accountName); err != nil {
+			continue
+		}
+
+		log.Printf("   → Fetching transactions for: %s", accountName)
+
+		transactions, err := h.EnableBankingService.GetTransactions(
+			c.Request.Context(),
+			accountUID,
+			dateFrom,
+			dateTo,
+		)
+
+		if err != nil {
+			log.Printf("⚠️  Error fetching transactions for %s: %v", accountName, err)
+			continue
+		}
+
+		log.Printf("   ✅ Found %d transactions for %s", len(transactions), accountName)
+
+		for _, tx := range transactions {
+			// Convertir le montant
+			amount := 0.0
+			if parsed, err := strconv.ParseFloat(tx.TransactionAmount.Amount, 64); err == nil {
+				amount = parsed
+				// Si c'est un débit, rendre le montant négatif
+				if tx.CreditDebitIndicator == "DBIT" {
+					amount = -amount
+				}
+			}
+
+			// Construire la description
+			description := ""
+			if len(tx.RemittanceInformation) > 0 {
+				description = tx.RemittanceInformation[0]
+			}
+			if description == "" && tx.Creditor != nil {
+				description = tx.Creditor.Name
+			}
+			if description == "" && tx.Debtor != nil {
+				description = tx.Debtor.Name
+			}
+			if description == "" {
+				description = "Transaction"
+			}
+
+			// Utiliser la date de réservation ou la date de valeur
+			date := tx.BookingDate
+			if date == "" {
+				date = tx.ValueDate
+			}
+			if date == "" {
+				date = tx.TransactionDate
+			}
+
+			allTransactions = append(allTransactions, TransactionDisplay{
+				ID:          fmt.Sprintf("eb-%d", transactionID),
+				AccountID:   accountID,
+				AccountName: accountName,
+				Amount:      amount,
+				Currency:    tx.TransactionAmount.Currency,
+				Description: description,
+				Date:        date,
+				Type:        tx.CreditDebitIndicator,
+			})
+			transactionID++
+		}
+	}
+
+	log.Printf("✅ Total transactions retrieved: %d", len(allTransactions))
+
+	c.JSON(http.StatusOK, gin.H{
+		"transactions": allTransactions,
+		"total":        len(allTransactions),
+	})
 }
 
 // ============================================================================
@@ -565,7 +670,7 @@ func (h *EnableBankingHandler) DeleteConnection(c *gin.Context) {
 	err := h.DB.QueryRow(`
 		SELECT session_id 
 		FROM banking_connections 
-		WHERE id = $1 AND user_id = $2 AND provider = 'enablebanking'
+		WHERE id = $1 AND user_id = $2
 	`, connectionID, userID).Scan(&sessionID)
 
 	if err != nil {
