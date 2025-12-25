@@ -448,7 +448,7 @@ func (h *EnableBankingHandler) RefreshBalances(c *gin.Context) {
 	// Récupérer le session ID
 	var sessionID string
 	err := h.DB.QueryRow(`
-		SELECT provider_connection_id 
+		SELECT session_id 
 		FROM banking_connections 
 		WHERE id = $1
 	`, req.ConnectionID).Scan(&sessionID)
@@ -461,7 +461,7 @@ func (h *EnableBankingHandler) RefreshBalances(c *gin.Context) {
 
 	// Récupérer tous les comptes de cette connexion
 	rows, err := h.DB.Query(`
-		SELECT id, external_account_id, name
+		SELECT id, account_id, account_name
 		FROM banking_accounts 
 		WHERE connection_id = $1
 	`, req.ConnectionID)
@@ -502,7 +502,7 @@ func (h *EnableBankingHandler) RefreshBalances(c *gin.Context) {
 			if balance, err := strconv.ParseFloat(amountStr, 64); err == nil {
 				_, err := h.DB.Exec(`
 					UPDATE banking_accounts 
-					SET balance = $1, last_synced = NOW() 
+					SET balance = $1, last_sync_at = NOW() 
 					WHERE id = $2
 				`, balance, accountID)
 
