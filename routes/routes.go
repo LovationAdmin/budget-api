@@ -51,30 +51,6 @@ func SetupInvitationRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.DELETE("/budgets/:id/members/:member_id", invitationHandler.RemoveMember)
 }
 
-// SetupBankingRoutes reorganized for Budget Isolation
-func SetupBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
-	bankingHandler := handlers.NewBankingHandler(db)
-	bridgeHandler := handlers.NewBridgeHandler(db)
-	catHandler := handlers.NewCategorizationHandler(db)
-
-	// Banking routes Scoped by Budget
-	// GET /api/v1/budgets/:id/banking/connections
-	rg.GET("/budgets/:id/banking/connections", bankingHandler.GetConnections)
-	rg.POST("/budgets/:id/banking/sync", bridgeHandler.SyncAccounts)
-	
-	// Global Banking Actions (Bridge specific, not strictly budget-scoped but used in context)
-	rg.POST("/banking/bridge/connect", bridgeHandler.CreateConnection)
-	rg.POST("/banking/bridge/refresh", bridgeHandler.RefreshBalances)
-	rg.GET("/banking/bridge/transactions", bridgeHandler.GetTransactions)
-	
-	// Account Specific
-	rg.DELETE("/banking/connections/:connection_id", bankingHandler.DeleteConnection)
-	rg.PUT("/banking/accounts/:account_id", bankingHandler.UpdateAccountPool)
-
-	rg.POST("/categorize", catHandler.CategorizeLabel)
-    rg.GET("/banking/bridge/banks", bridgeHandler.GetBanks)
-}
-
 func SetupAdminRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	adminHandler := &handlers.AdminHandler{DB: db}
 	
