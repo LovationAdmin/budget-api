@@ -114,59 +114,112 @@ func (s *BankingService) DeleteConnection(ctx context.Context, connectionID stri
 	})
 }
 
-// SaveConnectionWithTokens saves the connection LINKED TO A BUDGET (Upsert Logic)
-func (s *BankingService) SaveConnectionWithTokens(ctx context.Context, userID, budgetID, institutionID, institutionName, providerConnID, accessToken, refreshToken string, expiresAt time.Time) (string, error) {
-	// 1. Encrypt Tokens
-	encAccess, err := utils.Encrypt([]byte(accessToken))
-	if err != nil {
-		return "", err
-	}
-	encRefresh, err := utils.Encrypt([]byte(refreshToken))
-	if err != nil {
-		return "", err
-	}
-
-    // 2. Check if connection exists for this budget (Upsert Logic)
-    var existingID string
-    err = s.db.QueryRowContext(ctx, 
-        "SELECT id FROM bank_connections WHERE provider_connection_id = $1 AND budget_id = $2", 
-        providerConnID, budgetID).Scan(&existingID)
-
-    if err == nil {
-        // UPDATE Existing
-        _, err = s.db.ExecContext(ctx, `
-            UPDATE bank_connections 
-            SET encrypted_access_token = $1, encrypted_refresh_token = $2, expires_at = $3, updated_at = NOW(), status = 'active', institution_name = $4
-            WHERE id = $5
-        `, encAccess, encRefresh, expiresAt, institutionName, existingID)
-        return existingID, err
-    }
-
-    // INSERT New
-	connID := uuid.New().String()
+// SaveConnectionWithTokens sauvegarde une connexion Enable Banking
+func (s *BankingService) SaveConnectionWithTokens(
+	ctx context.Context,
+	userID string,
+	budgetID string,
+	accountUID string,
+	bankName string,
+	sessionID string,
+	provider string,
+	accessToken string,
+	expiresAt time.Time,
+) (string, error) {
+	
+	// Extraire le pays du nom de la banque (ou utiliser une valeur par défaut)
+	country := "FR" // Par défaut
+	
+	// Pour Enable Banking, on utilise le session_id comme identifiant
+	// et on stocke le nom de la banque dans aspsp_name
+	
 	query := `
-		INSERT INTO bank_connections (id, user_id, budget_id, institution_id, institution_name, provider_connection_id, encrypted_access_token, encrypted_refresh_token, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`
-	_, err = s.db.ExecContext(ctx, query, connID, userID, budgetID, institutionID, institutionName, providerConnID, encAccess, encRefresh, expiresAt)
-	return connID, err
-}
-
-// SaveAccount saves a bank account using UPSERT logic (Update if exists, Insert if new)
-func (s *BankingService) SaveAccount(ctx context.Context, connID, externalID, name, mask, currency string, balance float64) error {
-	// Syntaxe PostgreSQL pour "Si conflit sur (connection_id, external_account_id), alors met à jour"
-	// Cela nécessite que la contrainte UNIQUE soit bien présente en base (voir config/database.go)
-	query := `
-		INSERT INTO bank_accounts (id, connection_id, external_account_id, name, mask, currency, balance, last_synced_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-		ON CONFLICT (connection_id, external_account_id) 
-		DO UPDATE SET 
-			balance = EXCLUDED.balance,
-			name = EXCLUDED.name,
-			last_synced_at = NOW()
+		INSERT INTO banking_connections (
+			user_id,
+			budget_id,
+			aspsp_name,
+			aspsp_country,
+			session_id,
+			access_token,
+			expires_at,
+			status,
+			created_at,
+			updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+		ON CONFLICT (user_id, budget_id, aspsp_name, aspsp_country)
+		DO UPDATE SET
+			session_id = EXCLUDED.session_id,
+			access_token = EXCLUDED.access_token,
+			expires_at = EXCLUDED.expires_at,
+			updated_at = NOW()
+		RETURNING id
 	`
 	
-	// On génère un nouvel UUID, mais il ne sera utilisé que si c'est une nouvelle insertion
-	_, err := s.db.ExecContext(ctx, query, uuid.New().String(), connID, externalID, name, mask, currency, balance)
-	return err
+	var connectionID string
+	err := s.DB.QueryRowContext(
+		ctx,
+		query,
+		userID,
+		budgetID,
+		bankName,
+		country,
+		sessionID,
+		accessToken,
+		expiresAt,
+		"active",
+	).Scan(&connectionID)
+	
+	if err != nil {
+		return "", fmt.Errorf("failed to save connection: %w", err)
+	}
+	
+	return connectionID, nil
+}
+
+// SaveAccount sauvegarde un compte bancaire Enable Banking
+func (s *BankingService) SaveAccount(
+	ctx context.Context,
+	connectionID string,
+	accountID string, // C'est le UID du compte Enable Banking
+	name string,
+	mask string,
+	currency string,
+	balance float64,
+) error {
+	
+	query := `
+		INSERT INTO banking_accounts (
+			connection_id,
+			account_id,
+			account_name,
+			account_type,
+			currency,
+			balance,
+			last_sync_at,
+			created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+		ON CONFLICT (connection_id, account_id)
+		DO UPDATE SET
+			account_name = EXCLUDED.account_name,
+			currency = EXCLUDED.currency,
+			balance = EXCLUDED.balance,
+			last_sync_at = NOW()
+	`
+	
+	_, err := s.DB.ExecContext(
+		ctx,
+		query,
+		connectionID,
+		accountID,
+		name,
+		"CACC", // Type par défaut, pourrait être passé en paramètre
+		currency,
+		balance,
+	)
+	
+	if err != nil {
+		return fmt.Errorf("failed to save account: %w", err)
+	}
+	
+	return nil
 }
