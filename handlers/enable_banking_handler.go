@@ -19,9 +19,9 @@ import (
 )
 
 type EnableBankingHandler struct {
-	DB                    *sql.DB
-	Service               *services.BankingService
-	EnableBankingService  *services.EnableBankingService
+	DB                   *sql.DB
+	Service              *services.BankingService
+	EnableBankingService *services.EnableBankingService
 }
 
 func NewEnableBankingHandler(db *sql.DB) *EnableBankingHandler {
@@ -32,20 +32,26 @@ func NewEnableBankingHandler(db *sql.DB) *EnableBankingHandler {
 	}
 }
 
-// ========== 1. GET BANKS ==========
+// ============================================================================
+// 1. GET BANKS - Liste des banques disponibles
+// ============================================================================
 
 func (h *EnableBankingHandler) GetBanks(c *gin.Context) {
 	country := c.DefaultQuery("country", "FR")
 	
+	log.Printf("🏦 Fetching banks for country: %s", country)
+	
 	aspsps, err := h.EnableBankingService.GetASPSPs(c.Request.Context(), country)
 	if err != nil {
+		log.Printf("❌ Failed to fetch banks: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to fetch banks",
+			"error":   "Failed to fetch banks",
 			"details": err.Error(),
 		})
 		return
 	}
 
+	// Transformer en format UI-friendly
 	var banks []map[string]interface{}
 	for _, aspsp := range aspsps {
 		bank := map[string]interface{}{
@@ -60,6 +66,7 @@ func (h *EnableBankingHandler) GetBanks(c *gin.Context) {
 			bank["bic"] = aspsp.BIC
 		}
 		
+		// Identifier si c'est une banque sandbox
 		if aspsp.Sandbox != nil {
 			bank["sandbox"] = true
 			bank["sandbox_users"] = aspsp.Sandbox.Users
@@ -70,37 +77,51 @@ func (h *EnableBankingHandler) GetBanks(c *gin.Context) {
 		banks = append(banks, bank)
 	}
 
+	log.Printf("✅ Returning %d banks", len(banks))
 	c.JSON(http.StatusOK, gin.H{"banks": banks})
 }
 
-// ========== 2. CREATE CONNECTION ==========
+// ============================================================================
+// 2. CREATE CONNECTION - Initier l'autorisation bancaire
+// ============================================================================
 
 func (h *EnableBankingHandler) CreateConnection(c *gin.Context) {
 	var req struct {
-		ASPSPID string `json:"aspsp_id" binding:"required"`
+		ASPSPID  string `json:"aspsp_id" binding:"required"`
+		BudgetID string `json:"budget_id" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "aspsp_id is required"})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request",
+			"details": "aspsp_id and budget_id are required",
+		})
 		return
 	}
 
-	state := uuid.New().String()
+	log.Printf("🔐 Creating connection for bank: %s (budget: %s)", req.ASPSPID, req.BudgetID)
+
+	// Générer un state unique qui encode le budget ID
+	state := fmt.Sprintf("%s|%s", req.BudgetID, uuid.New().String())
 	validUntil := time.Now().AddDate(0, 0, 90).Format(time.RFC3339)
 
+	// Construire l'URL de callback
 	callbackURL := os.Getenv("FRONTEND_URL")
 	if callbackURL == "" {
 		callbackURL = "https://www.budgetfamille.com"
 	}
 	callbackURL += "/beta2/callback"
 
+	log.Printf("📍 Callback URL: %s", callbackURL)
+
+	// Créer la demande d'autorisation
 	authReq := services.AuthRequest{
 		Access: services.Access{
 			ValidUntil: validUntil,
 		},
 		ASPSP: services.ASPSPIdentifier{
 			Name:    req.ASPSPID,
-			Country: "FR",
+			Country: "FR", // Pour l'instant, on se concentre sur la France
 		},
 		State:       state,
 		RedirectURL: callbackURL,
@@ -109,6 +130,7 @@ func (h *EnableBankingHandler) CreateConnection(c *gin.Context) {
 
 	authResp, err := h.EnableBankingService.CreateAuthRequest(c.Request.Context(), authReq)
 	if err != nil {
+		log.Printf("❌ Failed to create auth request: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to create connection",
 			"details": err.Error(),
@@ -116,32 +138,59 @@ func (h *EnableBankingHandler) CreateConnection(c *gin.Context) {
 		return
 	}
 
+	log.Printf("✅ Authorization URL created successfully")
+	log.Printf("   URL: %s", authResp.URL)
+	log.Printf("   State: %s", state)
+
 	c.JSON(http.StatusOK, gin.H{
-		"redirect_url": authResp.AuthURL,
-		"state":        authResp.State,
+		"redirect_url":     authResp.URL,
+		"state":            state,
+		"authorization_id": authResp.AuthorizationID,
 	})
 }
 
-// ========== 3. CALLBACK ==========
+// ============================================================================
+// 3. HANDLE CALLBACK - Gérer le retour après autorisation
+// ============================================================================
 
 func (h *EnableBankingHandler) HandleCallback(c *gin.Context) {
 	code := c.Query("code")
 	state := c.Query("state")
 
+	log.Printf("📞 Callback received - Code: %s..., State: %s", code[:min(10, len(code))], state)
+
 	if code == "" || state == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing code or state"})
+		log.Println("❌ Missing code or state parameter")
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Missing code or state parameter",
+		})
 		return
 	}
 
+	// Créer la session avec le code d'autorisation
 	sessionResp, err := h.EnableBankingService.CreateSession(c.Request.Context(), code, state)
 	if err != nil {
+		log.Printf("❌ Failed to create session: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to create session",
+			"error":   "Failed to create session",
 			"details": err.Error(),
 		})
 		return
 	}
 
+	// Extraire le budget ID du state
+	budgetID := state
+	if len(state) > 36 {
+		// State format: "budgetID|uuid"
+		budgetID = state[:36]
+	}
+
+	log.Printf("✅ Session created successfully")
+	log.Printf("   Session ID: %s", sessionResp.SessionID)
+	log.Printf("   Budget ID: %s", budgetID)
+	log.Printf("   Accounts: %d", len(sessionResp.Accounts))
+
+	// Transformer les comptes en format UI-friendly
 	var accounts []map[string]interface{}
 	for _, acc := range sessionResp.Accounts {
 		iban := acc.AccountID.IBAN
@@ -159,116 +208,112 @@ func (h *EnableBankingHandler) HandleCallback(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"session_id": sessionResp.SessionID,
-		"accounts":   accounts,
+		"session_id":    sessionResp.SessionID,
+		"budget_id":     budgetID,
+		"accounts":      accounts,
+		"bank_name":     sessionResp.ASPSP.Name,
+		"bank_country":  sessionResp.ASPSP.Country,
 	})
 }
 
-// ========== 4. SYNC ACCOUNTS (VERSION DEBUG COMPLÈTE) ==========
+// ============================================================================
+// 4. SYNC ACCOUNTS - Synchroniser les comptes dans le budget
+// ============================================================================
 
 func (h *EnableBankingHandler) SyncAccounts(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	budgetID := c.Param("id")
 
 	log.Printf("═══════════════════════════════════════════════════")
-	log.Printf("🔵 [SYNC DEBUG] START")
-	log.Printf("🔵 [SYNC DEBUG] User ID: %s", userID)
-	log.Printf("🔵 [SYNC DEBUG] Budget ID: %s", budgetID)
+	log.Printf("🔄 SYNC START - Budget: %s, User: %s", budgetID, userID)
 	log.Printf("═══════════════════════════════════════════════════")
 
-	// Lire le body brut AVANT le parsing
+	// Lire le body
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		log.Printf("❌ [SYNC DEBUG] Failed to read body: %v", err)
+		log.Printf("❌ Failed to read body: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot read request body"})
 		return
 	}
 
-	log.Printf("🔵 [SYNC DEBUG] Raw Body Length: %d bytes", len(bodyBytes))
-	log.Printf("🔵 [SYNC DEBUG] Raw Body Content: %s", string(bodyBytes))
+	log.Printf("📦 Request body: %s", string(bodyBytes))
 
-	// Re-créer le body reader pour le binding JSON
+	// Restaurer le body pour le binding
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
 	var req struct {
-		SessionID string `json:"session_id"`
+		SessionID string `json:"session_id" binding:"required"`
+		BankName  string `json:"bank_name"`
 		Accounts  []struct {
-			UID      string `json:"uid"`
-			Name     string `json:"name"`
+			UID      string `json:"uid" binding:"required"`
+			Name     string `json:"name" binding:"required"`
 			IBAN     string `json:"iban"`
-			Currency string `json:"currency"`
+			Currency string `json:"currency" binding:"required"`
 			Type     string `json:"type"`
-		} `json:"accounts"`
+		} `json:"accounts" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		log.Printf("❌ [SYNC DEBUG] JSON Binding Error: %v", err)
+		log.Printf("❌ JSON binding error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid JSON format",
+			"error":   "Invalid request format",
 			"details": err.Error(),
-			"received_body": string(bodyBytes),
 		})
 		return
 	}
 
-	log.Printf("🔵 [SYNC DEBUG] Parsed SessionID: '%s'", req.SessionID)
-	log.Printf("🔵 [SYNC DEBUG] Parsed Accounts Count: %d", len(req.Accounts))
-
-	for i, acc := range req.Accounts {
-		log.Printf("🔵 [SYNC DEBUG] Account[%d]: UID=%s, Name=%s, IBAN=%s", i, acc.UID, acc.Name, acc.IBAN)
-	}
-
-	// Validation
-	if req.SessionID == "" {
-		log.Printf("❌ [SYNC DEBUG] SessionID is EMPTY after parsing!")
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "session_id is required",
-			"received_session_id": req.SessionID,
-		})
-		return
-	}
+	log.Printf("✅ Parsed request:")
+	log.Printf("   Session ID: %s", req.SessionID)
+	log.Printf("   Bank: %s", req.BankName)
+	log.Printf("   Accounts: %d", len(req.Accounts))
 
 	if len(req.Accounts) == 0 {
-		log.Printf("⚠️  [SYNC DEBUG] No accounts in request!")
+		log.Println("⚠️  No accounts to sync")
 		c.JSON(http.StatusOK, gin.H{
-			"message": "No accounts to sync",
+			"message":         "No accounts to sync",
 			"accounts_synced": 0,
 		})
 		return
 	}
 
-	log.Printf("✅ [SYNC DEBUG] Validation passed, starting sync...")
-	log.Printf("═══════════════════════════════════════════════════")
-
 	accountsSynced := 0
+	bankName := req.BankName
+	if bankName == "" {
+		bankName = "Enable Banking"
+	}
 
 	for i, acc := range req.Accounts {
-		log.Printf("💳 [%d/%d] Processing: %s (UID: %s)", i+1, len(req.Accounts), acc.Name, acc.UID)
-		
+		log.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		log.Printf("💳 [%d/%d] Processing: %s", i+1, len(req.Accounts), acc.Name)
+		log.Printf("    UID: %s", acc.UID)
+		log.Printf("    IBAN: %s", acc.IBAN)
+		log.Printf("    Currency: %s", acc.Currency)
+		log.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
 		// A. Créer/récupérer la connexion
-		log.Printf("   → Creating connection...")
+		log.Println("   → Creating/updating connection...")
 		connID, err := h.Service.SaveConnectionWithTokens(
 			c.Request.Context(),
 			userID,
 			budgetID,
 			acc.UID,
-			"Enable Banking",
+			bankName,
 			req.SessionID,
-			"enablebanking-managed",
+			"enablebanking",
 			"",
-			time.Now().AddDate(0, 3, 0),
+			time.Now().AddDate(0, 3, 0), // 3 mois
 		)
 
 		if err != nil {
-			log.Printf("❌ [%d/%d] Error creating connection: %v", i+1, len(req.Accounts), err)
+			log.Printf("❌ Failed to create connection: %v", err)
 			continue
 		}
 
-		log.Printf("✅ [%d/%d] Connection created: %s", i+1, len(req.Accounts), connID)
+		log.Printf("✅ Connection ID: %s", connID)
 
 		// B. Récupérer le solde
 		balance := 0.0
-		log.Printf("   → Fetching balance...")
+		log.Println("   → Fetching balance...")
 		
 		balances, err := h.EnableBankingService.GetBalances(
 			c.Request.Context(),
@@ -277,21 +322,20 @@ func (h *EnableBankingHandler) SyncAccounts(c *gin.Context) {
 		)
 		
 		if err != nil {
-			log.Printf("⚠️  [%d/%d] Could not fetch balance: %v", i+1, len(req.Accounts), err)
+			log.Printf("⚠️  Could not fetch balance: %v", err)
 		} else if len(balances) > 0 {
+			// Prendre le premier solde disponible
 			amountStr := balances[0].BalanceAmount.Amount
 			if parsed, err := strconv.ParseFloat(amountStr, 64); err == nil {
 				balance = parsed
-				log.Printf("💰 [%d/%d] Balance: %.2f %s", i+1, len(req.Accounts), balance, balances[0].BalanceAmount.Currency)
+				log.Printf("💰 Balance: %.2f %s", balance, balances[0].BalanceAmount.Currency)
 			} else {
-				log.Printf("⚠️  [%d/%d] Could not parse balance: '%s' (error: %v)", i+1, len(req.Accounts), amountStr, err)
+				log.Printf("⚠️  Could not parse balance: '%s'", amountStr)
 			}
-		} else {
-			log.Printf("⚠️  [%d/%d] No balances returned", i+1, len(req.Accounts))
 		}
 
 		// C. Sauvegarder le compte
-		log.Printf("   → Saving account...")
+		log.Println("   → Saving account...")
 		mask := acc.IBAN
 		if len(mask) > 4 {
 			mask = mask[len(mask)-4:]
@@ -308,11 +352,12 @@ func (h *EnableBankingHandler) SyncAccounts(c *gin.Context) {
 		)
 
 		if err != nil {
-			log.Printf("❌ [%d/%d] Error saving account: %v", i+1, len(req.Accounts), err)
-		} else {
-			log.Printf("✅ [%d/%d] Account saved: %s (%.2f %s)", i+1, len(req.Accounts), acc.Name, balance, acc.Currency)
-			accountsSynced++
+			log.Printf("❌ Failed to save account: %v", err)
+			continue
 		}
+
+		log.Printf("✅ Account synced: %s (%.2f %s)", acc.Name, balance, acc.Currency)
+		accountsSynced++
 	}
 
 	log.Printf("═══════════════════════════════════════════════════")
@@ -320,14 +365,16 @@ func (h *EnableBankingHandler) SyncAccounts(c *gin.Context) {
 	log.Printf("═══════════════════════════════════════════════════")
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Accounts synchronized successfully",
+		"message":         "Accounts synchronized successfully",
 		"accounts_synced": accountsSynced,
+		"total_accounts":  len(req.Accounts),
 	})
 }
 
-// ========== 5. GET CONNECTIONS (NOUVEAU - FIX 404) ==========
+// ============================================================================
+// 5. GET CONNECTIONS - Liste des connexions du budget
+// ============================================================================
 
-// GET /api/v1/budgets/:id/banking/enablebanking/connections
 func (h *EnableBankingHandler) GetConnections(c *gin.Context) {
 	budgetID := c.Param("id")
 	userID := middleware.GetUserID(c)
@@ -338,12 +385,15 @@ func (h *EnableBankingHandler) GetConnections(c *gin.Context) {
 		SELECT 
 			bc.id,
 			bc.institution_name,
+			bc.provider_connection_id as session_id,
 			bc.created_at,
 			COUNT(ba.id) as account_count
 		FROM banking_connections bc
 		LEFT JOIN banking_accounts ba ON ba.connection_id = bc.id
-		WHERE bc.budget_id = $1 AND bc.user_id = $2 AND bc.provider = 'enablebanking'
-		GROUP BY bc.id, bc.institution_name, bc.created_at
+		WHERE bc.budget_id = $1 
+		  AND bc.user_id = $2 
+		  AND bc.provider = 'enablebanking'
+		GROUP BY bc.id, bc.institution_name, bc.provider_connection_id, bc.created_at
 		ORDER BY bc.created_at DESC
 	`, budgetID, userID)
 
@@ -357,15 +407,19 @@ func (h *EnableBankingHandler) GetConnections(c *gin.Context) {
 	type Connection struct {
 		ID              string    `json:"id"`
 		InstitutionName string    `json:"institution_name"`
+		SessionID       string    `json:"session_id"`
 		CreatedAt       time.Time `json:"created_at"`
 		AccountCount    int       `json:"account_count"`
+		Provider        string    `json:"provider"`
 	}
 
 	var connections []Connection
 
 	for rows.Next() {
 		var conn Connection
-		if err := rows.Scan(&conn.ID, &conn.InstitutionName, &conn.CreatedAt, &conn.AccountCount); err != nil {
+		conn.Provider = "enablebanking"
+		if err := rows.Scan(&conn.ID, &conn.InstitutionName, &conn.SessionID, &conn.CreatedAt, &conn.AccountCount); err != nil {
+			log.Printf("⚠️  Error scanning row: %v", err)
 			continue
 		}
 		connections = append(connections, conn)
@@ -376,7 +430,9 @@ func (h *EnableBankingHandler) GetConnections(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"connections": connections})
 }
 
-// ========== 6. REFRESH BALANCES ==========
+// ============================================================================
+// 6. REFRESH BALANCES - Rafraîchir les soldes
+// ============================================================================
 
 func (h *EnableBankingHandler) RefreshBalances(c *gin.Context) {
 	var req struct {
@@ -388,6 +444,9 @@ func (h *EnableBankingHandler) RefreshBalances(c *gin.Context) {
 		return
 	}
 
+	log.Printf("🔄 Refreshing balances for connection: %s", req.ConnectionID)
+
+	// Récupérer le session ID
 	var sessionID string
 	err := h.DB.QueryRow(`
 		SELECT provider_connection_id 
@@ -396,38 +455,46 @@ func (h *EnableBankingHandler) RefreshBalances(c *gin.Context) {
 	`, req.ConnectionID).Scan(&sessionID)
 
 	if err != nil {
+		log.Printf("❌ Connection not found: %v", err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Connection not found"})
 		return
 	}
 
+	// Récupérer tous les comptes de cette connexion
 	rows, err := h.DB.Query(`
-		SELECT id, external_account_id 
+		SELECT id, external_account_id, name
 		FROM banking_accounts 
 		WHERE connection_id = $1
 	`, req.ConnectionID)
 
 	if err != nil {
+		log.Printf("❌ Failed to fetch accounts: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accounts"})
 		return
 	}
 	defer rows.Close()
 
 	updatedCount := 0
+	errors := []string{}
 
 	for rows.Next() {
-		var accountID, externalID string
-		if err := rows.Scan(&accountID, &externalID); err != nil {
+		var accountID, externalID, accountName string
+		if err := rows.Scan(&accountID, &externalID, &accountName); err != nil {
 			continue
 		}
 
+		log.Printf("💰 Refreshing balance for: %s (UID: %s)", accountName, externalID)
+
 		balances, err := h.EnableBankingService.GetBalances(
-			c.Request.Context(), 
-			sessionID, 
+			c.Request.Context(),
+			sessionID,
 			externalID,
 		)
 
 		if err != nil {
-			fmt.Printf("Error fetching balance for account %s: %v\n", externalID, err)
+			errMsg := fmt.Sprintf("Error fetching balance for %s: %v", accountName, err)
+			log.Printf("❌ %s", errMsg)
+			errors = append(errors, errMsg)
 			continue
 		}
 
@@ -441,31 +508,53 @@ func (h *EnableBankingHandler) RefreshBalances(c *gin.Context) {
 				`, balance, accountID)
 
 				if err == nil {
+					log.Printf("✅ Updated balance for %s: %.2f %s", accountName, balance, balances[0].BalanceAmount.Currency)
 					updatedCount++
+				} else {
+					errMsg := fmt.Sprintf("Failed to update balance for %s: %v", accountName, err)
+					log.Printf("❌ %s", errMsg)
+					errors = append(errors, errMsg)
 				}
 			}
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Balances refreshed",
+	response := gin.H{
+		"message":          "Balances refresh completed",
 		"accounts_updated": updatedCount,
-	})
+	}
+
+	if len(errors) > 0 {
+		response["errors"] = errors
+	}
+
+	log.Printf("✅ Balance refresh complete: %d accounts updated", updatedCount)
+
+	c.JSON(http.StatusOK, response)
 }
 
-// ========== 7. GET TRANSACTIONS ==========
+// ============================================================================
+// 7. GET TRANSACTIONS - Récupérer les transactions
+// ============================================================================
 
 func (h *EnableBankingHandler) GetTransactions(c *gin.Context) {
+	budgetID := c.Query("budget_id")
 	userID := middleware.GetUserID(c)
-	
+
+	log.Printf("💳 Fetching transactions for budget: %s", budgetID)
+
+	// Récupérer tous les comptes Enable Banking de l'utilisateur
 	rows, err := h.DB.Query(`
-		SELECT bc.provider_connection_id, ba.external_account_id, ba.id
+		SELECT bc.provider_connection_id, ba.external_account_id, ba.id, ba.name
 		FROM banking_accounts ba
 		JOIN banking_connections bc ON ba.connection_id = bc.id
-		WHERE bc.user_id = $1 AND bc.provider = 'enablebanking'
-	`, userID)
+		WHERE bc.user_id = $1 
+		  AND bc.budget_id = $2 
+		  AND bc.provider = 'enablebanking'
+	`, userID, budgetID)
 
 	if err != nil {
+		log.Printf("❌ Failed to fetch accounts: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accounts"})
 		return
 	}
@@ -474,98 +563,172 @@ func (h *EnableBankingHandler) GetTransactions(c *gin.Context) {
 	type TransactionDisplay struct {
 		ID          string  `json:"id"`
 		AccountID   string  `json:"account_id"`
+		AccountName string  `json:"account_name"`
 		Amount      float64 `json:"amount"`
 		Currency    string  `json:"currency_code"`
 		Description string  `json:"clean_description"`
 		Date        string  `json:"date"`
+		Type        string  `json:"type"` // DBIT ou CRDT
 	}
 
 	var allTransactions []TransactionDisplay
 	transactionID := 1
 
+	// Récupérer les transactions des 90 derniers jours
 	dateFrom := time.Now().AddDate(0, 0, -90).Format("2006-01-02")
 	dateTo := time.Now().Format("2006-01-02")
 
 	for rows.Next() {
-		var sessionID, accountUID, accountID string
-		if err := rows.Scan(&sessionID, &accountUID, &accountID); err != nil {
+		var sessionID, accountUID, accountID, accountName string
+		if err := rows.Scan(&sessionID, &accountUID, &accountID, &accountName); err != nil {
 			continue
 		}
 
+		log.Printf("   → Fetching transactions for: %s", accountName)
+
 		transactions, err := h.EnableBankingService.GetTransactions(
 			c.Request.Context(),
-			sessionID,
 			accountUID,
 			dateFrom,
 			dateTo,
 		)
 
 		if err != nil {
-			log.Printf("⚠️  Error fetching transactions for account %s: %v", accountUID, err)
+			log.Printf("⚠️  Error fetching transactions for %s: %v", accountName, err)
 			continue
 		}
 
+		log.Printf("   ✅ Found %d transactions for %s", len(transactions), accountName)
+
 		for _, tx := range transactions {
+			// Convertir le montant
 			amount := 0.0
 			if parsed, err := strconv.ParseFloat(tx.TransactionAmount.Amount, 64); err == nil {
 				amount = parsed
+				// Si c'est un débit, rendre le montant négatif
 				if tx.CreditDebitIndicator == "DBIT" {
 					amount = -amount
 				}
 			}
 
-			description := tx.RemittanceInfo
-			if description == "" && tx.CreditorName != "" {
-				description = tx.CreditorName
+			// Construire la description
+			description := ""
+			if len(tx.RemittanceInformation) > 0 {
+				description = tx.RemittanceInformation[0]
 			}
-			if description == "" && tx.DebtorName != "" {
-				description = tx.DebtorName
+			if description == "" && tx.Creditor != nil {
+				description = tx.Creditor.Name
+			}
+			if description == "" && tx.Debtor != nil {
+				description = tx.Debtor.Name
 			}
 			if description == "" {
 				description = "Transaction"
 			}
 
+			// Utiliser la date de réservation ou la date de valeur
+			date := tx.BookingDate
+			if date == "" {
+				date = tx.ValueDate
+			}
+			if date == "" {
+				date = tx.TransactionDate
+			}
+
 			allTransactions = append(allTransactions, TransactionDisplay{
 				ID:          fmt.Sprintf("eb-%d", transactionID),
 				AccountID:   accountID,
+				AccountName: accountName,
 				Amount:      amount,
 				Currency:    tx.TransactionAmount.Currency,
 				Description: description,
-				Date:        tx.BookingDate,
+				Date:        date,
+				Type:        tx.CreditDebitIndicator,
 			})
 			transactionID++
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"transactions": allTransactions})
+	log.Printf("✅ Total transactions retrieved: %d", len(allTransactions))
+
+	c.JSON(http.StatusOK, gin.H{
+		"transactions": allTransactions,
+		"total":        len(allTransactions),
+	})
 }
 
-// ========== 8. DELETE CONNECTION ==========
+// ============================================================================
+// 8. DELETE CONNECTION - Supprimer une connexion
+// ============================================================================
 
 func (h *EnableBankingHandler) DeleteConnection(c *gin.Context) {
 	connectionID := c.Param("id")
+	userID := middleware.GetUserID(c)
 
+	log.Printf("🗑️  Deleting connection: %s (user: %s)", connectionID, userID)
+
+	// Récupérer le session ID avant de supprimer
 	var sessionID string
 	err := h.DB.QueryRow(`
 		SELECT provider_connection_id 
 		FROM banking_connections 
-		WHERE id = $1
-	`, connectionID).Scan(&sessionID)
+		WHERE id = $1 AND user_id = $2 AND provider = 'enablebanking'
+	`, connectionID, userID).Scan(&sessionID)
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Connection not found"})
+		if err == sql.ErrNoRows {
+			log.Println("❌ Connection not found or unauthorized")
+			c.JSON(http.StatusNotFound, gin.H{"error": "Connection not found"})
+		} else {
+			log.Printf("❌ Database error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		}
 		return
 	}
 
-	if err := h.EnableBankingService.DeleteSession(c.Request.Context(), sessionID); err != nil {
-		fmt.Printf("Warning: Failed to delete Enable Banking session: %v\n", err)
+	// Supprimer la session Enable Banking
+	if sessionID != "" {
+		if err := h.EnableBankingService.DeleteSession(c.Request.Context(), sessionID); err != nil {
+			log.Printf("⚠️  Failed to delete Enable Banking session: %v", err)
+			// Continue quand même avec la suppression locale
+		}
 	}
 
-	_, err = h.DB.Exec(`DELETE FROM banking_connections WHERE id = $1`, connectionID)
+	// Supprimer les comptes associés
+	_, err = h.DB.Exec(`
+		DELETE FROM banking_accounts 
+		WHERE connection_id = $1
+	`, connectionID)
+
 	if err != nil {
+		log.Printf("❌ Failed to delete accounts: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete accounts"})
+		return
+	}
+
+	// Supprimer la connexion
+	_, err = h.DB.Exec(`
+		DELETE FROM banking_connections 
+		WHERE id = $1 AND user_id = $2
+	`, connectionID, userID)
+
+	if err != nil {
+		log.Printf("❌ Failed to delete connection: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete connection"})
 		return
 	}
 
+	log.Printf("✅ Connection deleted successfully")
 	c.JSON(http.StatusOK, gin.H{"message": "Connection deleted successfully"})
+}
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
