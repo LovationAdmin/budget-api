@@ -376,57 +376,78 @@ func (h *EnableBankingHandler) SyncAccounts(c *gin.Context) {
 // ============================================================================
 
 func (h *EnableBankingHandler) GetConnections(c *gin.Context) {
-	budgetID := c.Param("id")
-	userID := middleware.GetUserID(c)
+    budgetID := c.Param("id")
+    userID := middleware.GetUserID(c)
 
-	log.Printf("📋 Fetching Enable Banking connections for budget %s", budgetID)
+    log.Printf("📋 Fetching Enable Banking connections for budget %s", budgetID)
 
-	rows, err := h.DB.Query(`
-		SELECT 
-			bc.id,
-			bc.aspsp_name as institution_name,
-			bc.session_id,
-			bc.created_at,
-			COUNT(ba.id) as account_count
-		FROM banking_connections bc
-		LEFT JOIN banking_accounts ba ON ba.connection_id = bc.id
-		WHERE bc.budget_id = $1 
-		  AND bc.user_id = $2
-		GROUP BY bc.id, bc.aspsp_name, bc.session_id, bc.created_at
-		ORDER BY bc.created_at DESC
-	`, budgetID, userID)
+    // 1. Fetch List of Connections
+    rows, err := h.DB.Query(`
+        SELECT 
+            bc.id,
+            bc.aspsp_name as institution_name,
+            bc.session_id,
+            bc.created_at,
+            COUNT(ba.id) as account_count
+        FROM banking_connections bc
+        LEFT JOIN banking_accounts ba ON ba.connection_id = bc.id
+        WHERE bc.budget_id = $1 
+          AND bc.user_id = $2
+        GROUP BY bc.id, bc.aspsp_name, bc.session_id, bc.created_at
+        ORDER BY bc.created_at DESC
+    `, budgetID, userID)
 
-	if err != nil {
-		log.Printf("❌ Error fetching connections: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch connections"})
-		return
-	}
-	defer rows.Close()
+    if err != nil {
+        log.Printf("❌ Error fetching connections: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch connections"})
+        return
+    }
+    defer rows.Close()
 
-	type Connection struct {
-		ID              string    `json:"id"`
-		InstitutionName string    `json:"institution_name"`
-		SessionID       string    `json:"session_id"`
-		CreatedAt       time.Time `json:"created_at"`
-		AccountCount    int       `json:"account_count"`
-		Provider        string    `json:"provider"`
-	}
+    type Connection struct {
+        ID              string    `json:"id"`
+        InstitutionName string    `json:"institution_name"`
+        SessionID       string    `json:"session_id"`
+        CreatedAt       time.Time `json:"created_at"`
+        AccountCount    int       `json:"account_count"`
+        Provider        string    `json:"provider"`
+    }
 
-	var connections []Connection
+    var connections []Connection
 
-	for rows.Next() {
-		var conn Connection
-		conn.Provider = "enablebanking"
-		if err := rows.Scan(&conn.ID, &conn.InstitutionName, &conn.SessionID, &conn.CreatedAt, &conn.AccountCount); err != nil {
-			log.Printf("⚠️  Error scanning row: %v", err)
-			continue
-		}
-		connections = append(connections, conn)
-	}
+    for rows.Next() {
+        var conn Connection
+        conn.Provider = "enablebanking"
+        if err := rows.Scan(&conn.ID, &conn.InstitutionName, &conn.SessionID, &conn.CreatedAt, &conn.AccountCount); err != nil {
+            log.Printf("⚠️  Error scanning row: %v", err)
+            continue
+        }
+        connections = append(connections, conn)
+    }
 
-	log.Printf("✅ Found %d Enable Banking connections", len(connections))
+    // 2. Calculate Total Cash (The missing piece!)
+    var totalRealCash float64
+    err = h.DB.QueryRow(`
+        SELECT COALESCE(SUM(balance), 0)
+        FROM banking_accounts ba
+        JOIN banking_connections bc ON ba.connection_id = bc.id
+        WHERE bc.budget_id = $1 
+          AND bc.user_id = $2
+    `, budgetID, userID).Scan(&totalRealCash)
 
-	c.JSON(http.StatusOK, gin.H{"connections": connections})
+    if err != nil {
+        log.Printf("⚠️  Error calculating total cash: %v", err)
+        // We don't fail the request, just return 0
+        totalRealCash = 0
+    }
+
+    log.Printf("✅ Found %d connections, Total Cash: %.2f", len(connections), totalRealCash)
+
+    // 3. Return both connections AND the total
+    c.JSON(http.StatusOK, gin.H{
+        "connections":     connections,
+        "total_real_cash": totalRealCash, // <--- This is what the frontend needs
+    })
 }
 
 // ============================================================================
