@@ -384,16 +384,15 @@ func (h *EnableBankingHandler) GetConnections(c *gin.Context) {
 	rows, err := h.DB.Query(`
 		SELECT 
 			bc.id,
-			bc.institution_name,
-			bc.provider_connection_id as session_id,
+			bc.aspsp_name as institution_name,
+			bc.session_id,
 			bc.created_at,
 			COUNT(ba.id) as account_count
 		FROM banking_connections bc
 		LEFT JOIN banking_accounts ba ON ba.connection_id = bc.id
 		WHERE bc.budget_id = $1 
-		  AND bc.user_id = $2 
-		  AND bc.provider = 'enablebanking'
-		GROUP BY bc.id, bc.institution_name, bc.provider_connection_id, bc.created_at
+		  AND bc.user_id = $2
+		GROUP BY bc.id, bc.aspsp_name, bc.session_id, bc.created_at
 		ORDER BY bc.created_at DESC
 	`, budgetID, userID)
 
