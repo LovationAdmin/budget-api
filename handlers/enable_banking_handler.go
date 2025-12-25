@@ -544,7 +544,7 @@ func (h *EnableBankingHandler) GetTransactions(c *gin.Context) {
 
 	// Récupérer tous les comptes Enable Banking de l'utilisateur
 	rows, err := h.DB.Query(`
-		SELECT bc.provider_connection_id, ba.external_account_id, ba.id, ba.name
+		SELECT bc.session_id, ba.external_account_id, ba.id, ba.name
 		FROM banking_accounts ba
 		JOIN banking_connections bc ON ba.connection_id = bc.id
 		WHERE bc.user_id = $1 
@@ -669,7 +669,7 @@ func (h *EnableBankingHandler) DeleteConnection(c *gin.Context) {
 	// Récupérer le session ID avant de supprimer
 	var sessionID string
 	err := h.DB.QueryRow(`
-		SELECT provider_connection_id 
+		SELECT session_id 
 		FROM banking_connections 
 		WHERE id = $1 AND user_id = $2 AND provider = 'enablebanking'
 	`, connectionID, userID).Scan(&sessionID)
