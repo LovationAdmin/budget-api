@@ -72,7 +72,6 @@ func SetupEnableBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	// Callback après autorisation
 	rg.GET("/banking/enablebanking/callback", handler.HandleCallback)
 
-	// ⭐ FIX: Route manquante ajoutée ⭐
 	// Récupération des connexions d'un budget
 	rg.GET("/budgets/:id/banking/enablebanking/connections", handler.GetConnections)
 
@@ -87,4 +86,24 @@ func SetupEnableBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 
 	// Suppression d'une connexion
 	rg.DELETE("/banking/enablebanking/connections/:id", handler.DeleteConnection)
+}
+
+func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
+	handler := handlers.NewMarketSuggestionsHandler(db)
+
+	// Route pour analyser une charge spécifique
+	rg.POST("/suggestions/analyze", handler.AnalyzeCharge)
+
+	// Route pour récupérer suggestions en cache pour une catégorie
+	rg.GET("/suggestions/category/:category", handler.GetCategorySuggestions)
+
+	// Route pour analyse bulk d'un budget
+	rg.POST("/budgets/:budget_id/suggestions/bulk-analyze", handler.BulkAnalyzeCharges)
+}
+
+func SetupAdminSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
+	handler := handlers.NewMarketSuggestionsHandler(db)
+
+	// Route pour nettoyer le cache expiré (admin/cron)
+	rg.POST("/admin/suggestions/clean-cache", handler.CleanExpiredCache)
 }

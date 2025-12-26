@@ -222,6 +222,100 @@ func RunMigrations(db *sql.DB) error {
 		`ALTER TABLE banking_accounts DROP CONSTRAINT IF EXISTS unique_banking_account_per_connection`,
 		`ALTER TABLE banking_accounts ADD CONSTRAINT unique_banking_account_per_connection 
 			UNIQUE (connection_id, account_id)`,
+
+		// ============================================================================
+		// --- MARKET SUGGESTIONS SYSTEM ---
+		// ============================================================================
+
+		// 1. Ajouter colonnes pour localisation utilisateur
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS country VARCHAR(2) DEFAULT 'FR'`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS postal_code VARCHAR(10)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_country ON users(country)`,
+
+		// 2. Table principale pour le cache des suggestions de marché
+		`CREATE TABLE IF NOT EXISTS market_suggestions (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			category VARCHAR(50) NOT NULL,
+			country VARCHAR(2) NOT NULL,
+			merchant_name VARCHAR(255),
+			competitors JSONB NOT NULL,
+			last_updated TIMESTAMP DEFAULT NOW(),
+			expires_at TIMESTAMP,
+			created_at TIMESTAMP DEFAULT NOW()
+		)`,
+
+		// Index pour optimiser les recherches
+		`CREATE INDEX IF NOT EXISTS idx_market_suggestions_category_country 
+		ON market_suggestions(category, country)`,
+
+		`CREATE INDEX IF NOT EXISTS idx_market_suggestions_expires 
+		ON market_suggestions(expires_at)`,
+
+		`CREATE INDEX IF NOT EXISTS idx_market_suggestions_merchant 
+		ON market_suggestions(merchant_name)`,
+
+		// Contrainte unique pour éviter les doublons
+		`ALTER TABLE market_suggestions DROP CONSTRAINT IF EXISTS unique_market_suggestion`,
+		`ALTER TABLE market_suggestions ADD CONSTRAINT unique_market_suggestion 
+		UNIQUE (category, country, COALESCE(merchant_name, ''))`,
+
+		// 3. Table pour tracker l'utilisation de l'API Claude (monitoring des coûts)
+		`CREATE TABLE IF NOT EXISTS ai_api_usage (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+			request_type VARCHAR(50) NOT NULL,
+			category VARCHAR(50),
+			country VARCHAR(2),
+			input_tokens INT DEFAULT 0,
+			output_tokens INT DEFAULT 0,
+			total_tokens INT DEFAULT 0,
+			cost_usd DECIMAL(10, 6) DEFAULT 0,
+			cache_hit BOOLEAN DEFAULT FALSE,
+			duration_ms INT,
+			created_at TIMESTAMP DEFAULT NOW()
+		)`,
+
+		// Index pour analytics
+		`CREATE INDEX IF NOT EXISTS idx_ai_usage_user ON ai_api_usage(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_usage_type ON ai_api_usage(request_type)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_api_usage(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_usage_cache ON ai_api_usage(cache_hit)`,
+
+		// 4. Table pour stocker les liens d'affiliation par pays
+		`CREATE TABLE IF NOT EXISTS affiliate_links (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			category VARCHAR(50) NOT NULL,
+			country VARCHAR(2) NOT NULL,
+			provider_name VARCHAR(255) NOT NULL,
+			affiliate_url TEXT NOT NULL,
+			commission_rate DECIMAL(5, 2),
+			is_active BOOLEAN DEFAULT TRUE,
+			priority INT DEFAULT 0,
+			created_at TIMESTAMP DEFAULT NOW(),
+			updated_at TIMESTAMP DEFAULT NOW()
+		)`,
+
+		// Index
+		`CREATE INDEX IF NOT EXISTS idx_affiliate_category_country 
+		ON affiliate_links(category, country)`,
+
+		`CREATE INDEX IF NOT EXISTS idx_affiliate_active 
+		ON affiliate_links(is_active)`,
+
+		// Contrainte unique
+		`ALTER TABLE affiliate_links DROP CONSTRAINT IF EXISTS unique_affiliate_link`,
+		`ALTER TABLE affiliate_links ADD CONSTRAINT unique_affiliate_link 
+		UNIQUE (category, country, provider_name)`,
+
+		// 5. Données initiales pour liens d'affiliation France
+		`INSERT INTO affiliate_links (category, country, provider_name, affiliate_url, commission_rate, priority) 
+		VALUES 
+			('INTERNET', 'FR', 'Ariase', 'https://www.ariase.com/box', 5.00, 1),
+			('MOBILE', 'FR', 'Ariase', 'https://www.ariase.com/mobile', 5.00, 1),
+			('ENERGY', 'FR', 'Papernest', 'https://www.papernest.com/energie/', 8.00, 1),
+			('LOAN', 'FR', 'Meilleurtaux', 'https://www.meilleurtaux.com/', 10.00, 1)
+		ON CONFLICT ON CONSTRAINT unique_affiliate_link DO NOTHING`,
+
 	}
 
 	for _, migration := range migrations {

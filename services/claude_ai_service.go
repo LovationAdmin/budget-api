@@ -12,8 +12,8 @@ import (
 )
 
 // ============================================================================
-// CLAUDE AI SERVICE
-// Service pour appeler l'API Anthropic Claude de manière optimisée
+// CLAUDE AI SERVICE - Pour recherche de concurrents détaillée
+// Utilise Claude Sonnet 4 (plus intelligent que Haiku, pour analyses complexes)
 // ============================================================================
 
 type ClaudeAIService struct {
@@ -42,14 +42,12 @@ type ClaudeResponse struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
-	Model        string `json:"model"`
-	StopReason   string `json:"stop_reason"`
-	Usage        Usage  `json:"usage"`
-}
-
-type Usage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	Model      string `json:"model"`
+	StopReason string `json:"stop_reason"`
+	Usage      struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage"`
 }
 
 func NewClaudeAIService() *ClaudeAIService {
@@ -66,7 +64,6 @@ func NewClaudeAIService() *ClaudeAIService {
 // ============================================================================
 
 func (s *ClaudeAIService) CallClaude(ctx context.Context, prompt string) (string, error) {
-	
 	if s.apiKey == "" {
 		return "", fmt.Errorf("ANTHROPIC_API_KEY not set")
 	}
@@ -136,61 +133,29 @@ func (s *ClaudeAIService) CallClaude(ctx context.Context, prompt string) (string
 	responseText := claudeResp.Content[0].Text
 
 	// Log des tokens utilisés (pour monitoring des coûts)
-	fmt.Printf("[Claude AI] Tokens used - Input: %d, Output: %d, Total: %d\n",
+	fmt.Printf("[Claude AI] Model: %s | Tokens used - Input: %d, Output: %d, Total: %d | Cost: $%.4f\n",
+		claudeResp.Model,
 		claudeResp.Usage.InputTokens,
 		claudeResp.Usage.OutputTokens,
 		claudeResp.Usage.InputTokens+claudeResp.Usage.OutputTokens,
+		s.EstimateCost(claudeResp.Usage.InputTokens, claudeResp.Usage.OutputTokens),
 	)
 
 	return responseText, nil
 }
 
 // ============================================================================
-// MÉTHODE SPÉCIALISÉE POUR LA RECHERCHE DE CONCURRENTS
-// ============================================================================
-
-func (s *ClaudeAIService) SearchCompetitors(
-	ctx context.Context,
-	category string,
-	currentMerchant string,
-	currentAmount float64,
-	country string,
-) (string, error) {
-	
-	prompt := fmt.Sprintf(`En tant qu'expert du marché %s, trouve les meilleurs concurrents pour:
-- Catégorie: %s
-- Fournisseur actuel: %s  
-- Prix actuel: %.2f€/mois
-
-Fournis une réponse JSON avec les 3-5 meilleurs concurrents disponibles actuellement.`,
-		country, category, currentMerchant, currentAmount,
-	)
-
-	return s.CallClaude(ctx, prompt)
-}
-
-// ============================================================================
 // ESTIMATION DES COÛTS
 // ============================================================================
 
-// Sonnet 4 pricing (décembre 2024)
+// Prix Claude Sonnet 4 (Décembre 2024)
 const (
-	InputTokenPrice  = 0.000003  // $3 per million tokens
-	OutputTokenPrice = 0.000015  // $15 per million tokens
+	InputTokenPrice  = 0.000003 // $3 per million tokens
+	OutputTokenPrice = 0.000015 // $15 per million tokens
 )
 
 func (s *ClaudeAIService) EstimateCost(inputTokens int, outputTokens int) float64 {
 	inputCost := float64(inputTokens) * InputTokenPrice
 	outputCost := float64(outputTokens) * OutputTokenPrice
 	return inputCost + outputCost
-}
-
-// Estimation approximative basée sur la longueur du prompt
-func (s *ClaudeAIService) EstimatePromptCost(prompt string) float64 {
-	// Approximation: ~4 caractères = 1 token
-	estimatedInputTokens := len(prompt) / 4
-	// Réponse typique: ~500 tokens
-	estimatedOutputTokens := 500
-	
-	return s.EstimateCost(estimatedInputTokens, estimatedOutputTokens)
 }

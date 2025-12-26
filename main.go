@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
+	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -10,8 +12,9 @@ import (
 	
 	"budget-api/config"
 	"budget-api/middleware"
-	"budget-api/handlers" // Assurez-vous que handlers inclut le nouveau ws.go
+	"budget-api/handlers"
 	"budget-api/routes"
+	"budget-api/services"
 )
 
 func main() {
@@ -31,6 +34,9 @@ func main() {
 	if err := config.RunMigrations(db); err != nil {
 		log.Fatal("Failed to run migrations:", err)
 	}
+
+	// ⭐ NOUVEAU: Démarrer le nettoyage automatique du cache des suggestions
+	go scheduleCacheCleaning(db)
 
 	// Initialize WebSocket Handler
 	wsHandler := handlers.NewWSHandler()
@@ -84,17 +90,23 @@ func main() {
 		// WebSocket Route (Protected check handled inside handler or via query token)
 		v1.GET("/ws/budgets/:id", wsHandler.HandleWS)
 
-		//routes.SetupAdminRoutes(v1, db)
+		// Admin routes (non protégées pour l'instant, à sécuriser si besoin)
+		routes.SetupAdminRoutes(v1, db)
+		
+		// ⭐ NOUVEAU: Admin routes pour suggestions (nettoyage cache)
+		routes.SetupAdminSuggestionsRoutes(v1, db)
 
 		// Protected routes
 		protected := v1.Group("/")
 		protected.Use(middleware.AuthMiddleware())
 		{
-			// Note: Vous devrez mettre à jour SetupBudgetRoutes pour passer wsHandler si vous voulez broadcaster des events
 			routes.SetupBudgetRoutes(protected, db) 
 			routes.SetupUserRoutes(protected, db)
 			routes.SetupInvitationRoutes(protected, db)
 			routes.SetupEnableBankingRoutes(protected, db)
+			
+			// ⭐ NOUVEAU: Routes Market Suggestions
+			routes.SetupMarketSuggestionsRoutes(protected, db)
 		}
 	}
 
@@ -114,7 +126,43 @@ func main() {
 	}
 
 	log.Printf("🚀 Server starting on port %s", port)
+	log.Printf("📊 Market Suggestions: Cache cleaning scheduled (every 24h)")
+	
 	if err := router.Run(":" + port); err != nil {
 		log.Fatal("Failed to start server:", err)
+	}
+}
+
+// ⭐ NOUVELLE FONCTION: Nettoyage automatique du cache des suggestions
+// S'exécute tous les jours à minuit pour supprimer les suggestions expirées
+func scheduleCacheCleaning(db *sql.DB) {
+	// Attendre le démarrage complet
+	time.Sleep(5 * time.Second)
+	
+	log.Println("🧹 Cache cleaning scheduler started")
+	
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	// Nettoyer immédiatement au démarrage
+	cleanCache(db)
+
+	// Puis nettoyer toutes les 24h
+	for range ticker.C {
+		cleanCache(db)
+	}
+}
+
+func cleanCache(db *sql.DB) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	aiService := services.NewClaudeAIService()
+	marketAnalyzer := services.NewMarketAnalyzerService(db, aiService)
+
+	if err := marketAnalyzer.CleanExpiredCache(ctx); err != nil {
+		log.Printf("❌ Failed to clean suggestions cache: %v", err)
+	} else {
+		log.Println("✅ Suggestions cache cleaned successfully")
 	}
 }

@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
-	"fmt"
 	"log"
 	"net/http"
+	"strings"
+	"time"
 
-	"budget-api/middleware"
+	"budget-api/models"
 	"budget-api/services"
 
 	"github.com/gin-gonic/gin"
@@ -18,14 +20,14 @@ import (
 // ============================================================================
 
 type MarketSuggestionsHandler struct {
-	DB              *sql.DB
-	MarketAnalyzer  *services.MarketAnalyzerService
+	DB             *sql.DB
+	MarketAnalyzer *services.MarketAnalyzerService
 }
 
 func NewMarketSuggestionsHandler(db *sql.DB) *MarketSuggestionsHandler {
 	aiService := services.NewClaudeAIService()
 	marketAnalyzer := services.NewMarketAnalyzerService(db, aiService)
-	
+
 	return &MarketSuggestionsHandler{
 		DB:             db,
 		MarketAnalyzer: marketAnalyzer,
@@ -45,7 +47,7 @@ type AnalyzeChargeRequest struct {
 
 func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 	userID := c.GetString("user_id")
-	
+
 	var req AnalyzeChargeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
@@ -74,7 +76,7 @@ func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 	if err != nil {
 		log.Printf("Market analysis failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to analyze charge",
+			"error":   "Failed to analyze charge",
 			"details": err.Error(),
 		})
 		return
@@ -88,29 +90,16 @@ func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 // POST /api/v1/budgets/:budget_id/suggestions/bulk-analyze
 // ============================================================================
 
+type ChargeToAnalyze struct {
+	ID           string  `json:"id"`
+	Category     string  `json:"category"`
+	Label        string  `json:"label"`
+	Amount       float64 `json:"amount"`
+	MerchantName string  `json:"merchant_name,omitempty"`
+}
+
 type BulkAnalyzeRequest struct {
 	Charges []ChargeToAnalyze `json:"charges" binding:"required"`
-}
-
-type ChargeToAnalyze struct {
-	ID            string  `json:"id"`
-	Category      string  `json:"category"`
-	Label         string  `json:"label"`
-	Amount        float64 `json:"amount"`
-	MerchantName  string  `json:"merchant_name,omitempty"`
-}
-
-type BulkAnalyzeResponse struct {
-	Suggestions      []SuggestionWithCharge `json:"suggestions"`
-	CacheHits        int                    `json:"cache_hits"`
-	AICallsMade      int                    `json:"ai_calls_made"`
-	TotalPotentialSavings float64           `json:"total_potential_savings"`
-}
-
-type SuggestionWithCharge struct {
-	ChargeID    string                          `json:"charge_id"`
-	ChargeLabel string                          `json:"charge_label"`
-	Suggestion  *services.MarketSuggestion      `json:"suggestion"`
 }
 
 func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
@@ -138,10 +127,13 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 
 	log.Printf("[MarketSuggestions] Bulk analyzing %d charges for budget %s", len(req.Charges), budgetID)
 
-	var suggestions []SuggestionWithCharge
+	var suggestions []models.ChargeSuggestion
 	cacheHits := 0
 	aiCalls := 0
 	totalSavings := 0.0
+
+	// Timestamp de début pour détecter les appels AI (nouvelle donnée < 5 secondes)
+	startTime := time.Now()
 
 	// Analyser chaque charge
 	for _, charge := range req.Charges {
@@ -163,37 +155,36 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 			continue
 		}
 
-		// Compter cache hits vs AI calls (simple heuristique)
-		if suggestion.LastUpdated.After(suggestion.LastUpdated.Add(-1 * time.Minute)) {
+		// Détecter si c'était un cache hit ou un AI call
+		// Si la suggestion a été créée récemment (< 5 secondes), c'est un AI call
+		if time.Since(suggestion.LastUpdated) < 5*time.Second {
 			aiCalls++
 		} else {
 			cacheHits++
 		}
 
-		// Calculer les économies totales
-		for _, comp := range suggestion.Competitors {
-			if comp.PotentialSavings > 0 {
-				totalSavings += comp.PotentialSavings
-				break // Prendre seulement la meilleure économie
-			}
+		// Calculer les économies totales (prendre la meilleure offre)
+		if len(suggestion.Competitors) > 0 {
+			bestSavings := suggestion.Competitors[0].PotentialSavings
+			totalSavings += bestSavings
 		}
 
-		suggestions = append(suggestions, SuggestionWithCharge{
+		suggestions = append(suggestions, models.ChargeSuggestion{
 			ChargeID:    charge.ID,
 			ChargeLabel: charge.Label,
 			Suggestion:  suggestion,
 		})
 	}
 
-	response := BulkAnalyzeResponse{
+	response := models.BulkAnalyzeResponse{
 		Suggestions:           suggestions,
 		CacheHits:             cacheHits,
 		AICallsMade:           aiCalls,
 		TotalPotentialSavings: totalSavings,
 	}
 
-	log.Printf("[MarketSuggestions] ✅ Bulk analysis complete: %d suggestions, %d cache hits, %d AI calls, %.2f€ potential savings",
-		len(suggestions), cacheHits, aiCalls, totalSavings)
+	log.Printf("[MarketSuggestions] ✅ Bulk analysis complete: %d suggestions, %d cache hits, %d AI calls, %.2f€ potential savings (%.2fs)",
+		len(suggestions), cacheHits, aiCalls, totalSavings, time.Since(startTime).Seconds())
 
 	c.JSON(http.StatusOK, response)
 }
@@ -212,12 +203,13 @@ func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 		userCountry = "FR"
 	}
 
-	// Récupérer depuis le cache
-	suggestion, err := h.MarketAnalyzer.GetCachedSuggestion(
+	// Récupérer depuis le cache via le MarketAnalyzer
+	suggestion, err := h.MarketAnalyzer.AnalyzeCharge(
 		c.Request.Context(),
 		category,
-		userCountry,
 		"", // Pas de merchant spécifique
+		0,  // Pas de montant
+		userCountry,
 	)
 
 	if err != nil {
@@ -226,7 +218,7 @@ func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 	}
 
 	if suggestion == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "No suggestions found in cache"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "No suggestions found"})
 		return
 	}
 
@@ -253,17 +245,21 @@ func (h *MarketSuggestionsHandler) CleanExpiredCache(c *gin.Context) {
 // ============================================================================
 
 func (h *MarketSuggestionsHandler) getUserCountry(ctx context.Context, userID string) (string, error) {
-	var country string
+	var country sql.NullString
 	err := h.DB.QueryRowContext(ctx,
-		"SELECT COALESCE(country, 'FR') FROM users WHERE id = $1",
+		"SELECT country FROM users WHERE id = $1",
 		userID,
 	).Scan(&country)
-	
+
 	if err != nil {
 		return "FR", err
 	}
-	
-	return country, nil
+
+	if !country.Valid || country.String == "" {
+		return "FR", nil
+	}
+
+	return country.String, nil
 }
 
 func (h *MarketSuggestionsHandler) checkBudgetAccess(ctx context.Context, userID string, budgetID string) (bool, error) {
@@ -275,11 +271,14 @@ func (h *MarketSuggestionsHandler) checkBudgetAccess(ctx context.Context, userID
 		)`,
 		budgetID, userID,
 	).Scan(&exists)
-	
+
 	return exists, err
 }
 
 func (h *MarketSuggestionsHandler) isSuggestionRelevant(category string) bool {
+	// Normaliser la catégorie
+	category = strings.ToUpper(category)
+
 	relevantCategories := map[string]bool{
 		"ENERGY":    true,
 		"INTERNET":  true,
@@ -288,32 +287,6 @@ func (h *MarketSuggestionsHandler) isSuggestionRelevant(category string) bool {
 		"LOAN":      true,
 		"BANK":      true,
 	}
-	
+
 	return relevantCategories[category]
-}
-
-// ============================================================================
-// ENREGISTREMENT DES ROUTES
-// ============================================================================
-
-func (h *MarketSuggestionsHandler) RegisterRoutes(router *gin.RouterGroup) {
-	suggestions := router.Group("/suggestions")
-	suggestions.Use(middleware.AuthMiddleware())
-	{
-		suggestions.POST("/analyze", h.AnalyzeCharge)
-		suggestions.GET("/category/:category", h.GetCategorySuggestions)
-	}
-
-	budgets := router.Group("/budgets")
-	budgets.Use(middleware.AuthMiddleware())
-	{
-		budgets.POST("/:budget_id/suggestions/bulk-analyze", h.BulkAnalyzeCharges)
-	}
-
-	// Routes admin (ajouter middleware admin si nécessaire)
-	admin := router.Group("/admin")
-	admin.Use(middleware.AuthMiddleware())
-	{
-		admin.POST("/suggestions/clean-cache", h.CleanExpiredCache)
-	}
 }

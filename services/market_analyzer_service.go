@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"budget-api/models"
 )
 
 // ============================================================================
@@ -16,37 +18,16 @@ import (
 // ============================================================================
 
 type MarketAnalyzerService struct {
-	db         *sql.DB
-	aiService  *ClaudeAIService
-	cacheDays  int // Durée de validité du cache
-}
-
-type Competitor struct {
-	Name             string  `json:"name"`
-	TypicalPrice     float64 `json:"typical_price"`
-	BestOffer        string  `json:"best_offer"`
-	PotentialSavings float64 `json:"potential_savings"`
-	AffiliateLink    string  `json:"affiliate_link"`
-	Pros             []string `json:"pros"`
-	Cons             []string `json:"cons"`
-	ContactAvailable bool    `json:"contact_available"`
-}
-
-type MarketSuggestion struct {
-	ID               string       `json:"id"`
-	Category         string       `json:"category"`
-	Country          string       `json:"country"`
-	MerchantName     string       `json:"merchant_name,omitempty"`
-	Competitors      []Competitor `json:"competitors"`
-	LastUpdated      time.Time    `json:"last_updated"`
-	ExpiresAt        time.Time    `json:"expires_at"`
+	db        *sql.DB
+	aiService *ClaudeAIService
+	cacheDays int // Durée de validité du cache (défaut: 30 jours)
 }
 
 func NewMarketAnalyzerService(db *sql.DB, aiService *ClaudeAIService) *MarketAnalyzerService {
 	return &MarketAnalyzerService{
-		db:         db,
-		aiService:  aiService,
-		cacheDays:  30, // Cache de 30 jours par défaut
+		db:        db,
+		aiService: aiService,
+		cacheDays: 30,
 	}
 }
 
@@ -60,8 +41,8 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 	merchantName string,
 	currentAmount float64,
 	userCountry string,
-) (*MarketSuggestion, error) {
-	
+) (*models.MarketSuggestion, error) {
+
 	log.Printf("[MarketAnalyzer] Analyzing: category=%s, merchant=%s, amount=%.2f, country=%s",
 		category, merchantName, currentAmount, userCountry)
 
@@ -72,7 +53,7 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 		return cached, nil
 	}
 
-	log.Printf("[MarketAnalyzer] ⚠️ Cache MISS - Calling Claude AI...")
+	log.Printf("[MarketAnalyzer] ⚠️  Cache MISS - Calling Claude AI...")
 
 	// 2. Appeler Claude AI pour rechercher les concurrents
 	competitors, err := s.searchCompetitors(ctx, category, merchantName, currentAmount, userCountry)
@@ -81,7 +62,7 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 	}
 
 	// 3. Créer et stocker la suggestion
-	suggestion := &MarketSuggestion{
+	suggestion := &models.MarketSuggestion{
 		ID:           fmt.Sprintf("market_%s_%s_%d", category, userCountry, time.Now().Unix()),
 		Category:     category,
 		Country:      userCountry,
@@ -93,7 +74,7 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 
 	// 4. Sauvegarder dans le cache
 	if err := s.saveSuggestionToCache(ctx, suggestion); err != nil {
-		log.Printf("[MarketAnalyzer] ⚠️ Failed to save to cache: %v", err)
+		log.Printf("[MarketAnalyzer] ⚠️  Failed to save to cache: %v", err)
 	}
 
 	return suggestion, nil
@@ -109,7 +90,7 @@ func (s *MarketAnalyzerService) searchCompetitors(
 	currentMerchant string,
 	currentAmount float64,
 	country string,
-) ([]Competitor, error) {
+) ([]models.Competitor, error) {
 
 	// Construire le prompt optimisé pour Claude
 	prompt := s.buildCompetitorSearchPrompt(category, currentMerchant, currentAmount, country)
@@ -121,7 +102,7 @@ func (s *MarketAnalyzerService) searchCompetitors(
 	}
 
 	// Parser la réponse JSON
-	var competitors []Competitor
+	var competitors []models.Competitor
 	if err := json.Unmarshal([]byte(response), &competitors); err != nil {
 		return nil, fmt.Errorf("failed to parse AI response: %w", err)
 	}
@@ -139,7 +120,7 @@ func (s *MarketAnalyzerService) buildCompetitorSearchPrompt(
 	currentAmount float64,
 	country string,
 ) string {
-	
+
 	countryName := s.getCountryName(country)
 	categoryContext := s.getCategoryContext(category, country)
 
@@ -194,7 +175,7 @@ Réponds UNIQUEMENT avec le JSON, sans texte avant ou après.`,
 		countryName,
 		categoryContext,
 		countryName,
-		time.Now().Format("2006"),
+		time.Now().Year(),
 	)
 
 	return prompt
@@ -212,45 +193,45 @@ func (s *MarketAnalyzerService) getCategoryContext(category string, country stri
 - Engie, TotalEnergies, Eni: Grands fournisseurs alternatifs
 - Mint Energie, Ohm Energie, Ekwateur: Fournisseurs verts/discount
 Prix moyen: 90-150€/mois pour un foyer`,
-			
+
 			"BE": `En Belgique, marché libéralisé avec trois régions distinctes.
 - Engie Electrabel: Opérateur historique
 - Luminus, Mega, Bolt: Alternatifs compétitifs
 Prix moyen: 100-180€/mois`,
 		},
-		
+
 		"INTERNET": {
 			"FR": `Marché français de la fibre très concurrentiel.
 - Free, Orange, SFR, Bouygues: Les 4 grands opérateurs
 - Red by SFR, Sosh: Offres low-cost
 - OVH, K-Net: Opérateurs régionaux
 Prix typique: 20-45€/mois pour fibre 1Gb/s`,
-			
+
 			"BE": `Belgique avec plusieurs opérateurs selon la région.
 - Proximus, VOO, Telenet: Principaux acteurs
 Prix moyen: 40-70€/mois`,
 		},
-		
+
 		"MOBILE": {
 			"FR": `Marché mobile français ultra-compétitif.
 - Free Mobile: Pionnier du low-cost (10-20€)
 - Sosh, Red by SFR, B&You: Marques sans engagement
 - Prixtel, Réglo Mobile: MVNOs compétitifs
 Prix moyen: 10-25€/mois pour 50-100Go`,
-			
+
 			"BE": `Marché belge avec MVNOs actifs.
 - Orange, Proximus, Base: Opérateurs principaux
 - Mobile Vikings, EDPnet: Alternatifs
 Prix moyen: 15-30€/mois`,
 		},
-		
+
 		"INSURANCE": {
 			"FR": `Assurance habitation en France très segmentée.
 - Groupama, MAIF, MACSF: Mutuelles
 - Allianz, AXA: Assureurs traditionnels
 - Luko, Acheel: Néo-assureurs digitaux
 Prix moyen: 200-400€/an selon logement`,
-			
+
 			"BE": `Assurance habitation belge.
 - AG Insurance, Ethias, Baloise: Leaders
 Prix moyen: 250-500€/an`,
@@ -276,7 +257,7 @@ func (s *MarketAnalyzerService) getCountryName(code string) string {
 		"NL": "néerlandais",
 		"PT": "portugais",
 	}
-	
+
 	if name, exists := countries[code]; exists {
 		return name
 	}
@@ -292,14 +273,14 @@ func (s *MarketAnalyzerService) getCachedSuggestion(
 	category string,
 	country string,
 	merchantName string,
-) (*MarketSuggestion, error) {
+) (*models.MarketSuggestion, error) {
 
 	query := `
 		SELECT id, category, country, merchant_name, competitors, last_updated, expires_at
 		FROM market_suggestions
 		WHERE category = $1 
 		  AND country = $2
-		  AND (merchant_name = $3 OR merchant_name IS NULL)
+		  AND (merchant_name = $3 OR merchant_name IS NULL OR merchant_name = '')
 		  AND expires_at > NOW()
 		ORDER BY 
 		  CASE WHEN merchant_name = $3 THEN 0 ELSE 1 END,
@@ -307,7 +288,7 @@ func (s *MarketAnalyzerService) getCachedSuggestion(
 		LIMIT 1
 	`
 
-	var suggestion MarketSuggestion
+	var suggestion models.MarketSuggestion
 	var competitorsJSON []byte
 	var merchantNameDB sql.NullString
 
@@ -342,7 +323,7 @@ func (s *MarketAnalyzerService) getCachedSuggestion(
 
 func (s *MarketAnalyzerService) saveSuggestionToCache(
 	ctx context.Context,
-	suggestion *MarketSuggestion,
+	suggestion *models.MarketSuggestion,
 ) error {
 
 	competitorsJSON, err := json.Marshal(suggestion.Competitors)
@@ -354,7 +335,7 @@ func (s *MarketAnalyzerService) saveSuggestionToCache(
 		INSERT INTO market_suggestions (
 			id, category, country, merchant_name, competitors, last_updated, expires_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (category, country, merchant_name) 
+		ON CONFLICT ON CONSTRAINT unique_market_suggestion
 		DO UPDATE SET 
 			competitors = EXCLUDED.competitors,
 			last_updated = EXCLUDED.last_updated,
@@ -392,7 +373,7 @@ func (s *MarketAnalyzerService) saveSuggestionToCache(
 
 func (s *MarketAnalyzerService) CleanExpiredCache(ctx context.Context) error {
 	query := `DELETE FROM market_suggestions WHERE expires_at < NOW()`
-	
+
 	result, err := s.db.ExecContext(ctx, query)
 	if err != nil {
 		return err
@@ -400,6 +381,6 @@ func (s *MarketAnalyzerService) CleanExpiredCache(ctx context.Context) error {
 
 	deleted, _ := result.RowsAffected()
 	log.Printf("[MarketAnalyzer] 🧹 Cleaned %d expired cache entries", deleted)
-	
+
 	return nil
 }
