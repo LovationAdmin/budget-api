@@ -94,7 +94,6 @@ func main() {
 			routes.SetupBudgetRoutes(protected, db) 
 			routes.SetupUserRoutes(protected, db)
 			routes.SetupInvitationRoutes(protected, db)
-			routes.SetupBankingRoutes(protected, db)
 			routes.SetupEnableBankingRoutes(protected, db)
 		}
 	}
