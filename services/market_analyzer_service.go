@@ -65,7 +65,7 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 		MerchantName: merchantName,
 		Competitors:  competitors,
 		LastUpdated:  time.Now(),
-		ExpiresAt:    time.Now().Add(30 * 24 * time.Hour), // 30 jours
+		ExpiresAt:    time.Now().Add(30*24*time.Hour + 1*time.Minute), // 30 jours + 1 minute de marge
 	}
 
 	// 4. Sauvegarder dans le cache
