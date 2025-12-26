@@ -284,6 +284,8 @@ func (s *MarketAnalyzerService) getCachedSuggestion(
 	merchantName string,
 ) (*models.MarketSuggestion, error) {
 
+	log.Printf("[MarketAnalyzer] 🔍 Cache lookup: category=%s, country=%s, merchant=%s", category, country, merchantName)
+
 	// ⭐ CORRIGÉ: Gérer correctement les merchant_name vides
 	var query string
 	var args []interface{}
@@ -301,6 +303,7 @@ func (s *MarketAnalyzerService) getCachedSuggestion(
 			LIMIT 1
 		`
 		args = []interface{}{category, country}
+		log.Printf("[MarketAnalyzer] 🔍 Searching for generic suggestion (merchant_name IS NULL)")
 	} else {
 		// Chercher les suggestions pour un merchant spécifique
 		query = `
@@ -314,6 +317,7 @@ func (s *MarketAnalyzerService) getCachedSuggestion(
 			LIMIT 1
 		`
 		args = []interface{}{category, country, merchantName}
+		log.Printf("[MarketAnalyzer] 🔍 Searching for merchant-specific suggestion: %s", merchantName)
 	}
 
 	var suggestion models.MarketSuggestion
@@ -355,32 +359,74 @@ func (s *MarketAnalyzerService) saveSuggestionToCache(
 		return fmt.Errorf("failed to marshal competitors: %w", err)
 	}
 
-	query := `
-		INSERT INTO market_suggestions (category, country, merchant_name, competitors, last_updated, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT DO NOTHING
-	`
-
 	merchantName := sql.NullString{}
 	if suggestion.MerchantName != "" {
 		merchantName.String = suggestion.MerchantName
 		merchantName.Valid = true
 	}
 
-	_, err = s.DB.ExecContext(ctx, query,
+	// ⭐ ÉTAPE 1: Essayer d'insérer
+	insertQuery := `
+		INSERT INTO market_suggestions (category, country, merchant_name, competitors, last_updated, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT DO NOTHING
+		RETURNING id
+	`
+
+	var insertedID string
+	err = s.DB.QueryRowContext(ctx, insertQuery,
 		suggestion.Category,
 		suggestion.Country,
 		merchantName,
 		competitorsJSON,
 		suggestion.LastUpdated,
 		suggestion.ExpiresAt,
-	)
+	).Scan(&insertedID)
 
-	if err != nil {
+	if err == sql.ErrNoRows {
+		// Conflit - la ligne existe déjà, on update
+		log.Printf("[MarketAnalyzer] ⚠️  Conflict detected, updating existing cache entry")
+		
+		updateQuery := `
+			UPDATE market_suggestions 
+			SET competitors = $1, last_updated = $2, expires_at = $3
+			WHERE category = $4 AND country = $5 AND 
+			      ((merchant_name IS NULL AND $6::text IS NULL) OR merchant_name = $6)
+		`
+		
+		var merchantNameForUpdate *string
+		if suggestion.MerchantName != "" {
+			merchantNameForUpdate = &suggestion.MerchantName
+		}
+		
+		_, err = s.DB.ExecContext(ctx, updateQuery,
+			competitorsJSON,
+			suggestion.LastUpdated,
+			suggestion.ExpiresAt,
+			suggestion.Category,
+			suggestion.Country,
+			merchantNameForUpdate,
+		)
+		
+		if err != nil {
+			return fmt.Errorf("failed to update suggestion: %w", err)
+		}
+		
+		log.Printf("[MarketAnalyzer] ✅ Updated cache: %s/%s", suggestion.Category, suggestion.Country)
+	} else if err != nil {
 		return fmt.Errorf("failed to save suggestion: %w", err)
+	} else {
+		log.Printf("[MarketAnalyzer] ✅ Saved to cache: %s/%s (ID: %s)", suggestion.Category, suggestion.Country, insertedID)
 	}
 
-	log.Printf("[MarketAnalyzer] ✅ Saved to cache: %s/%s", suggestion.Category, suggestion.Country)
+	// ⭐ ÉTAPE 2: Vérifier immédiatement que c'est bien sauvegardé
+	verifyQuery := `SELECT COUNT(*) FROM market_suggestions WHERE category = $1 AND country = $2`
+	var count int
+	err = s.DB.QueryRowContext(ctx, verifyQuery, suggestion.Category, suggestion.Country).Scan(&count)
+	if err == nil {
+		log.Printf("[MarketAnalyzer] 🔍 Verification: %d entries for %s/%s in DB", count, suggestion.Category, suggestion.Country)
+	}
+
 	return nil
 }
 
