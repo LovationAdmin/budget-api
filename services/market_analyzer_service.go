@@ -334,6 +334,7 @@ func (s *MarketAnalyzerService) getCachedSuggestion(
 	)
 
 	if err == sql.ErrNoRows {
+		log.Printf("[MarketAnalyzer] ⚠️  Cache MISS - not found or expired")
 		return nil, fmt.Errorf("not found in cache")
 	}
 	if err != nil {
@@ -435,11 +436,17 @@ func (s *MarketAnalyzerService) saveSuggestionToCache(
 	}
 
 	// ⭐ ÉTAPE 2: Vérifier immédiatement que c'est bien sauvegardé
-	verifyQuery := `SELECT COUNT(*) FROM market_suggestions WHERE category = $1 AND country = $2`
+	verifyQuery := `
+		SELECT COUNT(*), MIN(expires_at), MAX(expires_at), NOW() 
+		FROM market_suggestions 
+		WHERE category = $1 AND country = $2
+	`
 	var count int
-	err = s.DB.QueryRowContext(ctx, verifyQuery, suggestion.Category, suggestion.Country).Scan(&count)
+	var minExpires, maxExpires, now time.Time
+	err = s.DB.QueryRowContext(ctx, verifyQuery, suggestion.Category, suggestion.Country).Scan(&count, &minExpires, &maxExpires, &now)
 	if err == nil {
-		log.Printf("[MarketAnalyzer] 🔍 Verification: %d entries for %s/%s in DB", count, suggestion.Category, suggestion.Country)
+		log.Printf("[MarketAnalyzer] 🔍 Verification: %d entries for %s/%s - expires_at: %s (now: %s, valid: %v)", 
+			count, suggestion.Category, suggestion.Country, maxExpires.Format("15:04:05"), now.Format("15:04:05"), maxExpires.After(now))
 	}
 
 	return nil
