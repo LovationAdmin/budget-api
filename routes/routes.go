@@ -88,6 +88,7 @@ func SetupEnableBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.DELETE("/banking/enablebanking/connections/:id", handler.DeleteConnection)
 }
 
+// ⭐ CORRIGÉ: Utiliser :id au lieu de :budget_id pour éviter le conflit
 func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	handler := handlers.NewMarketSuggestionsHandler(db)
 
@@ -97,8 +98,8 @@ func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	// Route pour récupérer suggestions en cache pour une catégorie
 	rg.GET("/suggestions/category/:category", handler.GetCategorySuggestions)
 
-	// Route pour analyse bulk d'un budget
-	rg.POST("/budgets/:budget_id/suggestions/bulk-analyze", handler.BulkAnalyzeCharges)
+	// ⭐ FIX: Utiliser :id au lieu de :budget_id
+	rg.POST("/budgets/:id/suggestions/bulk-analyze", handler.BulkAnalyzeCharges)
 }
 
 func SetupAdminSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {

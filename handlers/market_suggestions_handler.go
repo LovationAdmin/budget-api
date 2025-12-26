@@ -87,7 +87,8 @@ func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 
 // ============================================================================
 // 2. ANALYSE EN MASSE DE TOUTES LES CHARGES D'UN BUDGET
-// POST /api/v1/budgets/:budget_id/suggestions/bulk-analyze
+// POST /api/v1/budgets/:id/suggestions/bulk-analyze
+// ⭐ FIX: Utiliser :id au lieu de :budget_id
 // ============================================================================
 
 type ChargeToAnalyze struct {
@@ -104,7 +105,7 @@ type BulkAnalyzeRequest struct {
 
 func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 	userID := c.GetString("user_id")
-	budgetID := c.Param("budget_id")
+	budgetID := c.Param("id") // ⭐ FIX: Utiliser "id" au lieu de "budget_id"
 
 	// Vérifier que l'utilisateur a accès au budget
 	hasAccess, err := h.checkBudgetAccess(c.Request.Context(), userID, budgetID)
