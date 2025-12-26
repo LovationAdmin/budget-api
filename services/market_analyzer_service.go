@@ -287,20 +287,13 @@ func (s *MarketAnalyzerService) getCachedSuggestion(
 	merchantName string,
 ) (*models.MarketSuggestion, error) {
 
-	// ⭐ IMPORTANT: Trim spaces pour éviter les bugs avec espaces
-	merchantName = strings.TrimSpace(merchantName)
-	
 	log.Printf("[MarketAnalyzer] 🔍 Cache lookup: category=%s, country=%s, merchant=%s", category, country, merchantName)
 
-	// ⭐ Utiliser time.Now() de l'App pour garantir cohérence avec expires_at
-	now := time.Now()
-	
-	// ⭐ CORRIGÉ: Gérer correctement les merchant_name vides
 	var query string
 	var args []interface{}
 
+	// Ensure we pass time.Now() to match App time vs DB time
 	if merchantName == "" {
-		// Chercher les suggestions génériques (sans merchant_name)
 		query = `
 			SELECT id, category, country, merchant_name, competitors, last_updated, expires_at
 			FROM market_suggestions
@@ -311,10 +304,8 @@ func (s *MarketAnalyzerService) getCachedSuggestion(
 			ORDER BY last_updated DESC
 			LIMIT 1
 		`
-		args = []interface{}{category, country, now}
-		log.Printf("[MarketAnalyzer] 🔍 Searching for generic suggestion (merchant_name IS NULL)")
+		args = []interface{}{category, country, time.Now()}
 	} else {
-		// Chercher les suggestions pour un merchant spécifique
 		query = `
 			SELECT id, category, country, merchant_name, competitors, last_updated, expires_at
 			FROM market_suggestions
@@ -325,32 +316,42 @@ func (s *MarketAnalyzerService) getCachedSuggestion(
 			ORDER BY last_updated DESC
 			LIMIT 1
 		`
-		args = []interface{}{category, country, merchantName, now}
-		log.Printf("[MarketAnalyzer] 🔍 Searching for merchant-specific suggestion: %s", merchantName)
+		args = []interface{}{category, country, merchantName, time.Now()}
 	}
 
 	var suggestion models.MarketSuggestion
 	var competitorsJSON []byte
+    // FIX: Use NullString to handle potential NULLs from the DB
+	var dbMerchantName sql.NullString 
 
+    // FIX: Scan into dbMerchantName instead of &suggestion.MerchantName directly
 	err := s.DB.QueryRowContext(ctx, query, args...).Scan(
 		&suggestion.ID,
 		&suggestion.Category,
 		&suggestion.Country,
-		&suggestion.MerchantName,
+		&dbMerchantName, // <--- Change this line
 		&competitorsJSON,
 		&suggestion.LastUpdated,
 		&suggestion.ExpiresAt,
 	)
 
 	if err == sql.ErrNoRows {
-		log.Printf("[MarketAnalyzer] ⚠️  Cache MISS - not found or expired")
+		// Log removed to reduce noise
 		return nil, fmt.Errorf("not found in cache")
 	}
 	if err != nil {
+        // This log will help verify if any other errors persist
+		log.Printf("[MarketAnalyzer] ❌ Scan Error: %v", err)
 		return nil, fmt.Errorf("cache query failed: %w", err)
 	}
 
-	// Parser les competitors depuis JSON
+    // FIX: Convert NullString back to normal string
+	if dbMerchantName.Valid {
+		suggestion.MerchantName = dbMerchantName.String
+	} else {
+		suggestion.MerchantName = ""
+	}
+
 	if err := json.Unmarshal(competitorsJSON, &suggestion.Competitors); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal competitors: %w", err)
 	}
