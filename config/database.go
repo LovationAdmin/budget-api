@@ -255,9 +255,16 @@ func RunMigrations(db *sql.DB) error {
 		ON market_suggestions(merchant_name)`,
 
 		// Contrainte unique pour éviter les doublons
-		`ALTER TABLE market_suggestions DROP CONSTRAINT IF EXISTS unique_market_suggestion`,
-		`ALTER TABLE market_suggestions ADD CONSTRAINT unique_market_suggestion 
-		UNIQUE (category, country, COALESCE(merchant_name, ''))`,
+		`DROP INDEX IF EXISTS idx_unique_market_suggestion_null`,
+		`DROP INDEX IF EXISTS idx_unique_market_suggestion_not_null`,
+
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_market_suggestion_null
+		ON market_suggestions (category, country)
+		WHERE merchant_name IS NULL`,
+
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_market_suggestion_not_null
+		ON market_suggestions (category, country, merchant_name)
+		WHERE merchant_name IS NOT NULL`,
 
 		// 3. Table pour tracker l'utilisation de l'API Claude (monitoring des coûts)
 		`CREATE TABLE IF NOT EXISTS ai_api_usage (
