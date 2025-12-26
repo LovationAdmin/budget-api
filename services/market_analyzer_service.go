@@ -387,32 +387,47 @@ func (s *MarketAnalyzerService) saveSuggestionToCache(
 		// Conflit - la ligne existe déjà, on update
 		log.Printf("[MarketAnalyzer] ⚠️  Conflict detected, updating existing cache entry")
 		
-		updateQuery := `
-			UPDATE market_suggestions 
-			SET competitors = $1, last_updated = $2, expires_at = $3
-			WHERE category = $4 AND country = $5 AND 
-			      ((merchant_name IS NULL AND $6::text IS NULL) OR merchant_name = $6)
-		`
+		var updateQuery string
+		var updateArgs []interface{}
 		
-		var merchantNameForUpdate *string
-		if suggestion.MerchantName != "" {
-			merchantNameForUpdate = &suggestion.MerchantName
+		if suggestion.MerchantName == "" {
+			// Update pour suggestion générique (merchant_name IS NULL)
+			updateQuery = `
+				UPDATE market_suggestions 
+				SET competitors = $1, last_updated = $2, expires_at = $3
+				WHERE category = $4 AND country = $5 AND merchant_name IS NULL
+			`
+			updateArgs = []interface{}{
+				competitorsJSON,
+				suggestion.LastUpdated,
+				suggestion.ExpiresAt,
+				suggestion.Category,
+				suggestion.Country,
+			}
+		} else {
+			// Update pour suggestion merchant spécifique
+			updateQuery = `
+				UPDATE market_suggestions 
+				SET competitors = $1, last_updated = $2, expires_at = $3
+				WHERE category = $4 AND country = $5 AND merchant_name = $6
+			`
+			updateArgs = []interface{}{
+				competitorsJSON,
+				suggestion.LastUpdated,
+				suggestion.ExpiresAt,
+				suggestion.Category,
+				suggestion.Country,
+				suggestion.MerchantName,
+			}
 		}
 		
-		_, err = s.DB.ExecContext(ctx, updateQuery,
-			competitorsJSON,
-			suggestion.LastUpdated,
-			suggestion.ExpiresAt,
-			suggestion.Category,
-			suggestion.Country,
-			merchantNameForUpdate,
-		)
-		
+		result, err := s.DB.ExecContext(ctx, updateQuery, updateArgs...)
 		if err != nil {
 			return fmt.Errorf("failed to update suggestion: %w", err)
 		}
 		
-		log.Printf("[MarketAnalyzer] ✅ Updated cache: %s/%s", suggestion.Category, suggestion.Country)
+		rowsAffected, _ := result.RowsAffected()
+		log.Printf("[MarketAnalyzer] ✅ Updated cache: %s/%s (%d rows affected)", suggestion.Category, suggestion.Country, rowsAffected)
 	} else if err != nil {
 		return fmt.Errorf("failed to save suggestion: %w", err)
 	} else {
