@@ -284,21 +284,42 @@ func (s *MarketAnalyzerService) getCachedSuggestion(
 	merchantName string,
 ) (*models.MarketSuggestion, error) {
 
-	query := `
-		SELECT id, category, country, merchant_name, competitors, last_updated, expires_at
-		FROM market_suggestions
-		WHERE category = $1 
-		  AND country = $2 
-		  AND (merchant_name = $3 OR (merchant_name IS NULL AND $3 = ''))
-		  AND expires_at > NOW()
-		ORDER BY last_updated DESC
-		LIMIT 1
-	`
+	// ⭐ CORRIGÉ: Gérer correctement les merchant_name vides
+	var query string
+	var args []interface{}
+
+	if merchantName == "" {
+		// Chercher les suggestions génériques (sans merchant_name)
+		query = `
+			SELECT id, category, country, merchant_name, competitors, last_updated, expires_at
+			FROM market_suggestions
+			WHERE category = $1 
+			  AND country = $2 
+			  AND merchant_name IS NULL
+			  AND expires_at > NOW()
+			ORDER BY last_updated DESC
+			LIMIT 1
+		`
+		args = []interface{}{category, country}
+	} else {
+		// Chercher les suggestions pour un merchant spécifique
+		query = `
+			SELECT id, category, country, merchant_name, competitors, last_updated, expires_at
+			FROM market_suggestions
+			WHERE category = $1 
+			  AND country = $2 
+			  AND merchant_name = $3
+			  AND expires_at > NOW()
+			ORDER BY last_updated DESC
+			LIMIT 1
+		`
+		args = []interface{}{category, country, merchantName}
+	}
 
 	var suggestion models.MarketSuggestion
 	var competitorsJSON []byte
 
-	err := s.DB.QueryRowContext(ctx, query, category, country, merchantName).Scan(
+	err := s.DB.QueryRowContext(ctx, query, args...).Scan(
 		&suggestion.ID,
 		&suggestion.Category,
 		&suggestion.Country,
