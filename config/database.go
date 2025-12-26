@@ -173,10 +173,6 @@ func RunMigrations(db *sql.DB) error {
 		// ============================================================================
 		// --- ENABLE BANKING API TABLES (new) ---
 		// ============================================================================
-		// Note: Tables nommées "banking_connections" et "banking_accounts" 
-		// (avec "ing") pour les différencier de l'intégration Bridge API
-		// ============================================================================
-
 		`CREATE TABLE IF NOT EXISTS banking_connections (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -192,12 +188,10 @@ func RunMigrations(db *sql.DB) error {
 			updated_at TIMESTAMP DEFAULT NOW()
 		)`,
 
-		// Index pour améliorer les performances
 		`CREATE INDEX IF NOT EXISTS idx_banking_connections_user_budget ON banking_connections(user_id, budget_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_banking_connections_session ON banking_connections(session_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_banking_connections_status ON banking_connections(status)`,
 
-		// Contrainte unique : une seule connexion par utilisateur/budget/banque/pays
 		`ALTER TABLE banking_connections DROP CONSTRAINT IF EXISTS unique_banking_connection_per_budget`,
 		`ALTER TABLE banking_connections ADD CONSTRAINT unique_banking_connection_per_budget 
 			UNIQUE (user_id, budget_id, aspsp_name, aspsp_country)`,
@@ -214,11 +208,9 @@ func RunMigrations(db *sql.DB) error {
 			created_at TIMESTAMP DEFAULT NOW()
 		)`,
 
-		// Index pour améliorer les performances
 		`CREATE INDEX IF NOT EXISTS idx_banking_accounts_connection ON banking_accounts(connection_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_banking_accounts_last_sync ON banking_accounts(last_sync_at)`,
 
-		// Contrainte unique : un seul compte par connexion et account_id
 		`ALTER TABLE banking_accounts DROP CONSTRAINT IF EXISTS unique_banking_account_per_connection`,
 		`ALTER TABLE banking_accounts ADD CONSTRAINT unique_banking_account_per_connection 
 			UNIQUE (connection_id, account_id)`,
@@ -254,7 +246,7 @@ func RunMigrations(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_market_suggestions_merchant 
 		ON market_suggestions(merchant_name)`,
 
-		// Contrainte unique pour éviter les doublons
+		// ⭐ CORRIGÉ: Contrainte unique avec index partiels
 		`DROP INDEX IF EXISTS idx_unique_market_suggestion_null`,
 		`DROP INDEX IF EXISTS idx_unique_market_suggestion_not_null`,
 
@@ -310,9 +302,9 @@ func RunMigrations(db *sql.DB) error {
 		ON affiliate_links(is_active)`,
 
 		// Contrainte unique
-		`ALTER TABLE affiliate_links DROP CONSTRAINT IF EXISTS unique_affiliate_link`,
-		`ALTER TABLE affiliate_links ADD CONSTRAINT unique_affiliate_link 
-		UNIQUE (category, country, provider_name)`,
+		`DROP INDEX IF EXISTS idx_unique_affiliate_link`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_affiliate_link
+		ON affiliate_links (category, country, provider_name)`,
 
 		// 5. Données initiales pour liens d'affiliation France
 		`INSERT INTO affiliate_links (category, country, provider_name, affiliate_url, commission_rate, priority) 
@@ -321,7 +313,7 @@ func RunMigrations(db *sql.DB) error {
 			('MOBILE', 'FR', 'Ariase', 'https://www.ariase.com/mobile', 5.00, 1),
 			('ENERGY', 'FR', 'Papernest', 'https://www.papernest.com/energie/', 8.00, 1),
 			('LOAN', 'FR', 'Meilleurtaux', 'https://www.meilleurtaux.com/', 10.00, 1)
-		ON CONFLICT ON CONSTRAINT unique_affiliate_link DO NOTHING`,
+		ON CONFLICT DO NOTHING`,
 
 	}
 
