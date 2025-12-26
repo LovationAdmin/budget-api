@@ -40,6 +40,9 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 	currentAmount float64,
 	country string,
 ) (*models.MarketSuggestion, error) {
+	// ⭐ Trim spaces pour éviter les bugs avec " " vs ""
+	merchantName = strings.TrimSpace(merchantName)
+	
 	log.Printf("[MarketAnalyzer] Analyzing: category=%s, merchant=%s, amount=%.2f, country=%s",
 		category, merchantName, currentAmount, country)
 
@@ -284,8 +287,14 @@ func (s *MarketAnalyzerService) getCachedSuggestion(
 	merchantName string,
 ) (*models.MarketSuggestion, error) {
 
+	// ⭐ IMPORTANT: Trim spaces pour éviter les bugs avec espaces
+	merchantName = strings.TrimSpace(merchantName)
+	
 	log.Printf("[MarketAnalyzer] 🔍 Cache lookup: category=%s, country=%s, merchant=%s", category, country, merchantName)
 
+	// ⭐ Utiliser time.Now() de l'App pour garantir cohérence avec expires_at
+	now := time.Now()
+	
 	// ⭐ CORRIGÉ: Gérer correctement les merchant_name vides
 	var query string
 	var args []interface{}
@@ -298,11 +307,11 @@ func (s *MarketAnalyzerService) getCachedSuggestion(
 			WHERE category = $1 
 			  AND country = $2 
 			  AND merchant_name IS NULL
-			  AND expires_at > NOW()
+			  AND expires_at > $3
 			ORDER BY last_updated DESC
 			LIMIT 1
 		`
-		args = []interface{}{category, country}
+		args = []interface{}{category, country, now}
 		log.Printf("[MarketAnalyzer] 🔍 Searching for generic suggestion (merchant_name IS NULL)")
 	} else {
 		// Chercher les suggestions pour un merchant spécifique
@@ -312,11 +321,11 @@ func (s *MarketAnalyzerService) getCachedSuggestion(
 			WHERE category = $1 
 			  AND country = $2 
 			  AND merchant_name = $3
-			  AND expires_at > NOW()
+			  AND expires_at > $4
 			ORDER BY last_updated DESC
 			LIMIT 1
 		`
-		args = []interface{}{category, country, merchantName}
+		args = []interface{}{category, country, merchantName, now}
 		log.Printf("[MarketAnalyzer] 🔍 Searching for merchant-specific suggestion: %s", merchantName)
 	}
 
@@ -385,8 +394,8 @@ func (s *MarketAnalyzerService) saveSuggestionToCache(
 	).Scan(&insertedID)
 
 	if err == sql.ErrNoRows {
-		// Conflit - la ligne existe déjà, on update
-		log.Printf("[MarketAnalyzer] ⚠️  Conflict detected, updating existing cache entry")
+		// Conflit - la ligne existe déjà, on update (opération normale)
+		log.Printf("[MarketAnalyzer] ✅ Refreshing existing cache entry")
 		
 		var updateQuery string
 		var updateArgs []interface{}
@@ -445,8 +454,12 @@ func (s *MarketAnalyzerService) saveSuggestionToCache(
 	var minExpires, maxExpires, now time.Time
 	err = s.DB.QueryRowContext(ctx, verifyQuery, suggestion.Category, suggestion.Country).Scan(&count, &minExpires, &maxExpires, &now)
 	if err == nil {
-		log.Printf("[MarketAnalyzer] 🔍 Verification: %d entries for %s/%s - expires_at: %s (now: %s, valid: %v)", 
-			count, suggestion.Category, suggestion.Country, maxExpires.Format("15:04:05"), now.Format("15:04:05"), maxExpires.After(now))
+		log.Printf("[MarketAnalyzer] 🔍 Verification: %d entries - App time: %s, DB time: %s, expires: %s (valid: %v)", 
+			count, 
+			time.Now().Format("2006-01-02 15:04:05"), 
+			now.Format("2006-01-02 15:04:05"),
+			maxExpires.Format("2006-01-02 15:04:05"),
+			maxExpires.After(time.Now()))
 	}
 
 	return nil
