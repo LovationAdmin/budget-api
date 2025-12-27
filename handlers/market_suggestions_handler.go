@@ -301,24 +301,76 @@ func (h *MarketSuggestionsHandler) CategorizeCharge(c *gin.Context) {
 		return
 	}
 
-	// Simple keyword matching logic (or call your AI service if you prefer)
-	category := "OTHER"
-	label := strings.ToUpper(req.Label)
-
-	if strings.Contains(label, "SFR") || strings.Contains(label, "ORANGE") || strings.Contains(label, "FREE") || strings.Contains(label, "BOUYGUES") {
-		category = "MOBILE" // or INTERNET based on context, default to one
-	} else if strings.Contains(label, "EDF") || strings.Contains(label, "ENGIE") || strings.Contains(label, "TOTAL") {
-		category = "ENERGY"
-	} else if strings.Contains(label, "BOX") || strings.Contains(label, "FIBRE") {
-		category = "INTERNET"
-	} else if strings.Contains(label, "CREDIT") || strings.Contains(label, "PRET") || strings.Contains(label, "LOAN") {
-		category = "LOAN"
-	} else if strings.Contains(label, "ASSURANCE") || strings.Contains(label, "AXA") || strings.Contains(label, "MAIF") {
-		category = "INSURANCE"
-	}
+	category := determineCategory(req.Label)
 
 	c.JSON(http.StatusOK, gin.H{
 		"label":    req.Label,
 		"category": category,
 	})
+}
+
+func determineCategory(label string) string {
+	l := strings.ToUpper(strings.TrimSpace(label))
+
+	// Map of Category -> Keywords
+	// The order matters slightly: specific terms should be checked before generic ones
+	keywords := map[string][]string{
+		"MOBILE": {
+			"MOBILE", "PORTABLE", "SOSH", "BOUYGUES", "FREE", "ORANGE", "SFR", 
+			"RED BY", "PRIXTEL", "NRJ MOBILE", "LEBARA", "LYCA", "YOUPI", "CORIOLIS",
+		},
+		"INTERNET": {
+			"BOX", "FIBRE", "ADSL", "INTERNET", "NUMERICABLE", "STARLINK", 
+			"NORDNET", "OVH", "K-NET",
+		},
+		"ENERGY": {
+			"EDF", "ENGIE", "TOTAL", "ENERGIE", "ELEC", "GAZ", "ENI", 
+			"ILEK", "PLANETE OUI", "VATTENFALL", "MINT", "OHM", "MEGA", "BUTAGAZ",
+		},
+		"INSURANCE": {
+			"ASSURANCE", "AXA", "MAIF", "ALLIANZ", "MACIF", "GROUPAMA", "GMF", 
+			"MATMUT", "GENERALI", "MMA", "MAAF", "DIRECT ASSURANCE", "OLIVIER", 
+			"LEOCARE", "LUKO", "ALAN", "MGEN", "HARMONIE",
+		},
+		"LOAN": {
+			"PRET", "CREDIT", "ECHEANCE", "EMPRUNT", "MENSUALITE", "IMMOBILIER", 
+			"COFIDIS", "CETELEM", "SOFINCO", "FLOA", "BOURSORAMA", "FRANFINANCE",
+		},
+		"BANK": {
+			"BANQUE", "CREDIT AGRICOLE", "SOCIETE GENERALE", "BNP", "LCL", 
+			"POSTALE", "CAISSE EPARGNE", "POPULAIRE", "CIC", "REVOLUT", "N26", 
+			"BOURSO", "FORTUNEO", "MONABANQ", "HELLO",
+		},
+		"TRANSPORT": {
+			"NAVIGO", "RATP", "SNCF", "TGV", "OUIGO", "UBER", "BOLT", "TAXI", 
+			"LIME", "AUTOROUTE", "PEAGE", "VINCI", "APRR",
+		},
+		"SUBSCRIPTION": {
+			"NETFLIX", "SPOTIFY", "AMAZON", "PRIME", "DISNEY", "CANAL", 
+			"APPLE", "GOOGLE", "YOUTUBE", "DEEZER", "HBO",
+		},
+	}
+
+	// Logic 1: Exact provider checks (Priority)
+	for cat, keys := range keywords {
+		for _, k := range keys {
+			// Contains logic handles "PRELEVEMENT SFR MOBILE"
+			if strings.Contains(l, k) {
+				// Refinement: If it contains BOX or FIBRE, it's INTERNET, even if it says Orange/SFR
+				if (k == "SFR" || k == "ORANGE" || k == "BOUYGUES" || k == "FREE") {
+					if strings.Contains(l, "BOX") || strings.Contains(l, "FIBRE") || strings.Contains(l, "FIXE") {
+						return "INTERNET"
+					}
+					if strings.Contains(l, "MOBILE") || strings.Contains(l, "FORFAIT") {
+						return "MOBILE"
+					}
+					// Default big providers to MOBILE if ambiguous (higher savings potential usually)
+					return "MOBILE"
+				}
+				return cat
+			}
+		}
+	}
+
+	return "OTHER"
 }
