@@ -86,6 +86,7 @@ func SetupEnableBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 
 	// Suppression d'une connexion
 	rg.DELETE("/banking/enablebanking/connections/:id", handler.DeleteConnection)
+	rg.GET("/banking/budgets/:id/reality-check", handler.GetConnections)
 }
 
 // ⭐ CORRIGÉ: Utiliser :id au lieu de :budget_id pour éviter le conflit
@@ -100,7 +101,7 @@ func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
 
 	// ⭐ FIX: Utiliser :id au lieu de :budget_id
 	rg.POST("/budgets/:id/suggestions/bulk-analyze", handler.BulkAnalyzeCharges)
-	rg.POST("/categorize", marketSuggestionsHandler.CategorizeCharge)
+	rg.POST("/categorize", handler.CategorizeCharge)
 }
 
 func SetupAdminSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
