@@ -279,7 +279,7 @@ func (h *UserHandler) SetupTOTP(c *gin.Context) {
 	}
 
 	// Generate TOTP secret
-	secret, qrCode, err := utils.GenerateTOTP(email)
+	secret, qrCode, err := utils.GenerateTOTPSecret(email)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate TOTP"})
 		return
