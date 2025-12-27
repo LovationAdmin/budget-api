@@ -100,6 +100,7 @@ func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
 
 	// ⭐ FIX: Utiliser :id au lieu de :budget_id
 	rg.POST("/budgets/:id/suggestions/bulk-analyze", handler.BulkAnalyzeCharges)
+	rg.POST("/categorize", marketSuggestionsHandler.CategorizeCharge)
 }
 
 func SetupAdminSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {

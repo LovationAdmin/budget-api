@@ -291,3 +291,34 @@ func (h *MarketSuggestionsHandler) isSuggestionRelevant(category string) bool {
 
 	return relevantCategories[category]
 }
+
+func (h *MarketSuggestionsHandler) CategorizeCharge(c *gin.Context) {
+	var req struct {
+		Label string `json:"label"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Label required"})
+		return
+	}
+
+	// Simple keyword matching logic (or call your AI service if you prefer)
+	category := "OTHER"
+	label := strings.ToUpper(req.Label)
+
+	if strings.Contains(label, "SFR") || strings.Contains(label, "ORANGE") || strings.Contains(label, "FREE") || strings.Contains(label, "BOUYGUES") {
+		category = "MOBILE" // or INTERNET based on context, default to one
+	} else if strings.Contains(label, "EDF") || strings.Contains(label, "ENGIE") || strings.Contains(label, "TOTAL") {
+		category = "ENERGY"
+	} else if strings.Contains(label, "BOX") || strings.Contains(label, "FIBRE") {
+		category = "INTERNET"
+	} else if strings.Contains(label, "CREDIT") || strings.Contains(label, "PRET") || strings.Contains(label, "LOAN") {
+		category = "LOAN"
+	} else if strings.Contains(label, "ASSURANCE") || strings.Contains(label, "AXA") || strings.Contains(label, "MAIF") {
+		category = "INSURANCE"
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"label":    req.Label,
+		"category": category,
+	})
+}
