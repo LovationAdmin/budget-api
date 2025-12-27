@@ -37,6 +37,7 @@ func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	userHandler := &handlers.UserHandler{DB: db}
 	rg.GET("/user/profile", userHandler.GetProfile)
 	rg.PUT("/user/profile", userHandler.UpdateProfile)
+	rg.PUT("/location", userHandler.UpdateLocation)
 	rg.POST("/user/password", userHandler.ChangePassword)
 	rg.POST("/user/2fa/setup", userHandler.SetupTOTP)
 	rg.POST("/user/2fa/verify", userHandler.VerifyTOTP)

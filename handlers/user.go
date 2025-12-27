@@ -14,6 +14,57 @@ type UserHandler struct {
 	DB *sql.DB
 }
 
+type UpdateLocationRequest struct {
+	Country    string `json:"country" binding:"required,len=2"`
+	PostalCode string `json:"postal_code"`
+}
+
+func (h *UserHandler) UpdateLocation(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	var req UpdateLocationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid country code (must be 2 characters)"})
+		return
+	}
+
+	// Valider le code pays (optionnel mais recommandé)
+	validCountries := map[string]bool{
+		"FR": true, "BE": true, "DE": true, "ES": true, "IT": true,
+		"PT": true, "NL": true, "LU": true, "AT": true, "IE": true,
+		// Ajouter d'autres pays européens supportés
+	}
+	
+	if !validCountries[strings.ToUpper(req.Country)] {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Country not supported. Supported countries: FR, BE, DE, ES, IT, PT, NL, LU, AT, IE",
+		})
+		return
+	}
+
+	_, err := h.DB.Exec(`
+		UPDATE users
+		SET country = $1, postal_code = $2, updated_at = NOW()
+		WHERE id = $3
+	`, strings.ToUpper(req.Country), req.PostalCode, userID)
+
+	if err != nil {
+		log.Printf("Failed to update location for user %s: %v", userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update location"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Location updated successfully",
+		"country": strings.ToUpper(req.Country),
+		"postal_code": req.PostalCode,
+	})
+}
+
 // GetProfile returns the current user's profile
 func (h *UserHandler) GetProfile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
