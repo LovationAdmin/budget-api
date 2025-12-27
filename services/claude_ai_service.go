@@ -54,7 +54,7 @@ type ClaudeResponse struct {
 
 func NewClaudeAIService() *ClaudeAIService {
 	// Fallback to a valid model if env var is missing or incorrect
-	model := "claude-3-5-sonnet-20240620" // Use latest stable Sonnet
+	model := "claude-3-5-sonnet-latest"
 	
 	return &ClaudeAIService{
 		apiKey:     os.Getenv("ANTHROPIC_API_KEY"),
