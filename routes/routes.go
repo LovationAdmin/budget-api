@@ -109,4 +109,8 @@ func SetupAdminSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
 
 	// Route pour nettoyer le cache expiré (admin/cron)
 	rg.POST("/admin/suggestions/clean-cache", handler.CleanExpiredCache)
+
+	adminHandler := handlers.NewAdminSuggestionHandler(db)
+    // Run this once to fix all legacy data
+    rg.POST("/admin/suggestions/retroactive-analyze", adminHandler.RetroactiveAnalysis)
 }
