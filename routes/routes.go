@@ -7,10 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ============================================================================
-// PUBLIC ROUTES - Authentication
-// ============================================================================
-
+// SetupAuthRoutes sets up public authentication routes.
 func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	authHandler := &handlers.AuthHandler{DB: db}
 	rg.POST("/auth/signup", authHandler.Signup)
@@ -19,10 +16,7 @@ func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.POST("/auth/verify/resend", authHandler.ResendVerification)
 }
 
-// ============================================================================
-// PROTECTED ROUTES - Budgets
-// ============================================================================
-
+// SetupBudgetRoutes sets up protected budget and related routes.
 func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	budgetService := services.NewBudgetService(db)
 	emailService := services.NewEmailService()
@@ -36,105 +30,92 @@ func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.GET("/budgets/:id/data", h.GetBudgetData)
 	rg.PUT("/budgets/:id/data", h.UpdateBudgetData)
 	rg.POST("/budgets/:id/invite", h.InviteMember)
-	rg.DELETE("/budgets/:id/members/:user_id", h.RemoveMember)
 	rg.POST("/invitations/accept", h.AcceptInvitation)
 }
 
-// ============================================================================
-// PROTECTED ROUTES - User Profile & Settings
-// ============================================================================
-
 func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	userHandler := &handlers.UserHandler{DB: db}
-	
-	// Profile
 	rg.GET("/user/profile", userHandler.GetProfile)
 	rg.PUT("/user/profile", userHandler.UpdateProfile)
 	
-	// ✅ Location (NEW)
+	// ✅ NEW: Location routes
 	rg.PUT("/user/location", userHandler.UpdateLocation)
 	rg.GET("/user/location", userHandler.GetLocation)
 	
-	// Password
 	rg.POST("/user/password", userHandler.ChangePassword)
-	
-	// 2FA
 	rg.POST("/user/2fa/setup", userHandler.SetupTOTP)
 	rg.POST("/user/2fa/verify", userHandler.VerifyTOTP)
 	rg.POST("/user/2fa/disable", userHandler.DisableTOTP)
-	
-	// Account deletion
 	rg.DELETE("/user/account", userHandler.DeleteAccount)
 }
-
-// ============================================================================
-// PROTECTED ROUTES - Invitations
-// ============================================================================
 
 func SetupInvitationRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	invitationHandler := &handlers.InvitationHandler{DB: db}
 	rg.GET("/budgets/:id/invitations", invitationHandler.GetInvitations)
-	rg.DELETE("/budgets/:id/invitations/:invitation_id", invitationHandler.DeleteInvitation)
+	rg.DELETE("/budgets/:id/invitations/:invitation_id", invitationHandler.CancelInvitation)
+	rg.DELETE("/budgets/:id/members/:member_id", invitationHandler.RemoveMember)
 }
-
-// ============================================================================
-// PROTECTED ROUTES - Enable Banking (Reality Check)
-// ============================================================================
-
-func SetupEnableBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
-	ebHandler := handlers.NewEnableBankingHandler(db)
-	
-	// Auth Flow
-	rg.POST("/enable-banking/auth-url", ebHandler.GetAuthURL)
-	rg.GET("/enable-banking/callback", ebHandler.HandleCallback)
-	rg.POST("/enable-banking/save-connection", ebHandler.SaveConnection)
-	
-	// Transactions
-	rg.GET("/banking/:budget_id/transactions", ebHandler.GetTransactions)
-	rg.POST("/banking/:budget_id/map-transactions", ebHandler.MapTransactions)
-	rg.GET("/banking/:budget_id/mapped-totals", ebHandler.GetMappedTotals)
-	rg.DELETE("/banking/:budget_id/connections/:connection_id", ebHandler.DeleteConnection)
-}
-
-// ============================================================================
-// PROTECTED ROUTES - Market Suggestions (AI)
-// ============================================================================
-
-func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
-	msHandler := handlers.NewMarketSuggestionsHandler(db)
-	
-	// Analyze charges and get suggestions
-	rg.POST("/budgets/:id/suggestions/bulk-analyze", msHandler.BulkAnalyzeCharges)
-	rg.POST("/suggestions/analyze", msHandler.AnalyzeCharge)
-	rg.GET("/suggestions/category/:category", msHandler.GetCategorySuggestions)
-	
-	// AI Categorization
-	rg.POST("/categorize", msHandler.CategorizeCharge)
-}
-
-// ============================================================================
-// ADMIN ROUTES - Suggestions Management
-// ============================================================================
-
-func SetupAdminSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
-	adminHandler := handlers.NewAdminSuggestionHandler(db)
-	
-	// Cache management
-	rg.POST("/admin/suggestions/clean-cache", adminHandler.CleanExpiredCache)
-	rg.POST("/admin/suggestions/retroactive-analysis", adminHandler.RetroactiveAnalysis)
-}
-
-// ============================================================================
-// ADMIN ROUTES - General
-// ============================================================================
 
 func SetupAdminRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	adminHandler := &handlers.AdminHandler{DB: db}
 	
-	// User management
-	rg.GET("/admin/users", adminHandler.GetAllUsers)
-	rg.DELETE("/admin/users/:id", adminHandler.DeleteUser)
-	
-	// Budget stats
-	rg.GET("/admin/stats", adminHandler.GetStats)
+	// Migration endpoints
+	rg.POST("/admin/migrate-budgets", adminHandler.MigrateAllBudgets)
+	rg.POST("/admin/migrate-budget/:id", adminHandler.MigrateSingleBudget)
+}
+
+// SetupEnableBankingRoutes configure les routes Enable Banking
+func SetupEnableBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
+	handler := handlers.NewEnableBankingHandler(db)
+
+	// Liste des banques disponibles
+	rg.GET("/banking/enablebanking/banks", handler.GetBanks)
+
+	// Connexion d'une banque (création auth request)
+	rg.POST("/banking/enablebanking/connect", handler.CreateConnection)
+
+	// Callback après autorisation
+	rg.GET("/banking/enablebanking/callback", handler.HandleCallback)
+
+	// Récupération des connexions d'un budget
+	rg.GET("/budgets/:id/banking/enablebanking/connections", handler.GetConnections)
+
+	// Synchronisation des comptes dans un budget
+	rg.POST("/budgets/:id/banking/enablebanking/sync", handler.SyncAccounts)
+
+	// Rafraîchissement des soldes
+	rg.POST("/banking/enablebanking/refresh", handler.RefreshBalances)
+
+	// Récupération des transactions
+	rg.GET("/banking/enablebanking/transactions", handler.GetTransactions)
+
+	// Suppression d'une connexion
+	rg.DELETE("/banking/enablebanking/connections/:id", handler.DeleteConnection)
+	rg.GET("/banking/budgets/:id/reality-check", handler.GetConnections)
+}
+
+// ⭐ CORRIGÉ: Utiliser :id au lieu de :budget_id pour éviter le conflit
+func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
+	handler := handlers.NewMarketSuggestionsHandler(db)
+
+	// Route pour analyser une charge spécifique
+	rg.POST("/suggestions/analyze", handler.AnalyzeCharge)
+
+	// Route pour récupérer suggestions en cache pour une catégorie
+	rg.GET("/suggestions/category/:category", handler.GetCategorySuggestions)
+
+	// ⭐ FIX: Utiliser :id au lieu de :budget_id
+	rg.POST("/budgets/:id/suggestions/bulk-analyze", handler.BulkAnalyzeCharges)
+	rg.POST("/categorize", handler.CategorizeCharge)
+}
+
+func SetupAdminSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
+	handler := handlers.NewMarketSuggestionsHandler(db)
+
+	// Route pour nettoyer le cache expiré (admin/cron)
+	rg.POST("/admin/suggestions/clean-cache", handler.CleanExpiredCache)
+
+	adminHandler := handlers.NewAdminSuggestionHandler(db)
+	// Run this once to fix all legacy data
+	rg.POST("/admin/suggestions/retroactive-analyze", adminHandler.RetroactiveAnalysis)
 }
