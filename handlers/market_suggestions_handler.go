@@ -1,27 +1,28 @@
 package handlers
 
 import (
+	"budget-api/models"
+	"budget-api/services"
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
-
-	"budget-api/models"
-	"budget-api/services"
 
 	"github.com/gin-gonic/gin"
 )
 
 // ============================================================================
 // MARKET SUGGESTIONS HANDLER
-// Endpoints pour obtenir des suggestions de concurrents personnalisées
+// Endpoints for obtaining personalized competitor suggestions
 // ============================================================================
 
 type MarketSuggestionsHandler struct {
 	DB             *sql.DB
 	MarketAnalyzer *services.MarketAnalyzerService
+	AIService      *services.ClaudeAIService // Explicitly kept for direct usage
 }
 
 func NewMarketSuggestionsHandler(db *sql.DB) *MarketSuggestionsHandler {
@@ -31,11 +32,12 @@ func NewMarketSuggestionsHandler(db *sql.DB) *MarketSuggestionsHandler {
 	return &MarketSuggestionsHandler{
 		DB:             db,
 		MarketAnalyzer: marketAnalyzer,
+		AIService:      aiService,
 	}
 }
 
 // ============================================================================
-// 1. ANALYSE D'UNE CHARGE SPÉCIFIQUE
+// 1. ANALYZE A SPECIFIC CHARGE
 // POST /api/v1/suggestions/analyze
 // ============================================================================
 
@@ -54,17 +56,17 @@ func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 		return
 	}
 
-	// Récupérer le pays de l'utilisateur
+	// Retrieve user's country
 	userCountry, err := h.getUserCountry(c.Request.Context(), userID)
 	if err != nil {
 		log.Printf("Failed to get user country: %v", err)
-		userCountry = "FR" // Default à France
+		userCountry = "FR" // Default to France
 	}
 
 	log.Printf("[MarketSuggestions] Analyzing charge for user %s: %s - %.2f€ (%s)",
 		userID, req.Category, req.CurrentAmount, userCountry)
 
-	// Analyser et récupérer les suggestions
+	// Analyze and get suggestions
 	suggestion, err := h.MarketAnalyzer.AnalyzeCharge(
 		c.Request.Context(),
 		req.Category,
@@ -86,9 +88,8 @@ func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 }
 
 // ============================================================================
-// 2. ANALYSE EN MASSE DE TOUTES LES CHARGES D'UN BUDGET
+// 2. BULK ANALYZE ALL CHARGES IN A BUDGET
 // POST /api/v1/budgets/:id/suggestions/bulk-analyze
-// ⭐ FIX: Utiliser :id au lieu de :budget_id
 // ============================================================================
 
 type ChargeToAnalyze struct {
@@ -105,9 +106,9 @@ type BulkAnalyzeRequest struct {
 
 func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 	userID := c.GetString("user_id")
-	budgetID := c.Param("id") // ⭐ FIX: Utiliser "id" au lieu de "budget_id"
+	budgetID := c.Param("id")
 
-	// Vérifier que l'utilisateur a accès au budget
+	// Check if user has access to the budget
 	hasAccess, err := h.checkBudgetAccess(c.Request.Context(), userID, budgetID)
 	if err != nil || !hasAccess {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
@@ -120,7 +121,7 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 		return
 	}
 
-	// Récupérer le pays de l'utilisateur
+	// Retrieve user's country
 	userCountry, err := h.getUserCountry(c.Request.Context(), userID)
 	if err != nil {
 		userCountry = "FR"
@@ -133,12 +134,12 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 	aiCalls := 0
 	totalSavings := 0.0
 
-	// Timestamp de début pour détecter les appels AI (nouvelle donnée < 5 secondes)
+	// Start timestamp to detect AI calls (new data < 5 seconds old)
 	startTime := time.Now()
 
-	// Analyser chaque charge
+	// Analyze each charge
 	for _, charge := range req.Charges {
-		// Skip si pas de catégorie pertinente
+		// Skip if category is not relevant
 		if !h.isSuggestionRelevant(charge.Category) {
 			continue
 		}
@@ -156,15 +157,15 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 			continue
 		}
 
-		// Détecter si c'était un cache hit ou un AI call
-		// Si la suggestion a été créée récemment (< 5 secondes), c'est un AI call
+		// Detect if it was a cache hit or an AI call
+		// If the suggestion was created recently (< 5 seconds), it's an AI call
 		if time.Since(suggestion.LastUpdated) < 5*time.Second {
 			aiCalls++
 		} else {
 			cacheHits++
 		}
 
-		// Calculer les économies totales (prendre la meilleure offre)
+		// Calculate total savings (take the best offer)
 		if len(suggestion.Competitors) > 0 {
 			bestSavings := suggestion.Competitors[0].PotentialSavings
 			totalSavings += bestSavings
@@ -173,7 +174,7 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 		suggestions = append(suggestions, models.ChargeSuggestion{
 			ChargeID:    charge.ID,
 			ChargeLabel: charge.Label,
-			Suggestion:  suggestion,
+			Suggestion:  *suggestion,
 		})
 	}
 
@@ -191,7 +192,7 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 }
 
 // ============================================================================
-// 3. RÉCUPÉRER LES SUGGESTIONS EN CACHE POUR UNE CATÉGORIE
+// 3. GET CACHED SUGGESTIONS FOR A CATEGORY
 // GET /api/v1/suggestions/category/:category
 // ============================================================================
 
@@ -204,12 +205,12 @@ func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 		userCountry = "FR"
 	}
 
-	// Récupérer depuis le cache via le MarketAnalyzer
+	// Retrieve from cache via MarketAnalyzer
 	suggestion, err := h.MarketAnalyzer.AnalyzeCharge(
 		c.Request.Context(),
 		category,
-		"", // Pas de merchant spécifique
-		0,  // Pas de montant
+		"", // No specific merchant
+		0,  // No amount
 		userCountry,
 	)
 
@@ -227,18 +228,136 @@ func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 }
 
 // ============================================================================
-// 4. NETTOYER LE CACHE EXPIRÉ (Admin/Cron)
+// 4. CLEAN EXPIRED CACHE (Admin/Cron)
 // POST /api/v1/admin/suggestions/clean-cache
 // ============================================================================
 
 func (h *MarketSuggestionsHandler) CleanExpiredCache(c *gin.Context) {
-	err := h.MarketAnalyzer.CleanExpiredCache(c.Request.Context())
+	err := h.MarketAnalyzer.CleanCache(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clean cache"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Cache cleaned successfully"})
+}
+
+// ============================================================================
+// 5. CATEGORIZE CHARGE (Hybrid: Static + AI Fallback)
+// POST /api/v1/categorize
+// ============================================================================
+
+func (h *MarketSuggestionsHandler) CategorizeCharge(c *gin.Context) {
+	var req struct {
+		Label string `json:"label"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Label required"})
+		return
+	}
+
+	label := strings.TrimSpace(req.Label)
+	if label == "" {
+		c.JSON(http.StatusOK, gin.H{"label": "", "category": "OTHER"})
+		return
+	}
+
+	// Step 1: Try Static Keyword Matching (Instant & Free)
+	category := determineCategory(label)
+
+	// Step 2: AI Fallback (If Static failed)
+	// We only use AI if the category is OTHER and the label is long enough to be meaningful
+	if category == "OTHER" && len(label) > 3 {
+		log.Printf("[Categorizer] Static match failed for '%s'. Calling AI...", label)
+		
+		// We use a context with timeout to prevent the UI from hanging too long
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+
+		aiCategory, err := h.AIService.CategorizeLabel(ctx, label)
+		if err != nil {
+			log.Printf("[Categorizer] AI failed: %v", err)
+			// Keep "OTHER" if AI fails
+		} else {
+			category = aiCategory
+			log.Printf("[Categorizer] AI resolved '%s' -> %s", label, category)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"label":    req.Label,
+		"category": category,
+	})
+}
+
+// determineCategory contains the static logic for instant matching
+func determineCategory(label string) string {
+	l := strings.ToUpper(strings.TrimSpace(label))
+
+	// Map of Category -> Keywords
+	// Order matters: Specific keywords (e.g., "BOX") are checked inside the loop logic
+	keywords := map[string][]string{
+		"MOBILE": {
+			"MOBILE", "PORTABLE", "SOSH", "BOUYGUES", "FREE", "ORANGE", "SFR", 
+			"RED BY", "PRIXTEL", "NRJ MOBILE", "LEBARA", "LYCA", "YOUPI", "CORIOLIS",
+		},
+		"INTERNET": {
+			"BOX", "FIBRE", "ADSL", "INTERNET", "NUMERICABLE", "STARLINK", 
+			"NORDNET", "OVH", "K-NET",
+		},
+		"ENERGY": {
+			"EDF", "ENGIE", "TOTAL", "ENERGIE", "ELEC", "GAZ", "ENI", 
+			"ILEK", "PLANETE OUI", "VATTENFALL", "MINT", "OHM", "MEGA", "BUTAGAZ", "SUEZ", "VEOLIA",
+		},
+		"INSURANCE": {
+			"ASSURANCE", "AXA", "MAIF", "ALLIANZ", "MACIF", "GROUPAMA", "GMF", 
+			"MATMUT", "GENERALI", "MMA", "MAAF", "DIRECT ASSURANCE", "OLIVIER", 
+			"LEOCARE", "LUKO", "ALAN", "MGEN", "HARMONIE", "MUTUELLE", "PREVOYANCE",
+		},
+		"LOAN": {
+			"PRET", "CREDIT", "ECHEANCE", "EMPRUNT", "MENSUALITE", "IMMOBILIER", 
+			"COFIDIS", "CETELEM", "SOFINCO", "FLOA", "BOURSORAMA", "FRANFINANCE", "YOUNITED",
+		},
+		"BANK": {
+			"BANQUE", "CREDIT AGRICOLE", "SOCIETE GENERALE", "BNP", "LCL", 
+			"POSTALE", "CAISSE EPARGNE", "POPULAIRE", "CIC", "REVOLUT", "N26", 
+			"BOURSO", "FORTUNEO", "MONABANQ", "HELLO", "QONTO", "SHINE",
+		},
+		"TRANSPORT": {
+			"NAVIGO", "RATP", "SNCF", "TGV", "OUIGO", "UBER", "BOLT", "TAXI", 
+			"LIME", "AUTOROUTE", "PEAGE", "VINCI", "APRR", "SANEF", "TOTAL ENERGIES", "ESSO", "BP", "SHELL",
+		},
+		"SUBSCRIPTION": {
+			"NETFLIX", "SPOTIFY", "AMAZON", "PRIME", "DISNEY", "CANAL", 
+			"APPLE", "GOOGLE", "YOUTUBE", "DEEZER", "HBO", "PARAMOUNT", "ICLOUD", "DROPBOX",
+		},
+		"FOOD": {
+			"CARREFOUR", "LECLERC", "AUCHAN", "INTERMARCHE", "LIDL", "ALDI", "MONOPRIX", 
+			"FRANPRIX", "SUPER U", "HYPER U", "CASINO", "PICARD", "UBER EATS", "DELIVEROO", 
+			"MC DO", "MCDONALD", "BK", "BURGER KING", "KFC", "STARBUCKS",
+		},
+	}
+
+	for cat, keys := range keywords {
+		for _, k := range keys {
+			if strings.Contains(l, k) {
+				// Refinement: If it contains "SFR", "ORANGE", "FREE", "BOUYGUES"
+				// We need to differentiate Mobile vs Internet if possible
+				if (k == "SFR" || k == "ORANGE" || k == "BOUYGUES" || k == "FREE") {
+					if strings.Contains(l, "BOX") || strings.Contains(l, "FIBRE") || strings.Contains(l, "FIXE") {
+						return "INTERNET"
+					}
+					if strings.Contains(l, "MOBILE") || strings.Contains(l, "FORFAIT") {
+						return "MOBILE"
+					}
+					return "MOBILE" // Default for these providers
+				}
+				return cat
+			}
+		}
+	}
+
+	return "OTHER"
 }
 
 // ============================================================================
@@ -267,9 +386,9 @@ func (h *MarketSuggestionsHandler) checkBudgetAccess(ctx context.Context, userID
 	var exists bool
 	err := h.DB.QueryRowContext(ctx,
 		`SELECT EXISTS(
-			SELECT 1 FROM budget_members 
-			WHERE budget_id = $1 AND user_id = $2
-		)`,
+            SELECT 1 FROM budget_members 
+            WHERE budget_id = $1 AND user_id = $2
+        )`,
 		budgetID, userID,
 	).Scan(&exists)
 
@@ -277,7 +396,7 @@ func (h *MarketSuggestionsHandler) checkBudgetAccess(ctx context.Context, userID
 }
 
 func (h *MarketSuggestionsHandler) isSuggestionRelevant(category string) bool {
-	// Normaliser la catégorie
+	// Normalize category
 	category = strings.ToUpper(category)
 
 	relevantCategories := map[string]bool{
@@ -290,87 +409,4 @@ func (h *MarketSuggestionsHandler) isSuggestionRelevant(category string) bool {
 	}
 
 	return relevantCategories[category]
-}
-
-func (h *MarketSuggestionsHandler) CategorizeCharge(c *gin.Context) {
-	var req struct {
-		Label string `json:"label"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Label required"})
-		return
-	}
-
-	category := determineCategory(req.Label)
-
-	c.JSON(http.StatusOK, gin.H{
-		"label":    req.Label,
-		"category": category,
-	})
-}
-
-func determineCategory(label string) string {
-	l := strings.ToUpper(strings.TrimSpace(label))
-
-	// Map of Category -> Keywords
-	// The order matters slightly: specific terms should be checked before generic ones
-	keywords := map[string][]string{
-		"MOBILE": {
-			"MOBILE", "PORTABLE", "SOSH", "BOUYGUES", "FREE", "ORANGE", "SFR", 
-			"RED BY", "PRIXTEL", "NRJ MOBILE", "LEBARA", "LYCA", "YOUPI", "CORIOLIS",
-		},
-		"INTERNET": {
-			"BOX", "FIBRE", "ADSL", "INTERNET", "NUMERICABLE", "STARLINK", 
-			"NORDNET", "OVH", "K-NET",
-		},
-		"ENERGY": {
-			"EDF", "ENGIE", "TOTAL", "ENERGIE", "ELEC", "GAZ", "ENI", 
-			"ILEK", "PLANETE OUI", "VATTENFALL", "MINT", "OHM", "MEGA", "BUTAGAZ",
-		},
-		"INSURANCE": {
-			"ASSURANCE", "AXA", "MAIF", "ALLIANZ", "MACIF", "GROUPAMA", "GMF", 
-			"MATMUT", "GENERALI", "MMA", "MAAF", "DIRECT ASSURANCE", "OLIVIER", 
-			"LEOCARE", "LUKO", "ALAN", "MGEN", "HARMONIE",
-		},
-		"LOAN": {
-			"PRET", "CREDIT", "ECHEANCE", "EMPRUNT", "MENSUALITE", "IMMOBILIER", 
-			"COFIDIS", "CETELEM", "SOFINCO", "FLOA", "BOURSORAMA", "FRANFINANCE",
-		},
-		"BANK": {
-			"BANQUE", "CREDIT AGRICOLE", "SOCIETE GENERALE", "BNP", "LCL", 
-			"POSTALE", "CAISSE EPARGNE", "POPULAIRE", "CIC", "REVOLUT", "N26", 
-			"BOURSO", "FORTUNEO", "MONABANQ", "HELLO",
-		},
-		"TRANSPORT": {
-			"NAVIGO", "RATP", "SNCF", "TGV", "OUIGO", "UBER", "BOLT", "TAXI", 
-			"LIME", "AUTOROUTE", "PEAGE", "VINCI", "APRR",
-		},
-		"SUBSCRIPTION": {
-			"NETFLIX", "SPOTIFY", "AMAZON", "PRIME", "DISNEY", "CANAL", 
-			"APPLE", "GOOGLE", "YOUTUBE", "DEEZER", "HBO",
-		},
-	}
-
-	// Logic 1: Exact provider checks (Priority)
-	for cat, keys := range keywords {
-		for _, k := range keys {
-			// Contains logic handles "PRELEVEMENT SFR MOBILE"
-			if strings.Contains(l, k) {
-				// Refinement: If it contains BOX or FIBRE, it's INTERNET, even if it says Orange/SFR
-				if (k == "SFR" || k == "ORANGE" || k == "BOUYGUES" || k == "FREE") {
-					if strings.Contains(l, "BOX") || strings.Contains(l, "FIBRE") || strings.Contains(l, "FIXE") {
-						return "INTERNET"
-					}
-					if strings.Contains(l, "MOBILE") || strings.Contains(l, "FORFAIT") {
-						return "MOBILE"
-					}
-					// Default big providers to MOBILE if ambiguous (higher savings potential usually)
-					return "MOBILE"
-				}
-				return cat
-			}
-		}
-	}
-
-	return "OTHER"
 }

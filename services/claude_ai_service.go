@@ -8,12 +8,13 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
 // ============================================================================
 // CLAUDE AI SERVICE - Pour recherche de concurrents détaillée
-// Utilise Claude Sonnet 4 (plus intelligent que Haiku, pour analyses complexes)
+// Utilise Claude Sonnet 3.5 (le plus intelligent pour analyses complexes)
 // ============================================================================
 
 type ClaudeAIService struct {
@@ -26,6 +27,7 @@ type ClaudeAIService struct {
 type ClaudeRequest struct {
 	Model     string          `json:"model"`
 	MaxTokens int             `json:"max_tokens"`
+	System    string          `json:"system,omitempty"` // Added System prompt support
 	Messages  []ClaudeMessage `json:"messages"`
 }
 
@@ -35,10 +37,10 @@ type ClaudeMessage struct {
 }
 
 type ClaudeResponse struct {
-	ID      string `json:"id"`
-	Type    string `json:"type"`
-	Role    string `json:"role"`
-	Content []struct {
+	ID         string `json:"id"`
+	Type       string `json:"type"`
+	Role       string `json:"role"`
+	Content    []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
@@ -51,16 +53,19 @@ type ClaudeResponse struct {
 }
 
 func NewClaudeAIService() *ClaudeAIService {
+	// Fallback to a valid model if env var is missing or incorrect
+	model := "claude-3-5-sonnet-20240620" // Use latest stable Sonnet
+	
 	return &ClaudeAIService{
 		apiKey:     os.Getenv("ANTHROPIC_API_KEY"),
-		model:      "claude-sonnet-4-20250514", // Sonnet 4 pour meilleur rapport qualité/prix
+		model:      model,
 		maxTokens:  2000,
 		httpClient: &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
 // ============================================================================
-// APPEL PRINCIPAL À CLAUDE
+// 1. APPEL PRINCIPAL À CLAUDE (ANALYSE CONCURRENTIELLE)
 // ============================================================================
 
 func (s *ClaudeAIService) CallClaude(ctx context.Context, prompt string) (string, error) {
@@ -68,7 +73,6 @@ func (s *ClaudeAIService) CallClaude(ctx context.Context, prompt string) (string
 		return "", fmt.Errorf("ANTHROPIC_API_KEY not set")
 	}
 
-	// Construire la requête
 	requestBody := ClaudeRequest{
 		Model:     s.model,
 		MaxTokens: s.maxTokens,
@@ -80,12 +84,68 @@ func (s *ClaudeAIService) CallClaude(ctx context.Context, prompt string) (string
 		},
 	}
 
+	return s.executeRequest(ctx, requestBody)
+}
+
+// ============================================================================
+// 2. CATEGORISATION INTELLIGENTE (NOUVEAU)
+// Appelé si le mapping statique échoue. Utilise un prompt système strict.
+// ============================================================================
+
+func (s *ClaudeAIService) CategorizeLabel(ctx context.Context, label string) (string, error) {
+	if s.apiKey == "" {
+		return "OTHER", fmt.Errorf("ANTHROPIC_API_KEY not set")
+	}
+
+	// Prompt Système : Instructions strictes pour la catégorisation
+	systemPrompt := `You are a financial transaction classifier. 
+	Classify the user's transaction label into exactly ONE of these categories:
+	MOBILE, INTERNET, ENERGY, INSURANCE, LOAN, BANK, TRANSPORT, SUBSCRIPTION, FOOD, HOUSING, HEALTH, SHOPPING.
+	
+	Rules:
+	1. If it looks like a phone bill (Sosh, Free, SFR), return MOBILE.
+	2. If it looks like an internet box (Livebox, Freebox), return INTERNET.
+	3. If it looks like electricity/gas (EDF, Engie), return ENERGY.
+	4. If it looks like insurance (Macif, AXA, Allianz), return INSURANCE.
+	5. If it looks like a loan (Credit, Pret, Mensualite), return LOAN.
+	6. If it matches nothing well, return OTHER.
+	
+	IMPORTANT: Return ONLY the category name (uppercase). No other text.`
+
+	requestBody := ClaudeRequest{
+		Model:     "claude-3-haiku-20240307", // Use Haiku for speed & low cost
+		MaxTokens: 20,                       // Very short response needed
+		System:    systemPrompt,
+		Messages: []ClaudeMessage{
+			{
+				Role:    "user",
+				Content: fmt.Sprintf("Label: %s", label),
+			},
+		},
+	}
+
+	category, err := s.executeRequest(ctx, requestBody)
+	if err != nil {
+		return "OTHER", err
+	}
+
+	// Clean up response (remove whitespace, potential dots)
+	cleanCat := strings.ToUpper(strings.TrimSpace(category))
+	cleanCat = strings.Trim(cleanCat, ".")
+	
+	return cleanCat, nil
+}
+
+// ============================================================================
+// HELPER: EXECUTE REQUEST
+// ============================================================================
+
+func (s *ClaudeAIService) executeRequest(ctx context.Context, requestBody ClaudeRequest) (string, error) {
 	jsonData, err := json.Marshal(requestBody)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Créer la requête HTTP
 	req, err := http.NewRequestWithContext(
 		ctx,
 		"POST",
@@ -96,62 +156,53 @@ func (s *ClaudeAIService) CallClaude(ctx context.Context, prompt string) (string
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Headers requis par Anthropic
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", s.apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
-	// Envoyer la requête
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Lire la réponse
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Vérifier le status code
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
-	// Parser la réponse
 	var claudeResp ClaudeResponse
 	if err := json.Unmarshal(body, &claudeResp); err != nil {
 		return "", fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	// Extraire le texte de la réponse
 	if len(claudeResp.Content) == 0 {
 		return "", fmt.Errorf("empty response from Claude")
 	}
 
-	responseText := claudeResp.Content[0].Text
-
-	// Log des tokens utilisés (pour monitoring des coûts)
-	fmt.Printf("[Claude AI] Model: %s | Tokens used - Input: %d, Output: %d, Total: %d | Cost: $%.4f\n",
+	// Log usage stats
+	fmt.Printf("[Claude AI] Model: %s | Tokens: In %d / Out %d | Cost: $%.5f\n",
 		claudeResp.Model,
 		claudeResp.Usage.InputTokens,
 		claudeResp.Usage.OutputTokens,
-		claudeResp.Usage.InputTokens+claudeResp.Usage.OutputTokens,
 		s.EstimateCost(claudeResp.Usage.InputTokens, claudeResp.Usage.OutputTokens),
 	)
 
-	return responseText, nil
+	return claudeResp.Content[0].Text, nil
 }
 
 // ============================================================================
 // ESTIMATION DES COÛTS
 // ============================================================================
 
-// Prix Claude Sonnet 4 (Décembre 2024)
+// Pricing (approximate for Claude 3.5 Sonnet)
 const (
-	InputTokenPrice  = 0.000003 // $3 per million tokens
-	OutputTokenPrice = 0.000015 // $15 per million tokens
+	InputTokenPrice  = 0.000003 // $3 per million
+	OutputTokenPrice = 0.000015 // $15 per million
 )
 
 func (s *ClaudeAIService) EstimateCost(inputTokens int, outputTokens int) float64 {
