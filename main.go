@@ -7,15 +7,15 @@ import (
 	"os"
 	"time"
 
-	"github.com/gin-contrib/cors"
-	"github.com/gin-gonic/gin"
-	"github.com/joho/godotenv"
-
 	"budget-api/config"
 	"budget-api/handlers"
 	"budget-api/middleware"
 	"budget-api/routes"
 	"budget-api/services"
+
+	"github.com/gin-contrib/cors"
+	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 )
 
 func main() {
@@ -36,7 +36,7 @@ func main() {
 		log.Fatal("Failed to run migrations:", err)
 	}
 
-	// ⭐ NOUVEAU: Démarrer le nettoyage automatique du cache des suggestions
+	// Start automatic cache cleaning
 	go scheduleCacheCleaning(db)
 
 	// Initialize WebSocket Handler
@@ -48,7 +48,7 @@ func main() {
 	// CORS configuration
 	frontendURL := os.Getenv("FRONTEND_URL")
 	if frontendURL == "" {
-		frontendURL = "http://localhost:3000" // Fallback pour dev local
+		frontendURL = "http://localhost:3000"
 	}
 
 	allowedOrigins := []string{
@@ -88,13 +88,11 @@ func main() {
 		// Public routes
 		routes.SetupAuthRoutes(v1, db)
 
-		// WebSocket Route (Protected check handled inside handler or via query token)
+		// WebSocket Route
 		v1.GET("/ws/budgets/:id", wsHandler.HandleWS)
 
-		// Admin routes (non protégées pour l'instant, à sécuriser si besoin)
+		// Admin routes
 		routes.SetupAdminRoutes(v1, db)
-
-		// ⭐ NOUVEAU: Admin routes pour suggestions (nettoyage cache)
 		routes.SetupAdminSuggestionsRoutes(v1, db)
 
 		// Protected routes
@@ -105,8 +103,6 @@ func main() {
 			routes.SetupUserRoutes(protected, db)
 			routes.SetupInvitationRoutes(protected, db)
 			routes.SetupEnableBankingRoutes(protected, db)
-
-			// ⭐ NOUVEAU: Routes Market Suggestions
 			routes.SetupMarketSuggestionsRoutes(protected, db)
 		}
 	}
@@ -134,8 +130,7 @@ func main() {
 	}
 }
 
-// ⭐ NOUVELLE FONCTION: Nettoyage automatique du cache des suggestions
-// S'exécute tous les jours à minuit pour supprimer les suggestions expirées
+// scheduleCacheCleaning runs cache cleanup every 24 hours
 func scheduleCacheCleaning(db *sql.DB) {
 	// Attendre le démarrage complet
 	time.Sleep(5 * time.Second)
