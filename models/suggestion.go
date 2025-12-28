@@ -32,6 +32,8 @@ type Competitor struct {
 	Pros             []string `json:"pros"`
 	Cons             []string `json:"cons"`
 	ContactAvailable bool     `json:"contact_available"`
+	PhoneNumber      string   `json:"phone_number,omitempty"`
+	ContactEmail     string   `json:"contact_email,omitempty"`
 }
 
 // MarketSuggestion représente une suggestion de marché avec liste de concurrents
