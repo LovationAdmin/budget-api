@@ -88,7 +88,8 @@ func (h *AdminSuggestionHandler) RetroactiveAnalysis(c *gin.Context) {
 			if label != "" && (currentCat == "" || currentCat == "OTHER") {
 				
 				// A. Apply Smart Categorization
-				newCat := determineCategory(label) // Uses the logic from your market_suggestions_handler.go
+				// determineCategory is available since both files are in package handlers
+				newCat := determineCategory(label) 
 
 				if newCat != "OTHER" && newCat != currentCat {
 					// Update the Charge in Memory
@@ -106,7 +107,10 @@ func (h *AdminSuggestionHandler) RetroactiveAnalysis(c *gin.Context) {
 				// We call AnalyzeCharge. This checks DB cache first.
 				// If missing, it calls AI and saves result.
 				// This ensures that when the user logs in, the data is INSTANT.
-				_, err := h.MarketAnalyzer.AnalyzeCharge(bgCtx, currentCat, "", amount, "FR")
+				
+				// FIX: Added '1' as householdSize argument (default for bulk admin task)
+				_, err := h.MarketAnalyzer.AnalyzeCharge(bgCtx, currentCat, "", amount, "FR", 1)
+				
 				if err == nil {
 					// We don't easily know if it was a hit or miss here without changing service return,
 					// but we know we ensured it exists.
@@ -141,8 +145,8 @@ func (h *AdminSuggestionHandler) RetroactiveAnalysis(c *gin.Context) {
 	})
 }
 
-// Copy helper here or ensure it's exported from the other file
-// Simple relevance check
+// Helper function local to this file to avoid conflicts if needed,
+// but effectively duplicates logic from market_suggestions_handler which is fine.
 func isCategoryRelevant(cat string) bool {
 	switch cat {
 	case "MOBILE", "INTERNET", "ENERGY", "INSURANCE", "LOAN", "BANK":

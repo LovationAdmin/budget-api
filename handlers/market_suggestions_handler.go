@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"[github.com/gin-gonic/gin](https://github.com/gin-gonic/gin)"
+	"github.com/gin-gonic/gin"
 )
 
 type MarketSuggestionsHandler struct {
@@ -221,8 +221,12 @@ func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 // ============================================================================
 
 func (h *MarketSuggestionsHandler) CleanExpiredCache(c *gin.Context) {
-	// Simulated functionality for now
-	c.JSON(http.StatusOK, gin.H{"message": "Cache cleaned successfully (Simulation)"})
+	if err := h.MarketAnalyzer.CleanExpiredCache(c.Request.Context()); err != nil {
+		log.Printf("Failed to clean cache: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clean cache"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Cache cleaned successfully"})
 }
 
 // ============================================================================
