@@ -3,6 +3,7 @@ package handlers
 import (
 	"budget-api/models"
 	"budget-api/services"
+	"context"
 	"database/sql"
 	"log"
 	"net/http"
@@ -29,7 +30,56 @@ func NewMarketSuggestionsHandler(db *sql.DB) *MarketSuggestionsHandler {
 	}
 }
 
-// ... AnalyzeCharge (Single) ...
+// ============================================================================
+// 1. ANALYZE A SPECIFIC CHARGE (Single - default household 1)
+// POST /api/v1/suggestions/analyze
+// ============================================================================
+
+type AnalyzeChargeRequest struct {
+	Category      string  `json:"category" binding:"required"`
+	MerchantName  string  `json:"merchant_name"`
+	CurrentAmount float64 `json:"current_amount" binding:"required"`
+}
+
+func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
+	userID := c.GetString("user_id")
+
+	var req AnalyzeChargeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		return
+	}
+
+	userCountry, err := h.getUserCountry(c.Request.Context(), userID)
+	if err != nil {
+		userCountry = "FR"
+	}
+
+	log.Printf("[MarketSuggestions] Analyzing single charge for user %s: %s - %.2f€", userID, req.Category, req.CurrentAmount)
+
+	// Default household size to 1 for single charge analysis
+	suggestion, err := h.MarketAnalyzer.AnalyzeCharge(
+		c.Request.Context(),
+		req.Category,
+		req.MerchantName,
+		req.CurrentAmount,
+		userCountry,
+		1, 
+	)
+
+	if err != nil {
+		log.Printf("Market analysis failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to analyze charge"})
+		return
+	}
+
+	c.JSON(http.StatusOK, suggestion)
+}
+
+// ============================================================================
+// 2. BULK ANALYZE ALL CHARGES IN A BUDGET
+// POST /api/v1/budgets/:id/suggestions/bulk-analyze
+// ============================================================================
 
 type ChargeToAnalyze struct {
 	ID           string  `json:"id"`
@@ -70,8 +120,9 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 	var memberCount int
 	err = h.DB.QueryRowContext(c.Request.Context(), 
 		"SELECT COUNT(*) FROM budget_members WHERE budget_id = $1", budgetID).Scan(&memberCount)
+	
 	if err != nil || memberCount < 1 {
-		memberCount = 1
+		memberCount = 1 // Fallback
 	}
 
 	log.Printf("[MarketSuggestions] Bulk analyzing %d charges for budget %s (Household: %d)", len(req.Charges), budgetID, memberCount)
@@ -86,14 +137,13 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 			continue
 		}
 
-		// Appel avec le memberCount
 		suggestion, err := h.MarketAnalyzer.AnalyzeCharge(
 			c.Request.Context(),
 			charge.Category,
 			charge.MerchantName,
 			charge.Amount,
 			userCountry,
-			memberCount, // <--- Size passed here
+			memberCount, // <--- Use real member count
 		)
 
 		if err != nil {
@@ -129,32 +179,136 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// ... GetCategorySuggestions, CleanExpiredCache, CategorizeCharge ...
-// (Ces fonctions restent inchangées, assurez-vous juste que CategorizeCharge est là)
+// ============================================================================
+// 3. GET CACHED SUGGESTIONS FOR A CATEGORY
+// GET /api/v1/suggestions/category/:category
+// ============================================================================
 
-func (h *MarketSuggestionsHandler) CategorizeCharge(c *gin.Context) {
-	// ... (Code existant inchangé) ...
-    c.JSON(http.StatusOK, gin.H{"label": "", "category": "OTHER"})
+func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
+	userID := c.GetString("user_id")
+	category := c.Param("category")
+
+	userCountry, err := h.getUserCountry(c.Request.Context(), userID)
+	if err != nil {
+		userCountry = "FR"
+	}
+
+	suggestion, err := h.MarketAnalyzer.AnalyzeCharge(
+		c.Request.Context(),
+		category,
+		"",
+		0,
+		userCountry,
+		1, // Default to 1 for generic category lookup
+	)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch suggestions"})
+		return
+	}
+
+	if suggestion == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "No suggestions found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, suggestion)
 }
 
-// ... Helpers (checkBudgetAccess, getUserCountry, isSuggestionRelevant) ...
-// (Code existant inchangé)
-func (h *MarketSuggestionsHandler) checkBudgetAccess(ctx context.Context, userID, budgetID string) (bool, error) {
-    // ...
-    return true, nil
+// ============================================================================
+// 4. CLEAN EXPIRED CACHE (Admin/Cron)
+// POST /api/v1/admin/suggestions/clean-cache
+// ============================================================================
+
+func (h *MarketSuggestionsHandler) CleanExpiredCache(c *gin.Context) {
+	// Simulated functionality for now
+	c.JSON(http.StatusOK, gin.H{"message": "Cache cleaned successfully (Simulation)"})
+}
+
+// ============================================================================
+// 5. CATEGORIZE CHARGE
+// POST /api/v1/categorize
+// ============================================================================
+
+func (h *MarketSuggestionsHandler) CategorizeCharge(c *gin.Context) {
+	var req struct {
+		Label string `json:"label"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Label required"})
+		return
+	}
+
+	label := strings.TrimSpace(req.Label)
+	if label == "" {
+		c.JSON(http.StatusOK, gin.H{"label": "", "category": "OTHER"})
+		return
+	}
+
+	// Step 1: Try Static Keyword Matching
+	category := determineCategory(label)
+
+	// Step 2: AI Fallback
+	if category == "OTHER" && len(label) > 3 {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+
+		aiCategory, err := h.AIService.CategorizeLabel(ctx, label)
+		if err == nil {
+			category = aiCategory
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"label":    req.Label,
+		"category": category,
+	})
+}
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+func determineCategory(label string) string {
+	l := strings.ToUpper(strings.TrimSpace(label))
+
+	keywords := map[string][]string{
+		"MOBILE": {"MOBILE", "PORTABLE", "SOSH", "BOUYGUES", "FREE", "ORANGE", "SFR", "RED BY"},
+		"INTERNET": {"BOX", "FIBRE", "ADSL", "INTERNET"},
+		"ENERGY": {"EDF", "ENGIE", "TOTAL", "ENERGIE", "ELEC", "GAZ"},
+		"INSURANCE": {"ASSURANCE", "AXA", "MAIF", "ALLIANZ", "MACIF"},
+		"LOAN": {"PRET", "CREDIT", "ECHEANCE", "EMPRUNT"},
+		"BANK": {"BANQUE", "CREDIT AGRICOLE", "SOCIETE GENERALE", "BNP"},
+	}
+
+	for cat, keys := range keywords {
+		for _, k := range keys {
+			if strings.Contains(l, k) {
+				return cat
+			}
+		}
+	}
+	return "OTHER"
 }
 
 func (h *MarketSuggestionsHandler) getUserCountry(ctx context.Context, userID string) (string, error) {
-    // ...
-    return "FR", nil
+	var country sql.NullString
+	err := h.DB.QueryRowContext(ctx, "SELECT country FROM users WHERE id = $1", userID).Scan(&country)
+	if err != nil || !country.Valid || country.String == "" {
+		return "FR", nil
+	}
+	return country.String, nil
 }
 
-func (h *MarketSuggestionsHandler) isSuggestionRelevant(cat string) bool {
-    // ...
-    return true
+func (h *MarketSuggestionsHandler) checkBudgetAccess(ctx context.Context, userID string, budgetID string) (bool, error) {
+	var exists bool
+	err := h.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM budget_members WHERE budget_id = $1 AND user_id = $2)`, budgetID, userID).Scan(&exists)
+	return exists, err
 }
 
-// Dummy placeholder for analyze single (not used in bulk flow)
-func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {}
-func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {}
-func (h *MarketSuggestionsHandler) CleanExpiredCache(c *gin.Context) {}
+func (h *MarketSuggestionsHandler) isSuggestionRelevant(category string) bool {
+	relevantCategories := map[string]bool{
+		"ENERGY": true, "INTERNET": true, "MOBILE": true, "INSURANCE": true, "LOAN": true, "BANK": true,
+	}
+	return relevantCategories[strings.ToUpper(category)]
+}
