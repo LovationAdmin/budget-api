@@ -2,18 +2,18 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"os"
 	"time"
-	"database/sql"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
-	
+
 	"budget-api/config"
-	"budget-api/middleware"
 	"budget-api/handlers"
+	"budget-api/middleware"
 	"budget-api/routes"
 	"budget-api/services"
 )
@@ -69,7 +69,7 @@ func main() {
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
-		MaxAge:           86400, 
+		MaxAge:           86400,
 	}
 	router.Use(cors.New(corsConfig))
 
@@ -87,13 +87,13 @@ func main() {
 	{
 		// Public routes
 		routes.SetupAuthRoutes(v1, db)
-		
+
 		// WebSocket Route (Protected check handled inside handler or via query token)
 		v1.GET("/ws/budgets/:id", wsHandler.HandleWS)
 
 		// Admin routes (non protégées pour l'instant, à sécuriser si besoin)
 		routes.SetupAdminRoutes(v1, db)
-		
+
 		// ⭐ NOUVEAU: Admin routes pour suggestions (nettoyage cache)
 		routes.SetupAdminSuggestionsRoutes(v1, db)
 
@@ -101,11 +101,11 @@ func main() {
 		protected := v1.Group("/")
 		protected.Use(middleware.AuthMiddleware())
 		{
-			routes.SetupBudgetRoutes(protected, db) 
+			routes.SetupBudgetRoutes(protected, db)
 			routes.SetupUserRoutes(protected, db)
 			routes.SetupInvitationRoutes(protected, db)
 			routes.SetupEnableBankingRoutes(protected, db)
-			
+
 			// ⭐ NOUVEAU: Routes Market Suggestions
 			routes.SetupMarketSuggestionsRoutes(protected, db)
 		}
@@ -114,8 +114,8 @@ func main() {
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{
-			"status": "ok",
-			"service": "budget-api",
+			"status":       "ok",
+			"service":      "budget-api",
 			"frontend_url": frontendURL,
 		})
 	})
@@ -128,7 +128,7 @@ func main() {
 
 	log.Printf("🚀 Server starting on port %s", port)
 	log.Printf("📊 Market Suggestions: Cache cleaning scheduled (every 24h)")
-	
+
 	if err := router.Run(":" + port); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}
@@ -139,9 +139,9 @@ func main() {
 func scheduleCacheCleaning(db *sql.DB) {
 	// Attendre le démarrage complet
 	time.Sleep(5 * time.Second)
-	
+
 	log.Println("🧹 Cache cleaning scheduler started")
-	
+
 	ticker := time.NewTicker(24 * time.Hour)
 	defer ticker.Stop()
 

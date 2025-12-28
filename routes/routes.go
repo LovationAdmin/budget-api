@@ -2,9 +2,11 @@ package routes
 
 import (
 	"database/sql"
+
+	"github.com/gin-gonic/gin"
+
 	"budget-api/handlers"
 	"budget-api/services"
-	"github.com/gin-gonic/gin"
 )
 
 // SetupAuthRoutes sets up public authentication routes.
@@ -38,7 +40,7 @@ func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.GET("/user/profile", userHandler.GetProfile)
 	rg.PUT("/user/profile", userHandler.UpdateProfile)
 	
-	// ✅ NEW: Location routes
+	// Location routes
 	rg.PUT("/user/location", userHandler.UpdateLocation)
 	rg.GET("/user/location", userHandler.GetLocation)
 	
@@ -94,7 +96,7 @@ func SetupEnableBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.GET("/banking/budgets/:id/reality-check", handler.GetConnections)
 }
 
-// ⭐ CORRIGÉ: Utiliser :id au lieu de :budget_id pour éviter le conflit
+// SetupMarketSuggestionsRoutes sets up routes for AI market analysis
 func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	handler := handlers.NewMarketSuggestionsHandler(db)
 
@@ -104,8 +106,10 @@ func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	// Route pour récupérer suggestions en cache pour une catégorie
 	rg.GET("/suggestions/category/:category", handler.GetCategorySuggestions)
 
-	// ⭐ FIX: Utiliser :id au lieu de :budget_id
+	// Bulk analysis for a specific budget
 	rg.POST("/budgets/:id/suggestions/bulk-analyze", handler.BulkAnalyzeCharges)
+	
+	// AI Categorization
 	rg.POST("/categorize", handler.CategorizeCharge)
 }
 
