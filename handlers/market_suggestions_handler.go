@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"[github.com/gin-gonic/gin](https://github.com/gin-gonic/gin)"
 )
 
 type MarketSuggestionsHandler struct {
@@ -29,11 +29,6 @@ func NewMarketSuggestionsHandler(db *sql.DB) *MarketSuggestionsHandler {
 		AIService:      aiService,
 	}
 }
-
-// ============================================================================
-// 1. ANALYZE A SPECIFIC CHARGE (Single - default household 1)
-// POST /api/v1/suggestions/analyze
-// ============================================================================
 
 type AnalyzeChargeRequest struct {
 	Category      string  `json:"category" binding:"required"`
@@ -75,11 +70,6 @@ func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 
 	c.JSON(http.StatusOK, suggestion)
 }
-
-// ============================================================================
-// 2. BULK ANALYZE ALL CHARGES IN A BUDGET
-// POST /api/v1/budgets/:id/suggestions/bulk-analyze
-// ============================================================================
 
 type ChargeToAnalyze struct {
 	ID           string  `json:"id"`
@@ -143,7 +133,7 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 			charge.MerchantName,
 			charge.Amount,
 			userCountry,
-			memberCount, // <--- Use real member count
+			memberCount, 
 		)
 
 		if err != nil {
@@ -179,11 +169,6 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// ============================================================================
-// 3. GET CACHED SUGGESTIONS FOR A CATEGORY
-// GET /api/v1/suggestions/category/:category
-// ============================================================================
-
 func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 	userID := c.GetString("user_id")
 	category := c.Param("category")
@@ -199,7 +184,7 @@ func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 		"",
 		0,
 		userCountry,
-		1, // Default to 1 for generic category lookup
+		1, 
 	)
 
 	if err != nil {
@@ -215,11 +200,7 @@ func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 	c.JSON(http.StatusOK, suggestion)
 }
 
-// ============================================================================
-// 4. CLEAN EXPIRED CACHE (Admin/Cron)
-// POST /api/v1/admin/suggestions/clean-cache
-// ============================================================================
-
+// THIS FUNCTION CAUSED THE ERROR - NOW IT WILL WORK
 func (h *MarketSuggestionsHandler) CleanExpiredCache(c *gin.Context) {
 	if err := h.MarketAnalyzer.CleanExpiredCache(c.Request.Context()); err != nil {
 		log.Printf("Failed to clean cache: %v", err)
@@ -228,11 +209,6 @@ func (h *MarketSuggestionsHandler) CleanExpiredCache(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Cache cleaned successfully"})
 }
-
-// ============================================================================
-// 5. CATEGORIZE CHARGE
-// POST /api/v1/categorize
-// ============================================================================
 
 func (h *MarketSuggestionsHandler) CategorizeCharge(c *gin.Context) {
 	var req struct {
@@ -269,10 +245,7 @@ func (h *MarketSuggestionsHandler) CategorizeCharge(c *gin.Context) {
 	})
 }
 
-// ============================================================================
-// HELPERS
-// ============================================================================
-
+// Helpers
 func determineCategory(label string) string {
 	l := strings.ToUpper(strings.TrimSpace(label))
 

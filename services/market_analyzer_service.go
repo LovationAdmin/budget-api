@@ -47,8 +47,6 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 		category, merchantName, currentAmount, country, householdSize)
 
 	// 1. Essayer de récupérer depuis le cache
-	// Note: Pour l'instant, on ignore householdSize dans le cache key pour simplifier,
-	// mais idéalement on devrait l'inclure si ça impacte drastiquement le prix (ex: Eau/Energie)
 	cached, err := s.getCachedSuggestion(ctx, category, country, merchantName)
 	if err == nil && cached != nil {
 		log.Printf("[MarketAnalyzer] ✅ Cache HIT")
@@ -70,7 +68,7 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 		MerchantName: merchantName,
 		Competitors:  competitors,
 		LastUpdated:  time.Now(),
-		ExpiresAt:    time.Now().Add(30*24*time.Hour + 1*time.Minute), // 30 jours + 1 minute de marge
+		ExpiresAt:    time.Now().Add(30 * 24 * time.Hour), // 30 jours
 	}
 
 	// 4. Sauvegarder dans le cache
@@ -79,6 +77,24 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 	}
 
 	return suggestion, nil
+}
+
+// ============================================================================
+// CLEAN CACHE (METHODE MANQUANTE AJOUTÉE ICI)
+// ============================================================================
+
+func (s *MarketAnalyzerService) CleanExpiredCache(ctx context.Context) error {
+	query := `DELETE FROM market_suggestions WHERE expires_at < NOW()`
+
+	result, err := s.DB.ExecContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("failed to clean cache: %w", err)
+	}
+
+	rows, _ := result.RowsAffected()
+	log.Printf("[MarketAnalyzer] 🧹 Cleaned %d expired cache entries", rows)
+
+	return nil
 }
 
 // ============================================================================
@@ -178,7 +194,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown), format EXACT:
 }
 
 // ============================================================================
-// JSON PARSING (Reste inchangé mais inclus pour complétude)
+// JSON PARSING
 // ============================================================================
 
 type CompetitorSearchResponse struct {
@@ -207,10 +223,8 @@ func parseCompetitorsFromResponse(content string) ([]models.Competitor, error) {
 }
 
 // ============================================================================
-// CACHE MANAGEMENT (Reste inchangé)
+// CACHE MANAGEMENT
 // ============================================================================
-// (Le code getCachedSuggestion et saveSuggestionToCache reste identique au fichier original fourni,
-// car nous n'avons pas modifié la structure de la table SQL, juste le contenu du JSON stocké)
 
 func (s *MarketAnalyzerService) getCachedSuggestion(ctx context.Context, category, country, merchantName string) (*models.MarketSuggestion, error) {
 	var query string
