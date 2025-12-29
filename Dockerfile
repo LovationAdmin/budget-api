@@ -17,6 +17,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
+# Added flags to ensure static linking
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
 
 # Final stage
