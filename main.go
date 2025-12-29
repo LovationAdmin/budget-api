@@ -110,9 +110,9 @@ func main() {
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{
-			"status":       "ok",
-			"service":      "budget-api",
-			"frontend_url": frontendURL,
+			"status":  "healthy",
+			"version": "1.0.0",
+			"time":    time.Now().Format(time.RFC3339),
 		})
 	})
 
@@ -122,43 +122,42 @@ func main() {
 		port = "8080"
 	}
 
-	log.Printf("🚀 Server starting on port %s", port)
-	log.Printf("📊 Market Suggestions: Cache cleaning scheduled (every 24h)")
-
+	log.Printf("🚀 Server starting on port %s...", port)
 	if err := router.Run(":" + port); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}
 }
 
-// scheduleCacheCleaning runs cache cleanup every 24 hours
+// scheduleCacheCleaning runs a daily cleanup of expired AI cache entries
 func scheduleCacheCleaning(db *sql.DB) {
-	// Attendre le démarrage complet
-	time.Sleep(5 * time.Second)
-
-	log.Println("🧹 Cache cleaning scheduler started")
-
 	ticker := time.NewTicker(24 * time.Hour)
 	defer ticker.Stop()
 
-	// Nettoyer immédiatement au démarrage
-	cleanCache(db)
+	// Run immediately on startup
+	cleanExpiredCache(db)
 
-	// Puis nettoyer toutes les 24h
 	for range ticker.C {
-		cleanCache(db)
+		cleanExpiredCache(db)
 	}
 }
 
-func cleanCache(db *sql.DB) {
+// cleanExpiredCache removes cache entries older than 30 days
+func cleanExpiredCache(db *sql.DB) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	aiService := services.NewClaudeAIService()
-	marketAnalyzer := services.NewMarketAnalyzerService(db, aiService)
+	result, err := db.ExecContext(ctx, `
+		DELETE FROM market_suggestions_cache 
+		WHERE created_at < NOW() - INTERVAL '30 days'
+	`)
 
-	if err := marketAnalyzer.CleanExpiredCache(ctx); err != nil {
-		log.Printf("❌ Failed to clean suggestions cache: %v", err)
-	} else {
-		log.Println("✅ Suggestions cache cleaned successfully")
+	if err != nil {
+		log.Printf("❌ Cache cleanup failed: %v", err)
+		return
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows > 0 {
+		log.Printf("🧹 Cleaned %d expired cache entries", rows)
 	}
 }
