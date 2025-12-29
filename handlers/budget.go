@@ -4,7 +4,7 @@ import (
 	"log"
 	"net/http"
 
-	"budget-api/services"
+	"github.com/LovationAdmin/budget-api/services"
 
 	"github.com/gin-gonic/gin"
 )

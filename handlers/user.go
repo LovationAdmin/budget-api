@@ -7,9 +7,9 @@ import (
 	"log"
 
 	"github.com/gin-gonic/gin"
-	"budget-api/middleware"
-	"budget-api/models"
-	"budget-api/utils"
+	"github.com/LovationAdmin/budget-api/middleware"
+	"github.com/LovationAdmin/budget-api/models"
+	"github.com/LovationAdmin/budget-api/utils"
 )
 
 type UserHandler struct {

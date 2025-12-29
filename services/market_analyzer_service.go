@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"budget-api/models"
+	"github.com/LovationAdmin/budget-api/models"
 )
 
 // ============================================================================

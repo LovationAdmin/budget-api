@@ -17,7 +17,7 @@ import (
 	"log"
 	"time"
 
-	"budget-api/utils"
+	"github.com/LovationAdmin/budget-api/utils"
 )
 
 // Mois français dans l'ordre (index 0 = Janvier)

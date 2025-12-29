@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"budget-api/models"
-	"budget-api/utils"
+	"github.com/LovationAdmin/budget-api/models"
+	"github.com/LovationAdmin/budget-api/utils"
 
 	"github.com/google/uuid"
 )

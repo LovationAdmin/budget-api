@@ -5,8 +5,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"budget-api/handlers"
-	"budget-api/services"
+	"github.com/LovationAdmin/budget-api/handlers"
+	"github.com/LovationAdmin/budget-api/services"
 )
 
 // SetupAuthRoutes sets up public authentication routes.

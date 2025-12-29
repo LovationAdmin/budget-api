@@ -1,7 +1,7 @@
 package services
 
 import (
-	"budget-api/models"
+	"github.com/LovationAdmin/budget-api/models"
 	"fmt"
 	"strings"
 )

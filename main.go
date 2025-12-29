@@ -7,10 +7,10 @@ import (
 	"os"
 	"time"
 
-	"budget-api/config"
-	"budget-api/handlers"
-	"budget-api/middleware"
-	"budget-api/routes"
+	"github.com/LovationAdmin/budget-api/config"
+	"github.com/LovationAdmin/budget-api/handlers"
+	"github.com/LovationAdmin/budget-api/middleware"
+	"github.com/LovationAdmin/budget-api/routes"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"

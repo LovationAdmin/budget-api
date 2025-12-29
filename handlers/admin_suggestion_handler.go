@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"budget-api/services"
+	"github.com/LovationAdmin/budget-api/services"
 	"context"
 	"database/sql"
 	"encoding/json"

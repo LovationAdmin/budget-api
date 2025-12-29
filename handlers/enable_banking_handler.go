@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"time"
 
-	"budget-api/middleware"
-	"budget-api/services"
+	"github.com/LovationAdmin/budget-api/middleware"
+	"github.com/LovationAdmin/budget-api/services"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"

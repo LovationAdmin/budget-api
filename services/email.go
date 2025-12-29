@@ -1,7 +1,7 @@
 package services
 
 import (
-	"budget-api/utils"
+	"github.com/LovationAdmin/budget-api/utils"
 )
 
 // EmailService struct

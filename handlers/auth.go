@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"budget-api/utils"
+	"github.com/LovationAdmin/budget-api/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"

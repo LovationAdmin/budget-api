@@ -4,8 +4,8 @@ import (
 	"database/sql"
 	"net/http"
 
-	"budget-api/models"
-	"budget-api/services"
+	"github.com/LovationAdmin/budget-api/models"
+	"github.com/LovationAdmin/budget-api/services"
 
 	"github.com/gin-gonic/gin"
 )
