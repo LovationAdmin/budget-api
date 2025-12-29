@@ -1,4 +1,4 @@
-module budget-api
+module github.com/LovationAdmin/budget-api
 
 go 1.23
 
