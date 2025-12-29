@@ -9,13 +9,13 @@ import "time"
 // Suggestion représente une suggestion d'économie simple (ancien système)
 type Suggestion struct {
 	ID               string  `json:"id"`
-	ChargeID         string  `json:"charge_id"`         // L'ID de la dépense concernée
-	Type             string  `json:"type"`              // ex: "MOBILE_OFFER", "ENERGY_OFFER"
-	Title            string  `json:"title"`             // ex: "Forfait mobile élevé"
-	Message          string  `json:"message"`           // ex: "Vous payez 70€/mois. La moyenne est à 20€."
-	PotentialSavings float64 `json:"potential_savings"` // ex: 600.00 (par an)
-	ActionLink       string  `json:"action_link"`       // Lien d'affiliation direct (ex: Sosh)
-	CanBeContacted   bool    `json:"can_be_contacted"`  // Si TRUE, affiche le bouton "Être rappelé"
+	ChargeID         string  `json:"charge_id"`
+	Type             string  `json:"type"`
+	Title            string  `json:"title"`
+	Message          string  `json:"message"`
+	PotentialSavings float64 `json:"potential_savings"`
+	ActionLink       string  `json:"action_link"`
+	CanBeContacted   bool    `json:"can_be_contacted"`
 }
 
 // ============================================================================
@@ -49,8 +49,8 @@ type MarketSuggestion struct {
 
 // ChargeSuggestion associe une charge avec sa suggestion de marché
 type ChargeSuggestion struct {
-	ChargeID    string            `json:"charge_id"`
-	ChargeLabel string            `json:"charge_label"`
+	ChargeID    string           `json:"charge_id"`
+	ChargeLabel string           `json:"charge_label"`
 	Suggestion  *MarketSuggestion `json:"suggestion"`
 }
 
@@ -60,4 +60,5 @@ type BulkAnalyzeResponse struct {
 	CacheHits             int                `json:"cache_hits"`
 	AICallsMade           int                `json:"ai_calls_made"`
 	TotalPotentialSavings float64            `json:"total_potential_savings"`
+	HouseholdSize         int                `json:"household_size"` // NEW: Actual household size used for calculations
 }

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
@@ -122,16 +123,11 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 		userCountry = "FR"
 	}
 
-	// 3. Get Member Count (Household Size)
-	var memberCount int
-	err = h.DB.QueryRowContext(c.Request.Context(),
-		"SELECT COUNT(*) FROM budget_members WHERE budget_id = $1", budgetID).Scan(&memberCount)
+	// 3. Get Household Size from budget data (count of "people" in the budget)
+	householdSize := h.getHouseholdSizeFromBudget(c.Request.Context(), budgetID)
 
-	if err != nil || memberCount < 1 {
-		memberCount = 1 // Fallback
-	}
-
-	log.Printf("[MarketSuggestions] Bulk analyzing %d charges for budget %s (Household: %d)", len(req.Charges), budgetID, memberCount)
+	log.Printf("[MarketSuggestions] Bulk analyzing %d charges for budget %s (Household: %d persons)",
+		len(req.Charges), budgetID, householdSize)
 
 	var suggestions []models.ChargeSuggestion
 	cacheHits := 0
@@ -149,7 +145,7 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 			charge.MerchantName,
 			charge.Amount,
 			userCountry,
-			memberCount, // Pass household size
+			householdSize, // Pass actual household size
 		)
 
 		if err != nil {
@@ -164,16 +160,17 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 			cacheHits++
 		}
 
+		// Only add suggestion if there are actual savings opportunities
 		if len(suggestion.Competitors) > 0 {
 			bestSavings := suggestion.Competitors[0].PotentialSavings
 			totalSavings += bestSavings
-		}
 
-		suggestions = append(suggestions, models.ChargeSuggestion{
-			ChargeID:    charge.ID,
-			ChargeLabel: charge.Label,
-			Suggestion:  suggestion,
-		})
+			suggestions = append(suggestions, models.ChargeSuggestion{
+				ChargeID:    charge.ID,
+				ChargeLabel: charge.Label,
+				Suggestion:  suggestion,
+			})
+		}
 	}
 
 	response := models.BulkAnalyzeResponse{
@@ -181,7 +178,11 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 		CacheHits:             cacheHits,
 		AICallsMade:           aiCalls,
 		TotalPotentialSavings: totalSavings,
+		HouseholdSize:         householdSize, // Include in response for frontend display
 	}
+
+	log.Printf("[MarketSuggestions] ✅ Bulk analysis complete: %d suggestions with savings, %d cache hits, %d AI calls, %.2f€ potential savings",
+		len(suggestions), cacheHits, aiCalls, totalSavings)
 
 	c.JSON(http.StatusOK, response)
 }
@@ -280,6 +281,39 @@ func (h *MarketSuggestionsHandler) CategorizeCharge(c *gin.Context) {
 // HELPERS
 // ============================================================================
 
+// getHouseholdSizeFromBudget retrieves the number of "people" (revenue sources) from the budget data
+// This represents the actual household size, not the number of budget collaborators
+func (h *MarketSuggestionsHandler) getHouseholdSizeFromBudget(ctx context.Context, budgetID string) int {
+	var dataJSON []byte
+	err := h.DB.QueryRowContext(ctx,
+		"SELECT data FROM budget_data WHERE budget_id = $1",
+		budgetID,
+	).Scan(&dataJSON)
+
+	if err != nil {
+		log.Printf("[MarketSuggestions] Failed to get budget data for household size: %v", err)
+		return 1 // Default to 1 person
+	}
+
+	// Parse the JSON to extract "people" array
+	var budgetData struct {
+		People []interface{} `json:"people"`
+	}
+
+	if err := json.Unmarshal(dataJSON, &budgetData); err != nil {
+		log.Printf("[MarketSuggestions] Failed to parse budget data: %v", err)
+		return 1
+	}
+
+	peopleCount := len(budgetData.People)
+	if peopleCount < 1 {
+		return 1
+	}
+
+	log.Printf("[MarketSuggestions] Detected household size: %d persons", peopleCount)
+	return peopleCount
+}
+
 func determineCategory(label string) string {
 	l := strings.ToUpper(strings.TrimSpace(label))
 
@@ -287,6 +321,7 @@ func determineCategory(label string) string {
 		"MOBILE": {
 			"MOBILE", "PORTABLE", "SOSH", "BOUYGUES", "FREE", "ORANGE", "SFR",
 			"RED BY", "PRIXTEL", "NRJ MOBILE", "LEBARA", "LYCA", "YOUPI", "CORIOLIS",
+			"FORFAIT",
 		},
 		"INTERNET": {
 			"BOX", "FIBRE", "ADSL", "INTERNET", "NUMERICABLE", "STARLINK",
@@ -322,6 +357,13 @@ func determineCategory(label string) string {
 			"CARREFOUR", "LECLERC", "AUCHAN", "INTERMARCHE", "LIDL", "ALDI", "MONOPRIX",
 			"FRANPRIX", "SUPER U", "HYPER U", "CASINO", "PICARD", "UBER EATS", "DELIVEROO",
 			"MC DO", "MCDONALD", "BK", "BURGER KING", "KFC", "STARBUCKS",
+		},
+		"HOUSING": {
+			"LOYER", "RENT", "APPARTEMENT", "LOGEMENT", "CHARGES LOCATIVES",
+		},
+		"LEISURE": {
+			"SPORT", "GYM", "FITNESS", "BASIC FIT", "KEEP COOL", "NEONESS",
+			"CINEMA", "UGC", "PATHE", "GAUMONT",
 		},
 	}
 
@@ -362,7 +404,15 @@ func (h *MarketSuggestionsHandler) checkBudgetAccess(ctx context.Context, userID
 
 func (h *MarketSuggestionsHandler) isSuggestionRelevant(category string) bool {
 	relevantCategories := map[string]bool{
-		"ENERGY": true, "INTERNET": true, "MOBILE": true, "INSURANCE": true, "LOAN": true, "BANK": true,
+		"ENERGY":           true,
+		"INTERNET":         true,
+		"MOBILE":           true,
+		"INSURANCE":        true,
+		"INSURANCE_AUTO":   true,
+		"INSURANCE_HOME":   true,
+		"INSURANCE_HEALTH": true,
+		"LOAN":             true,
+		"BANK":             true,
 	}
 	return relevantCategories[strings.ToUpper(category)]
 }
