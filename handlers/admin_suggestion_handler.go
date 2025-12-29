@@ -122,28 +122,6 @@ func (h *AdminSuggestionHandler) RetroactiveAnalysis(c *gin.Context) {
 	})
 }
 
-func determineCategory(label string) string {
-	l := strings.ToUpper(strings.TrimSpace(label))
-
-	keywords := map[string][]string{
-		"MOBILE":    {"MOBILE", "PORTABLE", "SOSH", "BOUYGUES", "FREE", "ORANGE", "SFR", "RED BY"},
-		"INTERNET":  {"BOX", "FIBRE", "ADSL", "INTERNET"},
-		"ENERGY":    {"EDF", "ENGIE", "TOTAL", "ENERGIE", "ELEC", "GAZ"},
-		"INSURANCE": {"ASSURANCE", "AXA", "MAIF", "ALLIANZ", "MACIF"},
-		"LOAN":      {"PRET", "CREDIT", "ECHEANCE", "EMPRUNT"},
-		"BANK":      {"BANQUE", "CREDIT AGRICOLE", "SOCIETE GENERALE", "BNP"},
-	}
-
-	for cat, keys := range keywords {
-		for _, k := range keys {
-			if strings.Contains(l, k) {
-				return cat
-			}
-		}
-	}
-	return "OTHER"
-}
-
 func isCategoryRelevant(cat string) bool {
 	switch cat {
 	case "MOBILE", "INTERNET", "ENERGY", "INSURANCE", "LOAN", "BANK":
