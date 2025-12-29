@@ -158,7 +158,7 @@ func cleanExpiredCache(db *sql.DB) {
 	defer cancel()
 
 	result, err := db.ExecContext(ctx, `
-		DELETE FROM market_suggestions_cache 
+		DELETE FROM market_suggestions  
 		WHERE created_at < NOW() - INTERVAL '30 days'
 	`)
 
