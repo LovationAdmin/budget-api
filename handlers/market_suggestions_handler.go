@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"github.com/LovationAdmin/budget-api/models"
-	"github.com/LovationAdmin/budget-api/services"
 	"context"
 	"database/sql"
 	"log"
@@ -11,7 +9,15 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/LovationAdmin/budget-api/models"
+	"github.com/LovationAdmin/budget-api/services"
 )
+
+// ============================================================================
+// MARKET SUGGESTIONS HANDLER
+// Endpoints for obtaining personalized competitor suggestions
+// ============================================================================
 
 type MarketSuggestionsHandler struct {
 	DB             *sql.DB
@@ -29,6 +35,11 @@ func NewMarketSuggestionsHandler(db *sql.DB) *MarketSuggestionsHandler {
 		AIService:      aiService,
 	}
 }
+
+// ============================================================================
+// 1. ANALYZE A SPECIFIC CHARGE
+// POST /api/v1/suggestions/analyze
+// ============================================================================
 
 type AnalyzeChargeRequest struct {
 	Category      string  `json:"category" binding:"required"`
@@ -59,7 +70,7 @@ func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 		req.MerchantName,
 		req.CurrentAmount,
 		userCountry,
-		1, 
+		1, // Default household size
 	)
 
 	if err != nil {
@@ -70,6 +81,11 @@ func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 
 	c.JSON(http.StatusOK, suggestion)
 }
+
+// ============================================================================
+// 2. BULK ANALYZE ALL CHARGES IN A BUDGET
+// POST /api/v1/budgets/:id/suggestions/bulk-analyze
+// ============================================================================
 
 type ChargeToAnalyze struct {
 	ID           string  `json:"id"`
@@ -108,9 +124,9 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 
 	// 3. Get Member Count (Household Size)
 	var memberCount int
-	err = h.DB.QueryRowContext(c.Request.Context(), 
+	err = h.DB.QueryRowContext(c.Request.Context(),
 		"SELECT COUNT(*) FROM budget_members WHERE budget_id = $1", budgetID).Scan(&memberCount)
-	
+
 	if err != nil || memberCount < 1 {
 		memberCount = 1 // Fallback
 	}
@@ -133,7 +149,7 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 			charge.MerchantName,
 			charge.Amount,
 			userCountry,
-			memberCount, 
+			memberCount, // Pass household size
 		)
 
 		if err != nil {
@@ -141,6 +157,7 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 			continue
 		}
 
+		// Detect if it was a cache hit or an AI call
 		if time.Since(suggestion.LastUpdated) < 5*time.Second {
 			aiCalls++
 		} else {
@@ -169,6 +186,11 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// ============================================================================
+// 3. GET CACHED SUGGESTIONS FOR A CATEGORY
+// GET /api/v1/suggestions/category/:category
+// ============================================================================
+
 func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 	userID := c.GetString("user_id")
 	category := c.Param("category")
@@ -184,7 +206,7 @@ func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 		"",
 		0,
 		userCountry,
-		1, 
+		1, // Default household size
 	)
 
 	if err != nil {
@@ -200,7 +222,11 @@ func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 	c.JSON(http.StatusOK, suggestion)
 }
 
-// THIS FUNCTION CAUSED THE ERROR - NOW IT WILL WORK
+// ============================================================================
+// 4. CLEAN EXPIRED CACHE (Admin/Cron)
+// POST /api/v1/admin/suggestions/clean-cache
+// ============================================================================
+
 func (h *MarketSuggestionsHandler) CleanExpiredCache(c *gin.Context) {
 	if err := h.MarketAnalyzer.CleanExpiredCache(c.Request.Context()); err != nil {
 		log.Printf("Failed to clean cache: %v", err)
@@ -209,6 +235,11 @@ func (h *MarketSuggestionsHandler) CleanExpiredCache(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Cache cleaned successfully"})
 }
+
+// ============================================================================
+// 5. CATEGORIZE CHARGE (Hybrid: Static + AI Fallback)
+// POST /api/v1/categorize
+// ============================================================================
 
 func (h *MarketSuggestionsHandler) CategorizeCharge(c *gin.Context) {
 	var req struct {
@@ -245,22 +276,68 @@ func (h *MarketSuggestionsHandler) CategorizeCharge(c *gin.Context) {
 	})
 }
 
-// Helpers
+// ============================================================================
+// HELPERS
+// ============================================================================
+
 func determineCategory(label string) string {
 	l := strings.ToUpper(strings.TrimSpace(label))
 
 	keywords := map[string][]string{
-		"MOBILE": {"MOBILE", "PORTABLE", "SOSH", "BOUYGUES", "FREE", "ORANGE", "SFR", "RED BY"},
-		"INTERNET": {"BOX", "FIBRE", "ADSL", "INTERNET"},
-		"ENERGY": {"EDF", "ENGIE", "TOTAL", "ENERGIE", "ELEC", "GAZ"},
-		"INSURANCE": {"ASSURANCE", "AXA", "MAIF", "ALLIANZ", "MACIF"},
-		"LOAN": {"PRET", "CREDIT", "ECHEANCE", "EMPRUNT"},
-		"BANK": {"BANQUE", "CREDIT AGRICOLE", "SOCIETE GENERALE", "BNP"},
+		"MOBILE": {
+			"MOBILE", "PORTABLE", "SOSH", "BOUYGUES", "FREE", "ORANGE", "SFR",
+			"RED BY", "PRIXTEL", "NRJ MOBILE", "LEBARA", "LYCA", "YOUPI", "CORIOLIS",
+		},
+		"INTERNET": {
+			"BOX", "FIBRE", "ADSL", "INTERNET", "NUMERICABLE", "STARLINK",
+			"NORDNET", "OVH", "K-NET",
+		},
+		"ENERGY": {
+			"EDF", "ENGIE", "TOTAL", "ENERGIE", "ELEC", "GAZ", "ENI",
+			"ILEK", "PLANETE OUI", "VATTENFALL", "MINT", "OHM", "MEGA", "BUTAGAZ", "SUEZ", "VEOLIA",
+		},
+		"INSURANCE": {
+			"ASSURANCE", "AXA", "MAIF", "ALLIANZ", "MACIF", "GROUPAMA", "GMF",
+			"MATMUT", "GENERALI", "MMA", "MAAF", "DIRECT ASSURANCE", "OLIVIER",
+			"LEOCARE", "LUKO", "ALAN", "MGEN", "HARMONIE", "MUTUELLE", "PREVOYANCE",
+		},
+		"LOAN": {
+			"PRET", "CREDIT", "ECHEANCE", "EMPRUNT", "MENSUALITE", "IMMOBILIER",
+			"COFIDIS", "CETELEM", "SOFINCO", "FLOA", "BOURSORAMA", "FRANFINANCE", "YOUNITED",
+		},
+		"BANK": {
+			"BANQUE", "CREDIT AGRICOLE", "SOCIETE GENERALE", "BNP", "LCL",
+			"POSTALE", "CAISSE EPARGNE", "POPULAIRE", "CIC", "REVOLUT", "N26",
+			"BOURSO", "FORTUNEO", "MONABANQ", "HELLO", "QONTO", "SHINE",
+		},
+		"TRANSPORT": {
+			"NAVIGO", "RATP", "SNCF", "TGV", "OUIGO", "UBER", "BOLT", "TAXI",
+			"LIME", "AUTOROUTE", "PEAGE", "VINCI", "APRR", "SANEF", "TOTAL ENERGIES", "ESSO", "BP", "SHELL",
+		},
+		"SUBSCRIPTION": {
+			"NETFLIX", "SPOTIFY", "AMAZON", "PRIME", "DISNEY", "CANAL",
+			"APPLE", "GOOGLE", "YOUTUBE", "DEEZER", "HBO", "PARAMOUNT", "ICLOUD", "DROPBOX",
+		},
+		"FOOD": {
+			"CARREFOUR", "LECLERC", "AUCHAN", "INTERMARCHE", "LIDL", "ALDI", "MONOPRIX",
+			"FRANPRIX", "SUPER U", "HYPER U", "CASINO", "PICARD", "UBER EATS", "DELIVEROO",
+			"MC DO", "MCDONALD", "BK", "BURGER KING", "KFC", "STARBUCKS",
+		},
 	}
 
 	for cat, keys := range keywords {
 		for _, k := range keys {
 			if strings.Contains(l, k) {
+				// Refinement for telecom providers
+				if k == "SFR" || k == "ORANGE" || k == "BOUYGUES" || k == "FREE" {
+					if strings.Contains(l, "BOX") || strings.Contains(l, "FIBRE") || strings.Contains(l, "FIXE") {
+						return "INTERNET"
+					}
+					if strings.Contains(l, "MOBILE") || strings.Contains(l, "FORFAIT") {
+						return "MOBILE"
+					}
+					return "MOBILE" // Default for these providers
+				}
 				return cat
 			}
 		}
