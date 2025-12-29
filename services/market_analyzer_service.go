@@ -186,7 +186,7 @@ func (s *MarketAnalyzerService) sortCompetitorsBySavings(suggestion *models.Mark
 // ============================================================================
 
 func (s *MarketAnalyzerService) CleanExpiredCache(ctx context.Context) error {
-	result, err := s.DB.ExecContext(ctx, `DELETE FROM market_suggestions WHERE expires_at < NOW()`)
+	result, err := s.DB.ExecContext(ctx, `DELETE FROM market_suggestions --WHERE expires_at < NOW()`)
 	if err != nil {
 		return err
 	}
