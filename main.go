@@ -11,7 +11,6 @@ import (
 	"budget-api/handlers"
 	"budget-api/middleware"
 	"budget-api/routes"
-	"budget-api/services"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -21,7 +20,7 @@ import (
 func main() {
 	// Load environment variables
 	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found")
+		log.Println("No .env file found, using environment variables")
 	}
 
 	// Initialize database connection
@@ -31,12 +30,16 @@ func main() {
 	}
 	defer db.Close()
 
+	log.Println("✅ Database connected successfully")
+
 	// Run migrations
 	if err := config.RunMigrations(db); err != nil {
 		log.Fatal("Failed to run migrations:", err)
 	}
 
-	// Start automatic cache cleaning
+	log.Println("✅ Database migrations completed")
+
+	// Start automatic cache cleaning (runs daily)
 	go scheduleCacheCleaning(db)
 
 	// Initialize WebSocket Handler
@@ -69,14 +72,17 @@ func main() {
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
-		MaxAge:           86400,
+		MaxAge:           86400, // 24 hours
 	}
 	router.Use(cors.New(corsConfig))
 
 	// Add logging middleware
 	router.Use(func(c *gin.Context) {
+		start := time.Now()
 		log.Printf("📨 %s %s from %s", c.Request.Method, c.Request.URL.Path, c.ClientIP())
 		c.Next()
+		duration := time.Since(start)
+		log.Printf("✅ %s %s - %d (%v)", c.Request.Method, c.Request.URL.Path, c.Writer.Status(), duration)
 	})
 
 	// Rate limiting middleware
@@ -85,17 +91,17 @@ func main() {
 	// API v1 routes
 	v1 := router.Group("/api/v1")
 	{
-		// Public routes
+		// Public routes (no authentication required)
 		routes.SetupAuthRoutes(v1, db)
 
-		// WebSocket Route
+		// WebSocket Route (for real-time budget updates)
 		v1.GET("/ws/budgets/:id", wsHandler.HandleWS)
 
-		// Admin routes
+		// Admin routes (protected by admin token)
 		routes.SetupAdminRoutes(v1, db)
 		routes.SetupAdminSuggestionsRoutes(v1, db)
 
-		// Protected routes
+		// Protected routes (require JWT authentication)
 		protected := v1.Group("/")
 		protected.Use(middleware.AuthMiddleware())
 		{
@@ -107,7 +113,7 @@ func main() {
 		}
 	}
 
-	// Health check endpoint
+	// Health check endpoint (for monitoring)
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{
 			"status":  "healthy",
@@ -123,6 +129,9 @@ func main() {
 	}
 
 	log.Printf("🚀 Server starting on port %s...", port)
+	log.Printf("📍 Health check: http://localhost:%s/health", port)
+	log.Printf("📍 API Base URL: http://localhost:%s/api/v1", port)
+
 	if err := router.Run(":" + port); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}
@@ -132,6 +141,8 @@ func main() {
 func scheduleCacheCleaning(db *sql.DB) {
 	ticker := time.NewTicker(24 * time.Hour)
 	defer ticker.Stop()
+
+	log.Println("🧹 Cache cleaning scheduler started (runs every 24 hours)")
 
 	// Run immediately on startup
 	cleanExpiredCache(db)
@@ -156,8 +167,15 @@ func cleanExpiredCache(db *sql.DB) {
 		return
 	}
 
-	rows, _ := result.RowsAffected()
+	rows, err := result.RowsAffected()
+	if err != nil {
+		log.Printf("❌ Failed to get affected rows: %v", err)
+		return
+	}
+
 	if rows > 0 {
 		log.Printf("🧹 Cleaned %d expired cache entries", rows)
+	} else {
+		log.Println("✅ No expired cache entries to clean")
 	}
 }
