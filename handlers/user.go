@@ -496,7 +496,7 @@ func (h *UserHandler) ExportUserData(c *gin.Context) {
 
 	// 2. Get user's budgets (✅ SANS COLONNE YEAR)
 	budgetRows, err := h.DB.Query(`
-		SELECT 
+		SELECT DISTINCT ON (b.id)
 			b.id,
 			b.name,
 			b.created_at,
@@ -505,7 +505,7 @@ func (h *UserHandler) ExportUserData(c *gin.Context) {
 		FROM budgets b
 		LEFT JOIN budget_data bd ON b.id = bd.budget_id
 		WHERE b.owner_id = $1
-		ORDER BY b.created_at DESC
+		ORDER BY b.id, b.created_at DESC
 	`, userID)
 
 	if err != nil {
