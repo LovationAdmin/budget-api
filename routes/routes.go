@@ -37,15 +37,26 @@ func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *handlers.WSHa
 
 func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	userHandler := &handlers.UserHandler{DB: db}
+	
+	// Profile
 	rg.GET("/user/profile", userHandler.GetProfile)
 	rg.PUT("/user/profile", userHandler.UpdateProfile)
+	
+	// Location
 	rg.PUT("/user/location", userHandler.UpdateLocation)
 	rg.GET("/user/location", userHandler.GetLocation)
+	
+	// Security
 	rg.POST("/user/password", userHandler.ChangePassword)
 	rg.POST("/user/2fa/setup", userHandler.SetupTOTP)
 	rg.POST("/user/2fa/verify", userHandler.VerifyTOTP)
 	rg.POST("/user/2fa/disable", userHandler.DisableTOTP)
+	
+	// Account Management
 	rg.DELETE("/user/account", userHandler.DeleteAccount)
+	
+	// ✅ AJOUT : GDPR Data Export
+	rg.GET("/user/export-data", userHandler.ExportUserData)
 }
 
 func SetupInvitationRoutes(rg *gin.RouterGroup, db *sql.DB) {
@@ -68,15 +79,17 @@ func SetupEnableBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.GET("/banking/enablebanking/callback", handler.HandleCallback)
 	rg.GET("/budgets/:id/banking/enablebanking/connections", handler.GetConnections)
 	rg.POST("/budgets/:id/banking/enablebanking/sync", handler.SyncAccounts)
+	
+	// ✅ CONSERVÉ : Routes Enable Banking existantes
 	rg.POST("/banking/enablebanking/refresh", handler.RefreshBalances)
 	rg.GET("/banking/enablebanking/transactions", handler.GetTransactions)
 	rg.DELETE("/banking/enablebanking/connections/:id", handler.DeleteConnection)
 	rg.GET("/banking/budgets/:id/reality-check", handler.GetConnections)
 }
 
-// Modified: Now accepts wsHandler
+// ✅ CONSERVÉ : Market Suggestions Routes avec WebSocket
 func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *handlers.WSHandler) {
-	handler := handlers.NewMarketSuggestionsHandler(db, wsHandler) // Pass WS here
+	handler := handlers.NewMarketSuggestionsHandler(db, wsHandler)
 
 	rg.POST("/suggestions/analyze", handler.AnalyzeCharge)
 	rg.GET("/suggestions/category/:category", handler.GetCategorySuggestions)
@@ -84,9 +97,11 @@ func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *ha
 	rg.POST("/categorize", handler.CategorizeCharge)
 }
 
+// ✅ CONSERVÉ : Admin Suggestions Routes
 func SetupAdminSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
-	handler := handlers.NewMarketSuggestionsHandler(db, nil) // WS not strictly needed for admin cache cleanup
+	handler := handlers.NewMarketSuggestionsHandler(db, nil)
 	rg.POST("/admin/suggestions/clean-cache", handler.CleanExpiredCache)
+	
 	adminHandler := handlers.NewAdminSuggestionHandler(db)
 	rg.POST("/admin/suggestions/retroactive-analyze", adminHandler.RetroactiveAnalysis)
 }

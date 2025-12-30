@@ -1,10 +1,15 @@
+// handlers/user.go
+// VERSION COMPLÈTE AVEC EXPORT RGPD
+
 package handlers
 
 import (
 	"database/sql"
+	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
-	"log"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/LovationAdmin/budget-api/middleware"
@@ -20,7 +25,6 @@ type UserHandler struct {
 // PROFILE MANAGEMENT
 // ============================================================================
 
-// GetProfile returns the current user's profile
 func (h *UserHandler) GetProfile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
@@ -29,7 +33,6 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 	}
 
 	var user models.User
-	// ✅ Query includes country and postal_code
 	err := h.DB.QueryRow(`
 		SELECT id, email, name, 
 		       COALESCE(avatar, ''), 
@@ -40,15 +43,15 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 		FROM users
 		WHERE id = $1
 	`, userID).Scan(
-		&user.ID, 
-		&user.Email, 
-		&user.Name, 
-		&user.Avatar, 
+		&user.ID,
+		&user.Email,
+		&user.Name,
+		&user.Avatar,
 		&user.Country,
 		&user.PostalCode,
 		&user.TOTPEnabled,
-		&user.EmailVerified, 
-		&user.CreatedAt, 
+		&user.EmailVerified,
+		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
 
@@ -65,13 +68,11 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, user)
 }
 
-// UpdateProfileRequest struct to validate input
 type UpdateProfileRequest struct {
 	Name   string `json:"name" binding:"required"`
-	Avatar string `json:"avatar"` // Optional: Base64 string or Gradient CSS
+	Avatar string `json:"avatar"`
 }
 
-// UpdateProfile updates user profile information
 func (h *UserHandler) UpdateProfile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
@@ -107,16 +108,14 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 }
 
 // ============================================================================
-// ✅ LOCATION MANAGEMENT (NEW)
+// LOCATION MANAGEMENT
 // ============================================================================
 
-// UpdateLocationRequest struct for location updates
 type UpdateLocationRequest struct {
 	Country    string `json:"country" binding:"required,len=2"`
 	PostalCode string `json:"postal_code"`
 }
 
-// UpdateLocation updates user's country and postal code
 func (h *UserHandler) UpdateLocation(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
@@ -130,12 +129,11 @@ func (h *UserHandler) UpdateLocation(c *gin.Context) {
 		return
 	}
 
-	// Validate country code (list of supported countries)
 	validCountries := map[string]bool{
 		"FR": true, "BE": true, "DE": true, "ES": true, "IT": true,
 		"PT": true, "NL": true, "LU": true, "AT": true, "IE": true,
 	}
-	
+
 	countryUpper := strings.ToUpper(req.Country)
 	if !validCountries[countryUpper] {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -144,7 +142,6 @@ func (h *UserHandler) UpdateLocation(c *gin.Context) {
 		return
 	}
 
-	// Update database
 	_, err := h.DB.Exec(`
 		UPDATE users
 		SET country = $1, postal_code = $2, updated_at = NOW()
@@ -166,7 +163,6 @@ func (h *UserHandler) UpdateLocation(c *gin.Context) {
 	})
 }
 
-// GetLocation returns user's current location
 func (h *UserHandler) GetLocation(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
@@ -197,13 +193,11 @@ func (h *UserHandler) GetLocation(c *gin.Context) {
 // PASSWORD MANAGEMENT
 // ============================================================================
 
-// ChangePasswordRequest struct for password updates
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"current_password" binding:"required"`
 	NewPassword     string `json:"new_password" binding:"required,min=6"`
 }
 
-// ChangePassword changes the user's password
 func (h *UserHandler) ChangePassword(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
@@ -217,7 +211,6 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	// Get current password hash
 	var currentHash string
 	err := h.DB.QueryRow(`
 		SELECT password_hash FROM users WHERE id = $1
@@ -228,20 +221,17 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	// Verify current password
 	if !utils.CheckPassword(req.CurrentPassword, currentHash) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Current password is incorrect"})
 		return
 	}
 
-	// Hash new password
 	newHash, err := utils.HashPassword(req.NewPassword)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash new password"})
 		return
 	}
 
-	// Update password
 	_, err = h.DB.Exec(`
 		UPDATE users
 		SET password_hash = $1, updated_at = NOW()
@@ -262,7 +252,6 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 // 2FA MANAGEMENT
 // ============================================================================
 
-// SetupTOTP generates a TOTP secret for the user
 func (h *UserHandler) SetupTOTP(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
@@ -270,7 +259,6 @@ func (h *UserHandler) SetupTOTP(c *gin.Context) {
 		return
 	}
 
-	// Get user email
 	var email string
 	err := h.DB.QueryRow(`SELECT email FROM users WHERE id = $1`, userID).Scan(&email)
 	if err != nil {
@@ -278,14 +266,12 @@ func (h *UserHandler) SetupTOTP(c *gin.Context) {
 		return
 	}
 
-	// Generate TOTP secret
 	secret, qrCode, err := utils.GenerateTOTPSecret(email)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate TOTP"})
 		return
 	}
 
-	// Store secret temporarily (not enabled yet)
 	_, err = h.DB.Exec(`
 		UPDATE users
 		SET totp_secret = $1, updated_at = NOW()
@@ -303,12 +289,10 @@ func (h *UserHandler) SetupTOTP(c *gin.Context) {
 	})
 }
 
-// VerifyTOTPRequest struct for TOTP verification
 type VerifyTOTPRequest struct {
 	Code string `json:"code" binding:"required"`
 }
 
-// VerifyTOTP enables 2FA after successful verification
 func (h *UserHandler) VerifyTOTP(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
@@ -322,7 +306,6 @@ func (h *UserHandler) VerifyTOTP(c *gin.Context) {
 		return
 	}
 
-	// Get TOTP secret
 	var secret sql.NullString
 	err := h.DB.QueryRow(`
 		SELECT totp_secret FROM users WHERE id = $1
@@ -333,14 +316,12 @@ func (h *UserHandler) VerifyTOTP(c *gin.Context) {
 		return
 	}
 
-	// Verify code
 	valid, err := utils.VerifyTOTP(secret.String, req.Code)
 	if err != nil || !valid {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid TOTP code"})
 		return
 	}
 
-	// Enable 2FA
 	_, err = h.DB.Exec(`
 		UPDATE users
 		SET totp_enabled = TRUE, updated_at = NOW()
@@ -360,13 +341,11 @@ func (h *UserHandler) VerifyTOTP(c *gin.Context) {
 	})
 }
 
-// DisableTOTPRequest struct for disabling 2FA
 type DisableTOTPRequest struct {
 	Password string `json:"password" binding:"required"`
 	Code     string `json:"code" binding:"required"`
 }
 
-// DisableTOTP disables 2FA after verification
 func (h *UserHandler) DisableTOTP(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
@@ -380,7 +359,6 @@ func (h *UserHandler) DisableTOTP(c *gin.Context) {
 		return
 	}
 
-	// Get password hash and TOTP secret
 	var passwordHash string
 	var secret sql.NullString
 	err := h.DB.QueryRow(`
@@ -392,13 +370,11 @@ func (h *UserHandler) DisableTOTP(c *gin.Context) {
 		return
 	}
 
-	// Check password
 	if !utils.CheckPassword(req.Password, passwordHash) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid password"})
 		return
 	}
 
-	// Verify TOTP code
 	if secret.Valid {
 		valid, err := utils.VerifyTOTP(secret.String, req.Code)
 		if err != nil || !valid {
@@ -407,7 +383,6 @@ func (h *UserHandler) DisableTOTP(c *gin.Context) {
 		}
 	}
 
-	// Disable 2FA
 	_, err = h.DB.Exec(`
 		UPDATE users
 		SET totp_enabled = FALSE, totp_secret = NULL, updated_at = NOW()
@@ -431,12 +406,10 @@ func (h *UserHandler) DisableTOTP(c *gin.Context) {
 // ACCOUNT DELETION
 // ============================================================================
 
-// DeleteAccountRequest struct for account deletion
 type DeleteAccountRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
-// DeleteAccount deletes the user's account
 func (h *UserHandler) DeleteAccount(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
@@ -450,7 +423,6 @@ func (h *UserHandler) DeleteAccount(c *gin.Context) {
 		return
 	}
 
-	// Verify password
 	var passwordHash string
 	err := h.DB.QueryRow(`
 		SELECT password_hash FROM users WHERE id = $1
@@ -466,7 +438,6 @@ func (h *UserHandler) DeleteAccount(c *gin.Context) {
 		return
 	}
 
-	// Delete user (cascade will handle related data)
 	_, err = h.DB.Exec(`DELETE FROM users WHERE id = $1`, userID)
 
 	if err != nil {
@@ -478,4 +449,278 @@ func (h *UserHandler) DeleteAccount(c *gin.Context) {
 	log.Printf("✅ User %s account deleted", userID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Account deleted successfully"})
+}
+
+// ============================================================================
+// GDPR DATA EXPORT
+// ============================================================================
+
+func (h *UserHandler) ExportUserData(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	log.Printf("📊 [GDPR Export] User %s requested data export", userID)
+
+	// 1. Get user profile
+	var user models.User
+	err := h.DB.QueryRow(`
+		SELECT id, email, name, 
+		       COALESCE(avatar, ''), 
+		       COALESCE(country, 'FR'),
+		       COALESCE(postal_code, ''),
+		       totp_enabled, email_verified, 
+		       created_at, updated_at
+		FROM users
+		WHERE id = $1
+	`, userID).Scan(
+		&user.ID,
+		&user.Email,
+		&user.Name,
+		&user.Avatar,
+		&user.Country,
+		&user.PostalCode,
+		&user.TOTPEnabled,
+		&user.EmailVerified,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+
+	if err != nil {
+		log.Printf("❌ [GDPR Export] Failed to fetch user profile: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user data"})
+		return
+	}
+
+	// 2. Get user's budgets (only the ones they OWN)
+	budgetRows, err := h.DB.Query(`
+		SELECT 
+			b.id,
+			b.name,
+			b.year,
+			b.created_at,
+			b.updated_at,
+			bd.data
+		FROM budgets b
+		LEFT JOIN budget_data bd ON b.id = bd.budget_id
+		WHERE b.owner_id = $1
+		ORDER BY b.created_at DESC
+	`, userID)
+
+	if err != nil {
+		log.Printf("❌ [GDPR Export] Failed to fetch budgets: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch budget data"})
+		return
+	}
+	defer budgetRows.Close()
+
+	type BudgetExport struct {
+		ID        string                 `json:"id"`
+		Name      string                 `json:"name"`
+		Year      int                    `json:"year"`
+		CreatedAt string                 `json:"created_at"`
+		UpdatedAt string                 `json:"updated_at"`
+		Data      map[string]interface{} `json:"data,omitempty"`
+	}
+
+	var budgets []BudgetExport
+	for budgetRows.Next() {
+		var budget BudgetExport
+		var rawData []byte
+		var createdAt, updatedAt interface{}
+
+		err := budgetRows.Scan(
+			&budget.ID,
+			&budget.Name,
+			&budget.Year,
+			&createdAt,
+			&updatedAt,
+			&rawData,
+		)
+
+		if err != nil {
+			log.Printf("⚠️ [GDPR Export] Error scanning budget: %v", err)
+			continue
+		}
+
+		if t, ok := createdAt.([]uint8); ok {
+			budget.CreatedAt = string(t)
+		}
+		if t, ok := updatedAt.([]uint8); ok {
+			budget.UpdatedAt = string(t)
+		}
+
+		// Decrypt and parse budget data if present
+		if len(rawData) > 0 {
+			var wrapper struct {
+				Encrypted string `json:"encrypted"`
+			}
+
+			if err := json.Unmarshal(rawData, &wrapper); err == nil && wrapper.Encrypted != "" {
+				decryptedBytes, err := utils.Decrypt(wrapper.Encrypted)
+				if err != nil {
+					log.Printf("⚠️ [GDPR Export] Failed to decrypt budget %s: %v", budget.ID, err)
+					budget.Data = map[string]interface{}{
+						"error": "Could not decrypt budget data",
+					}
+				} else {
+					if err := json.Unmarshal(decryptedBytes, &budget.Data); err != nil {
+						log.Printf("⚠️ [GDPR Export] Failed to unmarshal decrypted data: %v", err)
+						budget.Data = map[string]interface{}{
+							"error": "Could not parse decrypted data",
+						}
+					}
+				}
+			} else {
+				if err := json.Unmarshal(rawData, &budget.Data); err != nil {
+					log.Printf("⚠️ [GDPR Export] Failed to unmarshal budget data: %v", err)
+					budget.Data = map[string]interface{}{
+						"error": "Could not parse budget data",
+					}
+				}
+			}
+		}
+
+		budgets = append(budgets, budget)
+	}
+
+	// 3. Get budgets where user is a member (shared budgets)
+	sharedBudgetRows, err := h.DB.Query(`
+		SELECT 
+			b.id,
+			b.name,
+			b.year,
+			bm.role,
+			bm.created_at
+		FROM budget_members bm
+		JOIN budgets b ON bm.budget_id = b.id
+		WHERE bm.user_id = $1 AND b.owner_id != $1
+		ORDER BY bm.created_at DESC
+	`, userID)
+
+	if err != nil {
+		log.Printf("⚠️ [GDPR Export] Failed to fetch shared budgets: %v", err)
+	}
+
+	type SharedBudgetExport struct {
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		Year     int    `json:"year"`
+		Role     string `json:"role"`
+		JoinedAt string `json:"joined_at"`
+	}
+
+	var sharedBudgets []SharedBudgetExport
+	if sharedBudgetRows != nil {
+		defer sharedBudgetRows.Close()
+		for sharedBudgetRows.Next() {
+			var sb SharedBudgetExport
+			var joinedAt interface{}
+
+			err := sharedBudgetRows.Scan(
+				&sb.ID,
+				&sb.Name,
+				&sb.Year,
+				&sb.Role,
+				&joinedAt,
+			)
+
+			if err != nil {
+				log.Printf("⚠️ [GDPR Export] Error scanning shared budget: %v", err)
+				continue
+			}
+
+			if t, ok := joinedAt.([]uint8); ok {
+				sb.JoinedAt = string(t)
+			}
+
+			sharedBudgets = append(sharedBudgets, sb)
+		}
+	}
+
+	// 4. Get pending invitations
+	invitationRows, err := h.DB.Query(`
+		SELECT 
+			i.id,
+			i.budget_id,
+			b.name as budget_name,
+			i.status,
+			i.created_at
+		FROM invitations i
+		JOIN budgets b ON i.budget_id = b.id
+		WHERE i.email = (SELECT email FROM users WHERE id = $1)
+		ORDER BY i.created_at DESC
+	`, userID)
+
+	if err != nil {
+		log.Printf("⚠️ [GDPR Export] Failed to fetch invitations: %v", err)
+	}
+
+	type InvitationExport struct {
+		ID         string `json:"id"`
+		BudgetID   string `json:"budget_id"`
+		BudgetName string `json:"budget_name"`
+		Status     string `json:"status"`
+		CreatedAt  string `json:"created_at"`
+	}
+
+	var invitations []InvitationExport
+	if invitationRows != nil {
+		defer invitationRows.Close()
+		for invitationRows.Next() {
+			var inv InvitationExport
+			var createdAt interface{}
+
+			err := invitationRows.Scan(
+				&inv.ID,
+				&inv.BudgetID,
+				&inv.BudgetName,
+				&inv.Status,
+				&createdAt,
+			)
+
+			if err != nil {
+				log.Printf("⚠️ [GDPR Export] Error scanning invitation: %v", err)
+				continue
+			}
+
+			if t, ok := createdAt.([]uint8); ok {
+				inv.CreatedAt = string(t)
+			}
+
+			invitations = append(invitations, inv)
+		}
+	}
+
+	// 5. Build final export
+	exportData := gin.H{
+		"export_info": gin.H{
+			"generated_at": time.Now().Format(time.RFC3339),
+			"user_id":      userID,
+			"format":       "JSON",
+			"compliance":   "GDPR Article 20 - Right to Data Portability",
+		},
+		"user_profile": gin.H{
+			"id":             user.ID,
+			"email":          user.Email,
+			"name":           user.Name,
+			"avatar":         user.Avatar,
+			"country":        user.Country,
+			"postal_code":    user.PostalCode,
+			"totp_enabled":   user.TOTPEnabled,
+			"email_verified": user.EmailVerified,
+			"created_at":     user.CreatedAt.Format(time.RFC3339),
+			"updated_at":     user.UpdatedAt.Format(time.RFC3339),
+		},
+		"owned_budgets":  budgets,
+		"shared_budgets": sharedBudgets,
+		"invitations":    invitations,
+		"note":           "This export contains only YOUR personal data. Data from other users in shared budgets is excluded for privacy reasons.",
+	}
+
+	log.Printf("✅ [GDPR Export] Successfully generated export for user %s", userID)
+
+	c.JSON(http.StatusOK, exportData)
 }
