@@ -59,8 +59,6 @@ func RunMigrations(db *sql.DB) error {
 			totp_enabled BOOLEAN DEFAULT FALSE,
 			email_verified BOOLEAN DEFAULT FALSE,
 			avatar TEXT,
-			country VARCHAR(2) DEFAULT 'FR',
-			postal_code VARCHAR(10),
 			created_at TIMESTAMP DEFAULT NOW(),
 			updated_at TIMESTAMP DEFAULT NOW()
 		)`,
@@ -300,8 +298,12 @@ func RunMigrations(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_affiliate_active ON affiliate_links(is_active)`,
 
 		// ============================================================================
-		// CONSTRAINTS
+		// CONSTRAINTS & ALTER TABLES
 		// ============================================================================
+		
+		// Ajouter colonnes users pour localisation (si elles n'existent pas)
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS country VARCHAR(2) DEFAULT 'FR'`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS postal_code VARCHAR(10)`,
 		
 		`ALTER TABLE bank_connections DROP CONSTRAINT IF EXISTS bank_connections_provider_connection_id_key`,
 		`ALTER TABLE bank_connections DROP CONSTRAINT IF EXISTS unique_provider_connection_per_budget`,
