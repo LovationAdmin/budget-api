@@ -15,10 +15,11 @@ import (
 
 type BudgetService struct {
 	db *sql.DB
+	ws *handlers.WSHandler
 }
 
-func NewBudgetService(db *sql.DB) *BudgetService {
-	return &BudgetService{db: db}
+func NewBudgetService(db *sql.DB, ws *handlers.WSHandler) *BudgetService {
+    return &BudgetService{db: db, ws: ws}
 }
 
 // Helper struct for DB storage of encrypted blobs
@@ -255,6 +256,12 @@ func (s *BudgetService) UpdateData(ctx context.Context, budgetID string, data in
 		WHERE budget_id = $3
 	`
 	_, err = s.db.ExecContext(ctx, updateQuery, storageJSON, time.Now(), budgetID)
+	// 🔥 TRIGGER NOTIFICATION
+	if err == nil && s.ws != nil {
+		// We can fetch the user name if needed, or pass it in args.
+		// For now, let's assume the controller passed the user name or we fetch it.
+		go s.ws.BroadcastUpdate(budgetID, "budget_updated", "Un membre") 
+	}
 	return err
 }
 

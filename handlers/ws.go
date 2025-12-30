@@ -1,10 +1,11 @@
 package handlers
 
 import (
+	"log"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"github.com/olahol/melody"
-	"log"
-	"fmt"
 )
 
 type WSHandler struct {
@@ -16,6 +17,20 @@ func NewWSHandler() *WSHandler {
 	
 	// Configurer la taille max des messages
 	m.Config.MaxMessageSize = 1024 * 1024 
+	
+	// Keep-Alive Configuration (Critical for Render.com/Cloud hosting)
+	m.Config.PingPeriod = 30 * time.Second
+	m.Config.PongWait = 60 * time.Second
+
+	// Handle disconnects for logging
+	m.HandleDisconnect(func(s *melody.Session) {
+		budgetID, _ := s.Get("budget_id")
+		log.Printf("🔌 Client disconnected from budget: %v", budgetID)
+	})
+
+	m.HandleError(func(s *melody.Session, err error) {
+		log.Printf("❌ WebSocket Error: %v", err)
+	})
 
 	return &WSHandler{M: m}
 }
@@ -24,25 +39,30 @@ func NewWSHandler() *WSHandler {
 func (h *WSHandler) HandleWS(c *gin.Context) {
 	budgetID := c.Param("id")
 	
-	// On upgrade la requête HTTP en WebSocket
-	// On passe le budgetID dans le contexte de la session Melody
-	h.M.HandleRequest(c.Writer, c.Request)
+	// Upgrade request to WebSocket
+	err := h.M.HandleRequest(c.Writer, c.Request)
+	if err != nil {
+		log.Printf("❌ Failed to upgrade websocket: %v", err)
+		return
+	}
 	
 	h.M.HandleConnect(func(s *melody.Session) {
-		// On stocke sur quel budget l'utilisateur est connecté
-		// Note: Dans une vraie app, on vérifierait le Token JWT ici aussi
 		s.Set("budget_id", budgetID)
-		log.Printf("Client connecté au budget: %s", budgetID)
+		log.Printf("✅ Client connected to budget: %s", budgetID)
 	})
 }
 
 // BroadcastUpdate envoie un signal à tous les clients écoutant ce budget
 func (h *WSHandler) BroadcastUpdate(budgetID string, updateType string, userWhoUpdated string) {
-	msg := []byte(fmt.Sprintf(`{"type": "%s", "user": "%s"}`, updateType, userWhoUpdated))
+	// Simple JSON construction to avoid struct overhead for simple signals
+	msg := []byte(`{"type": "` + updateType + `", "user": "` + userWhoUpdated + `"}`)
 	
-	h.M.BroadcastFilter(msg, func(q *melody.Session) bool {
-		// On n'envoie qu'aux gens connectés sur CE budget
+	err := h.M.BroadcastFilter(msg, func(q *melody.Session) bool {
 		id, exists := q.Get("budget_id")
 		return exists && id == budgetID
 	})
+
+	if err != nil {
+		log.Printf("⚠️ Error broadcasting to budget %s: %v", budgetID, err)
+	}
 }
