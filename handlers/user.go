@@ -589,11 +589,11 @@ func (h *UserHandler) ExportUserData(c *gin.Context) {
 			b.id,
 			b.name,
 			bm.role,
-			bm.created_at
+			bm.joined_at
 		FROM budget_members bm
 		JOIN budgets b ON bm.budget_id = b.id
 		WHERE bm.user_id = $1 AND b.owner_id != $1
-		ORDER BY bm.created_at DESC
+		ORDER BY bm.joined_at DESC
 	`, userID)
 
 	if err != nil {
