@@ -19,9 +19,7 @@ func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB) {
 }
 
 // SetupBudgetRoutes sets up protected budget and related routes.
-// MODIFIED: Accepts wsHandler
 func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *handlers.WSHandler) {
-	// MODIFIED: Pass wsHandler to NewBudgetService
 	budgetService := services.NewBudgetService(db, wsHandler)
 	emailService := services.NewEmailService()
 	h := handlers.NewHandler(budgetService, emailService)
@@ -41,11 +39,8 @@ func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	userHandler := &handlers.UserHandler{DB: db}
 	rg.GET("/user/profile", userHandler.GetProfile)
 	rg.PUT("/user/profile", userHandler.UpdateProfile)
-	
-	// Location routes
 	rg.PUT("/user/location", userHandler.UpdateLocation)
 	rg.GET("/user/location", userHandler.GetLocation)
-	
 	rg.POST("/user/password", userHandler.ChangePassword)
 	rg.POST("/user/2fa/setup", userHandler.SetupTOTP)
 	rg.POST("/user/2fa/verify", userHandler.VerifyTOTP)
@@ -62,66 +57,36 @@ func SetupInvitationRoutes(rg *gin.RouterGroup, db *sql.DB) {
 
 func SetupAdminRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	adminHandler := &handlers.AdminHandler{DB: db}
-	
-	// Migration endpoints
 	rg.POST("/admin/migrate-budgets", adminHandler.MigrateAllBudgets)
 	rg.POST("/admin/migrate-budget/:id", adminHandler.MigrateSingleBudget)
 }
 
-// SetupEnableBankingRoutes configure les routes Enable Banking
 func SetupEnableBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	handler := handlers.NewEnableBankingHandler(db)
-
-	// Liste des banques disponibles
 	rg.GET("/banking/enablebanking/banks", handler.GetBanks)
-
-	// Connexion d'une banque (création auth request)
 	rg.POST("/banking/enablebanking/connect", handler.CreateConnection)
-
-	// Callback après autorisation
 	rg.GET("/banking/enablebanking/callback", handler.HandleCallback)
-
-	// Récupération des connexions d'un budget
 	rg.GET("/budgets/:id/banking/enablebanking/connections", handler.GetConnections)
-
-	// Synchronisation des comptes dans un budget
 	rg.POST("/budgets/:id/banking/enablebanking/sync", handler.SyncAccounts)
-
-	// Rafraîchissement des soldes
 	rg.POST("/banking/enablebanking/refresh", handler.RefreshBalances)
-
-	// Récupération des transactions
 	rg.GET("/banking/enablebanking/transactions", handler.GetTransactions)
-
-	// Suppression d'une connexion
 	rg.DELETE("/banking/enablebanking/connections/:id", handler.DeleteConnection)
 	rg.GET("/banking/budgets/:id/reality-check", handler.GetConnections)
 }
 
-// SetupMarketSuggestionsRoutes sets up routes for AI market analysis
-func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
-	handler := handlers.NewMarketSuggestionsHandler(db)
+// Modified: Now accepts wsHandler
+func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *handlers.WSHandler) {
+	handler := handlers.NewMarketSuggestionsHandler(db, wsHandler) // Pass WS here
 
-	// Route pour analyser une charge spécifique
 	rg.POST("/suggestions/analyze", handler.AnalyzeCharge)
-
-	// Route pour récupérer suggestions en cache pour une catégorie
 	rg.GET("/suggestions/category/:category", handler.GetCategorySuggestions)
-
-	// Bulk analysis for a specific budget
 	rg.POST("/budgets/:id/suggestions/bulk-analyze", handler.BulkAnalyzeCharges)
-	
-	// AI Categorization
 	rg.POST("/categorize", handler.CategorizeCharge)
 }
 
 func SetupAdminSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
-	handler := handlers.NewMarketSuggestionsHandler(db)
-
-	// Route pour nettoyer le cache expiré (admin/cron)
+	handler := handlers.NewMarketSuggestionsHandler(db, nil) // WS not strictly needed for admin cache cleanup
 	rg.POST("/admin/suggestions/clean-cache", handler.CleanExpiredCache)
-
 	adminHandler := handlers.NewAdminSuggestionHandler(db)
-	// Run this once to fix all legacy data
 	rg.POST("/admin/suggestions/retroactive-analyze", adminHandler.RetroactiveAnalysis)
 }

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"log"
 	"time"
 
@@ -15,14 +16,12 @@ type WSHandler struct {
 func NewWSHandler() *WSHandler {
 	m := melody.New()
 	
-	// Configurer la taille max des messages
 	m.Config.MaxMessageSize = 1024 * 1024 
 	
-	// Keep-Alive Configuration (Critical for Render.com/Cloud hosting)
+	// Keep-Alive Configuration
 	m.Config.PingPeriod = 30 * time.Second
 	m.Config.PongWait = 60 * time.Second
 
-	// Handle disconnects for logging
 	m.HandleDisconnect(func(s *melody.Session) {
 		budgetID, _ := s.Get("budget_id")
 		log.Printf("🔌 Client disconnected from budget: %v", budgetID)
@@ -35,11 +34,9 @@ func NewWSHandler() *WSHandler {
 	return &WSHandler{M: m}
 }
 
-// HandleWS gère la connexion WebSocket
 func (h *WSHandler) HandleWS(c *gin.Context) {
 	budgetID := c.Param("id")
 	
-	// Upgrade request to WebSocket
 	err := h.M.HandleRequest(c.Writer, c.Request)
 	if err != nil {
 		log.Printf("❌ Failed to upgrade websocket: %v", err)
@@ -52,9 +49,8 @@ func (h *WSHandler) HandleWS(c *gin.Context) {
 	})
 }
 
-// BroadcastUpdate envoie un signal à tous les clients écoutant ce budget
+// BroadcastUpdate sends a simple update signal
 func (h *WSHandler) BroadcastUpdate(budgetID string, updateType string, userWhoUpdated string) {
-	// Simple JSON construction to avoid struct overhead for simple signals
 	msg := []byte(`{"type": "` + updateType + `", "user": "` + userWhoUpdated + `"}`)
 	
 	err := h.M.BroadcastFilter(msg, func(q *melody.Session) bool {
@@ -64,5 +60,23 @@ func (h *WSHandler) BroadcastUpdate(budgetID string, updateType string, userWhoU
 
 	if err != nil {
 		log.Printf("⚠️ Error broadcasting to budget %s: %v", budgetID, err)
+	}
+}
+
+// BroadcastJSON sends any struct as JSON payload
+func (h *WSHandler) BroadcastJSON(budgetID string, payload interface{}) {
+	msg, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("❌ Failed to marshal JSON for broadcast: %v", err)
+		return
+	}
+
+	err = h.M.BroadcastFilter(msg, func(q *melody.Session) bool {
+		id, exists := q.Get("budget_id")
+		return exists && id == budgetID
+	})
+
+	if err != nil {
+		log.Printf("⚠️ Error broadcasting JSON to budget %s: %v", budgetID, err)
 	}
 }

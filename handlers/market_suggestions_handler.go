@@ -23,9 +23,11 @@ type MarketSuggestionsHandler struct {
 	DB             *sql.DB
 	MarketAnalyzer *services.MarketAnalyzerService
 	AIService      *services.ClaudeAIService
+	WS             *WSHandler // Added WebSocket Handler
 }
 
-func NewMarketSuggestionsHandler(db *sql.DB) *MarketSuggestionsHandler {
+// Updated Constructor to accept WSHandler
+func NewMarketSuggestionsHandler(db *sql.DB, ws *WSHandler) *MarketSuggestionsHandler {
 	aiService := services.NewClaudeAIService()
 	marketAnalyzer := services.NewMarketAnalyzerService(db, aiService)
 
@@ -33,6 +35,7 @@ func NewMarketSuggestionsHandler(db *sql.DB) *MarketSuggestionsHandler {
 		DB:             db,
 		MarketAnalyzer: marketAnalyzer,
 		AIService:      aiService,
+		WS:             ws,
 	}
 }
 
@@ -89,7 +92,7 @@ func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 }
 
 // ============================================================================
-// 2. BULK ANALYZE ALL CHARGES IN A BUDGET
+// 2. BULK ANALYZE ALL CHARGES IN A BUDGET (ASYNC FIX)
 // POST /api/v1/budgets/:id/suggestions/bulk-analyze
 // ============================================================================
 
@@ -103,7 +106,7 @@ type ChargeToAnalyze struct {
 
 type BulkAnalyzeRequest struct {
 	Charges       []ChargeToAnalyze `json:"charges" binding:"required"`
-	HouseholdSize int               `json:"household_size"` // Sent by frontend (people.length)
+	HouseholdSize int               `json:"household_size"`
 }
 
 func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
@@ -123,78 +126,91 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 		return
 	}
 
-	// 2. Get User Country
-	userCountry, err := h.getUserCountry(c.Request.Context(), userID)
-	if err != nil {
-		userCountry = "FR"
-	}
+	// 2. Respond IMMEDIATELY to prevent timeout (HTTP 202 Accepted)
+	c.JSON(http.StatusAccepted, gin.H{
+		"message": "Analysis started in background",
+		"status":  "processing",
+	})
 
-	// 3. Use household size from request (sent by frontend)
-	// This avoids needing to decrypt budget data on server
-	householdSize := req.HouseholdSize
-	if householdSize < 1 {
-		householdSize = 1
-	}
+	// 3. Launch background processing
+	go func() {
+		// Create a new context because the request context is cancelled when the handler returns
+		bgCtx := context.Background()
 
-	log.Printf("[MarketSuggestions] Bulk analyzing %d charges for budget %s (Household: %d persons)",
-		len(req.Charges), budgetID, householdSize)
-
-	var suggestions []models.ChargeSuggestion
-	cacheHits := 0
-	aiCalls := 0
-	totalSavings := 0.0
-
-	for _, charge := range req.Charges {
-		if !h.isSuggestionRelevant(charge.Category) {
-			continue
-		}
-
-		suggestion, err := h.MarketAnalyzer.AnalyzeCharge(
-			c.Request.Context(),
-			charge.Category,
-			charge.MerchantName,
-			charge.Amount,
-			userCountry,
-			householdSize,
-		)
-
+		userCountry, err := h.getUserCountry(bgCtx, userID)
 		if err != nil {
-			log.Printf("Failed to analyze charge %s: %v", charge.ID, err)
-			continue
+			userCountry = "FR"
 		}
 
-		// Detect if it was a cache hit or an AI call
-		if time.Since(suggestion.LastUpdated) < 5*time.Second {
-			aiCalls++
-		} else {
-			cacheHits++
+		householdSize := req.HouseholdSize
+		if householdSize < 1 {
+			householdSize = 1
 		}
 
-		// Only add suggestion if there are actual savings opportunities
-		if len(suggestion.Competitors) > 0 {
-			bestSavings := suggestion.Competitors[0].PotentialSavings
-			totalSavings += bestSavings
+		log.Printf("[Async] Bulk analyzing %d charges for budget %s", len(req.Charges), budgetID)
 
-			suggestions = append(suggestions, models.ChargeSuggestion{
-				ChargeID:    charge.ID,
-				ChargeLabel: charge.Label,
-				Suggestion:  suggestion,
-			})
+		var suggestions []models.ChargeSuggestion
+		totalSavings := 0.0
+
+		for _, charge := range req.Charges {
+			if !h.isSuggestionRelevant(charge.Category) {
+				continue
+			}
+
+			// Add a small delay to avoid hitting AI rate limits too hard
+			time.Sleep(100 * time.Millisecond)
+
+			suggestion, err := h.MarketAnalyzer.AnalyzeCharge(
+				bgCtx,
+				charge.Category,
+				charge.MerchantName,
+				charge.Amount,
+				userCountry,
+				householdSize,
+			)
+
+			if err != nil {
+				log.Printf("[Async] Failed to analyze charge %s: %v", charge.ID, err)
+				continue
+			}
+
+			if len(suggestion.Competitors) > 0 {
+				bestSavings := suggestion.Competitors[0].PotentialSavings
+				totalSavings += bestSavings
+
+				suggestions = append(suggestions, models.ChargeSuggestion{
+					ChargeID:    charge.ID,
+					ChargeLabel: charge.Label,
+					Suggestion:  suggestion,
+				})
+			}
 		}
-	}
 
-	response := models.BulkAnalyzeResponse{
-		Suggestions:           suggestions,
-		CacheHits:             cacheHits,
-		AICallsMade:           aiCalls,
-		TotalPotentialSavings: totalSavings,
-		HouseholdSize:         householdSize,
-	}
+		log.Printf("[Async] Analysis complete for budget %s. Found %.2f€ savings.", budgetID, totalSavings)
 
-	log.Printf("[MarketSuggestions] ✅ Bulk analysis complete: %d suggestions, %d cache hits, %d AI calls, %.2f€ potential savings",
-		len(suggestions), cacheHits, aiCalls, totalSavings)
-
-	c.JSON(http.StatusOK, response)
+		// 4. Notify Frontend via WebSocket
+		if h.WS != nil {
+			// We broadcast a special event that contains the results directly,
+			// or tells the frontend to re-fetch if you prefer storage.
+			// Since we aren't storing these specific results in a permanent DB table (based on your code),
+			// we should send the results in the payload.
+			
+			// Note: Ideally, you should store these results in the DB so they persist.
+			// For now, I will send them via WS payload.
+			
+			// Using standard JSON marshaling for the payload
+			responsePayload := map[string]interface{}{
+				"type": "suggestions_ready",
+				"data": models.BulkAnalyzeResponse{
+					Suggestions:           suggestions,
+					TotalPotentialSavings: totalSavings,
+					HouseholdSize:         householdSize,
+				},
+			}
+			
+			h.WS.BroadcastJSON(budgetID, responsePayload)
+		}
+	}()
 }
 
 // ============================================================================
@@ -347,7 +363,6 @@ func determineCategory(label string) string {
 	for cat, keys := range keywords {
 		for _, k := range keys {
 			if strings.Contains(l, k) {
-				// Refinement for telecom providers
 				if k == "SFR" || k == "ORANGE" || k == "BOUYGUES" || k == "FREE" {
 					if strings.Contains(l, "BOX") || strings.Contains(l, "FIBRE") || strings.Contains(l, "FIXE") {
 						return "INTERNET"
