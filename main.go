@@ -36,7 +36,7 @@ func main() {
 
 	go scheduleCacheCleaning(db)
 
-	wsHandler := handlers.NewWSHandler() // Initialize WS here
+	wsHandler := handlers.NewWSHandler()
 
 	router := gin.Default()
 
@@ -50,6 +50,8 @@ func main() {
 		"https://budgetfamille.com",
 		"https://www.budgetfamille.com",
 		"https://budget-ui-two.vercel.app",
+		"http://localhost:3000",
+		"http://localhost:5173",
 	}
 
 	log.Printf("🌍 CORS: Allowing origins:")
@@ -57,17 +59,32 @@ func main() {
 		log.Printf("   - %s", origin)
 	}
 
+	// --- FIX: Add WebSocket specific headers ---
 	corsConfig := cors.Config{
 		AllowOrigins:     allowedOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		// CRITICAL: Added Upgrade, Connection, and Sec-WebSocket-* headers
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Upgrade", "Connection", "Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Extensions"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           86400,
 	}
+	
+	// Apply CORS first
 	router.Use(cors.New(corsConfig))
 
+	// --- FIX: Define WebSocket route BEFORE logging middleware ---
+	// This prevents the logger from hanging/buffering the long-lived WS connection
+	router.GET("/api/v1/ws/budgets/:id", wsHandler.HandleWS)
+
+	// Logging Middleware
 	router.Use(func(c *gin.Context) {
+		// Skip logging for health checks to reduce noise
+		if c.Request.URL.Path == "/health" {
+			c.Next()
+			return
+		}
+		
 		start := time.Now()
 		log.Printf("📨 %s %s from %s", c.Request.Method, c.Request.URL.Path, c.ClientIP())
 		c.Next()
@@ -80,7 +97,6 @@ func main() {
 	v1 := router.Group("/api/v1")
 	{
 		routes.SetupAuthRoutes(v1, db)
-		v1.GET("/ws/budgets/:id", wsHandler.HandleWS)
 		routes.SetupAdminRoutes(v1, db)
 		routes.SetupAdminSuggestionsRoutes(v1, db)
 
@@ -91,7 +107,6 @@ func main() {
 			routes.SetupUserRoutes(protected, db)
 			routes.SetupInvitationRoutes(protected, db)
 			routes.SetupEnableBankingRoutes(protected, db)
-			// Pass wsHandler here
 			routes.SetupMarketSuggestionsRoutes(protected, db, wsHandler)
 		}
 	}
