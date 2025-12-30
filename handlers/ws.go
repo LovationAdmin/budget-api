@@ -23,12 +23,20 @@ func NewWSHandler() *WSHandler {
 	m.Config.PingPeriod = 30 * time.Second
 	m.Config.PongWait = 60 * time.Second
 
-	// --- FIX: Allow Cross-Origin WebSockets ---
-	// Since Frontend and Backend are on different domains (render vs custom domain),
-	// we must allow the upgrade. Security is handled by the initial CORS check.
+	// Allow Cross-Origin WebSockets
 	m.Upgrader.CheckOrigin = func(r *http.Request) bool {
 		return true
 	}
+
+	// 🔥 FIX: HandleConnect doit être enregistré UNE SEULE FOIS ici
+	m.HandleConnect(func(s *melody.Session) {
+		budgetID, exists := s.Get("budget_id")
+		if exists {
+			log.Printf("✅ Client connected to budget: %s", budgetID)
+		} else {
+			log.Printf("⚠️ Client connected but no budget_id set")
+		}
+	})
 
 	m.HandleDisconnect(func(s *melody.Session) {
 		budgetID, _ := s.Get("budget_id")
@@ -36,7 +44,6 @@ func NewWSHandler() *WSHandler {
 	})
 
 	m.HandleError(func(s *melody.Session, err error) {
-		// Log errors but filter out "going away" which is a normal close
 		log.Printf("⚠️ WebSocket Error: %v", err)
 	})
 
@@ -46,20 +53,20 @@ func NewWSHandler() *WSHandler {
 func (h *WSHandler) HandleWS(c *gin.Context) {
 	budgetID := c.Param("id")
 	
-	// Debug log
 	log.Printf("🔌 Incoming WS connection request for budget: %s", budgetID)
 
+	// 🔥 FIX: Set budget_id AVANT l'upgrade
+	c.Set("budget_id", budgetID)
+
 	// Upgrade request to WebSocket
-	err := h.M.HandleRequest(c.Writer, c.Request)
+	err := h.M.HandleRequestWithKeys(c.Writer, c.Request, map[string]interface{}{
+		"budget_id": budgetID,
+	})
+	
 	if err != nil {
 		log.Printf("❌ Failed to upgrade websocket: %v", err)
 		return
 	}
-	
-	h.M.HandleConnect(func(s *melody.Session) {
-		s.Set("budget_id", budgetID)
-		log.Printf("✅ Client connected to budget: %s", budgetID)
-	})
 }
 
 // BroadcastUpdate sends a simple update signal
