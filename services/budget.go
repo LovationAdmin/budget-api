@@ -464,8 +464,9 @@ func (s *BudgetService) AcceptInvitation(ctx context.Context, token, userID stri
             return err
         }
 
-        // 5. NOTIFICATION TRIGGER (WebSocket will be handled by UpdateData usually, but here we can do it manually if needed or rely on next update)
-		// For now we assume the frontend will refresh on join.
+        // 5. NOTIFICATION TRIGGER 
+		// (Optional: You could trigger a WS update here if you have access to the handler, 
+		// but standard flow is usually to just let the client refresh on navigation)
 		return nil
 	})
 }
