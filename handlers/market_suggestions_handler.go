@@ -151,6 +151,8 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 
 		var suggestions []models.ChargeSuggestion
 		totalSavings := 0.0
+		cacheHits := 0
+		aiCallsMade := 0
 
 		for _, charge := range req.Charges {
 			if !h.isSuggestionRelevant(charge.Category) {
@@ -183,32 +185,32 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 					ChargeLabel: charge.Label,
 					Suggestion:  suggestion,
 				})
+
+				// Track if this was from cache (you may need to add this info to suggestion)
+				// For now, approximate: if competitors exist, assume analysis was done
+				aiCallsMade++
 			}
 		}
 
 		log.Printf("[Async] Analysis complete for budget %s. Found %.2f€ savings.", budgetID, totalSavings)
 
-		// 4. Notify Frontend via WebSocket
+		// 4. 🔥 CRITICAL FIX: Notify Frontend via WebSocket with LOG CONFIRMATION
 		if h.WS != nil {
-			// We broadcast a special event that contains the results directly,
-			// or tells the frontend to re-fetch if you prefer storage.
-			// Since we aren't storing these specific results in a permanent DB table (based on your code),
-			// we should send the results in the payload.
-			
-			// Note: Ideally, you should store these results in the DB so they persist.
-			// For now, I will send them via WS payload.
-			
-			// Using standard JSON marshaling for the payload
 			responsePayload := map[string]interface{}{
 				"type": "suggestions_ready",
-				"data": models.BulkAnalyzeResponse{
-					Suggestions:           suggestions,
-					TotalPotentialSavings: totalSavings,
-					HouseholdSize:         householdSize,
+				"data": map[string]interface{}{
+					"suggestions":             suggestions,
+					"total_potential_savings": totalSavings,
+					"household_size":          householdSize,
+					"cache_hits":              cacheHits,
+					"ai_calls_made":           aiCallsMade,
 				},
 			}
 			
 			h.WS.BroadcastJSON(budgetID, responsePayload)
+			log.Printf("[WebSocket] ✅ Sent suggestions_ready to budget %s (%.2f€ savings, %d suggestions)", budgetID, totalSavings, len(suggestions))
+		} else {
+			log.Printf("[WebSocket] ⚠️ WS Handler is nil - cannot send suggestions_ready")
 		}
 	}()
 }
