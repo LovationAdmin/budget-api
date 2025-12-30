@@ -105,7 +105,8 @@ func main() {
 		protected := v1.Group("/")
 		protected.Use(middleware.AuthMiddleware())
 		{
-			routes.SetupBudgetRoutes(protected, db)
+            // MODIFIED: Pass wsHandler here
+			routes.SetupBudgetRoutes(protected, db, wsHandler)
 			routes.SetupUserRoutes(protected, db)
 			routes.SetupInvitationRoutes(protected, db)
 			routes.SetupEnableBankingRoutes(protected, db)

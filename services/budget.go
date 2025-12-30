@@ -13,13 +13,20 @@ import (
 	"github.com/google/uuid"
 )
 
-type BudgetService struct {
-	db *sql.DB
-	ws *handlers.WSHandler
+// Broadcaster interface allows us to call WebSocket methods
+// without importing the handlers package (avoiding circular dependency)
+type Broadcaster interface {
+	BroadcastUpdate(budgetID string, updateType string, userWhoUpdated string)
 }
 
-func NewBudgetService(db *sql.DB, ws *handlers.WSHandler) *BudgetService {
-    return &BudgetService{db: db, ws: ws}
+type BudgetService struct {
+	db *sql.DB
+	ws Broadcaster
+}
+
+// NewBudgetService accepts the interface
+func NewBudgetService(db *sql.DB, ws Broadcaster) *BudgetService {
+	return &BudgetService{db: db, ws: ws}
 }
 
 // Helper struct for DB storage of encrypted blobs
@@ -243,26 +250,30 @@ func (s *BudgetService) UpdateData(ctx context.Context, budgetID string, data in
 			VALUES ($1, $2, $3, 1, $4)
 		`
 		_, err = s.db.ExecContext(ctx, insertQuery, uuid.New().String(), budgetID, storageJSON, time.Now())
+		if err != nil {
+			return err
+		}
+	} else if err != nil {
 		return err
+	} else {
+		updateQuery := `
+			UPDATE budget_data
+			SET data = $1, version = version + 1, updated_at = $2
+			WHERE budget_id = $3
+		`
+		_, err = s.db.ExecContext(ctx, updateQuery, storageJSON, time.Now(), budgetID)
+		if err != nil {
+			return err
+		}
 	}
 
-	if err != nil {
-		return err
-	}
-
-	updateQuery := `
-		UPDATE budget_data
-		SET data = $1, version = version + 1, updated_at = $2
-		WHERE budget_id = $3
-	`
-	_, err = s.db.ExecContext(ctx, updateQuery, storageJSON, time.Now(), budgetID)
-	// 🔥 TRIGGER NOTIFICATION
-	if err == nil && s.ws != nil {
-		// We can fetch the user name if needed, or pass it in args.
-		// For now, let's assume the controller passed the user name or we fetch it.
+	// 5. 🔥 TRIGGER NOTIFICATION VIA WEBSOCKET
+	if s.ws != nil {
+		// We fire this asynchronously so it doesn't block the HTTP response
 		go s.ws.BroadcastUpdate(budgetID, "budget_updated", "Un membre") 
 	}
-	return err
+
+	return nil
 }
 
 // GetMembers gets all members of a budget (Populates Avatar)
@@ -453,17 +464,8 @@ func (s *BudgetService) AcceptInvitation(ctx context.Context, token, userID stri
             return err
         }
 
-        // 5. NOTIFICATION TRIGGER: Update budget metadata (forces polling frontend to notice a change)
-        timestamp := time.Now().Format(time.RFC3339)
-        notifyQuery := `
-            UPDATE budget_data 
-            SET data = data || jsonb_build_object('lastUpdated', $1::text, 'updatedBy', $2::text),
-                version = version + 1,
-                updated_at = NOW()
-            WHERE budget_id = $3
-        `
-        tx.ExecContext(ctx, notifyQuery, timestamp, userName, invitation.BudgetID)
-
+        // 5. NOTIFICATION TRIGGER (WebSocket will be handled by UpdateData usually, but here we can do it manually if needed or rely on next update)
+		// For now we assume the frontend will refresh on join.
 		return nil
 	})
 }

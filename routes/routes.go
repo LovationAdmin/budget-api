@@ -19,8 +19,10 @@ func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB) {
 }
 
 // SetupBudgetRoutes sets up protected budget and related routes.
-func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB) {
-	budgetService := services.NewBudgetService(db)
+// MODIFIED: Accepts wsHandler
+func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *handlers.WSHandler) {
+	// MODIFIED: Pass wsHandler to NewBudgetService
+	budgetService := services.NewBudgetService(db, wsHandler)
 	emailService := services.NewEmailService()
 	h := handlers.NewHandler(budgetService, emailService)
 
