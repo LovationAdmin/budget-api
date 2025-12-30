@@ -1,5 +1,5 @@
 // handlers/user.go
-// VERSION COMPLÈTE AVEC EXPORT RGPD
+// VERSION CORRIGÉE SANS COLONNE YEAR
 
 package handlers
 
@@ -452,7 +452,7 @@ func (h *UserHandler) DeleteAccount(c *gin.Context) {
 }
 
 // ============================================================================
-// GDPR DATA EXPORT
+// GDPR DATA EXPORT - VERSION CORRIGÉE
 // ============================================================================
 
 func (h *UserHandler) ExportUserData(c *gin.Context) {
@@ -494,12 +494,11 @@ func (h *UserHandler) ExportUserData(c *gin.Context) {
 		return
 	}
 
-	// 2. Get user's budgets (only the ones they OWN)
+	// 2. Get user's budgets (✅ SANS COLONNE YEAR)
 	budgetRows, err := h.DB.Query(`
 		SELECT 
 			b.id,
 			b.name,
-			b.year,
 			b.created_at,
 			b.updated_at,
 			bd.data
@@ -519,7 +518,6 @@ func (h *UserHandler) ExportUserData(c *gin.Context) {
 	type BudgetExport struct {
 		ID        string                 `json:"id"`
 		Name      string                 `json:"name"`
-		Year      int                    `json:"year"`
 		CreatedAt string                 `json:"created_at"`
 		UpdatedAt string                 `json:"updated_at"`
 		Data      map[string]interface{} `json:"data,omitempty"`
@@ -534,7 +532,6 @@ func (h *UserHandler) ExportUserData(c *gin.Context) {
 		err := budgetRows.Scan(
 			&budget.ID,
 			&budget.Name,
-			&budget.Year,
 			&createdAt,
 			&updatedAt,
 			&rawData,
@@ -586,12 +583,11 @@ func (h *UserHandler) ExportUserData(c *gin.Context) {
 		budgets = append(budgets, budget)
 	}
 
-	// 3. Get budgets where user is a member (shared budgets)
+	// 3. Get budgets where user is a member (✅ SANS COLONNE YEAR)
 	sharedBudgetRows, err := h.DB.Query(`
 		SELECT 
 			b.id,
 			b.name,
-			b.year,
 			bm.role,
 			bm.created_at
 		FROM budget_members bm
@@ -607,7 +603,6 @@ func (h *UserHandler) ExportUserData(c *gin.Context) {
 	type SharedBudgetExport struct {
 		ID       string `json:"id"`
 		Name     string `json:"name"`
-		Year     int    `json:"year"`
 		Role     string `json:"role"`
 		JoinedAt string `json:"joined_at"`
 	}
@@ -622,7 +617,6 @@ func (h *UserHandler) ExportUserData(c *gin.Context) {
 			err := sharedBudgetRows.Scan(
 				&sb.ID,
 				&sb.Name,
-				&sb.Year,
 				&sb.Role,
 				&joinedAt,
 			)
