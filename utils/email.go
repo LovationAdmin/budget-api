@@ -2,15 +2,145 @@ package utils
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"log"
-	"net/smtp"
+	"net/http"
 	"os"
 )
 
 // ============================================================================
-// EMAIL TEMPLATES
+// STRUCTS & TYPES
+// ============================================================================
+
+type EmailRequest struct {
+	From    string   `json:"from"`
+	To      []string `json:"to"`
+	Subject string   `json:"subject"`
+	HTML    string   `json:"html"`
+}
+
+// ============================================================================
+// EXISTING FUNCTIONS (Preserved - No Regression)
+// ============================================================================
+
+// SendInvitationEmail envoie l'email d'invitation
+func SendInvitationEmail(toEmail, inviterName, budgetName, invitationToken string) error {
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3000"
+	}
+
+	invitationLink := fmt.Sprintf("%s/invitation/accept?token=%s", frontendURL, invitationToken)
+
+	htmlBody := fmt.Sprintf(`
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invitation Budget</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f3f4f6;">
+    <table role="presentation" style="width: 100%%; border-collapse: collapse;">
+        <tr>
+            <td style="padding: 40px 0; text-align: center; background: linear-gradient(135deg, #667eea 0%%, #764ba2 100%%);">
+                <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: bold;">
+                    💰 Budget Famille
+                </h1>
+            </td>
+        </tr>
+        <tr>
+            <td style="padding: 40px 20px;">
+                <table role="presentation" style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                    <tr>
+                        <td style="padding: 40px;">
+                            <h2 style="margin: 0 0 20px 0; color: #1f2937; font-size: 24px;">Invitation à collaborer</h2>
+                            <p style="margin: 0 0 20px 0; color: #4b5563; font-size: 16px; line-height: 1.6;">
+                                <strong>%s</strong> vous invite à rejoindre le budget <strong>"%s"</strong>.
+                            </p>
+                            <table role="presentation" style="margin: 20px 0;">
+                                <tr>
+                                    <td style="border-radius: 8px; background: linear-gradient(135deg, #667eea 0%%, #764ba2 100%%);">
+                                        <a href="%s" style="display: inline-block; padding: 16px 32px; color: #ffffff; text-decoration: none; font-size: 16px; font-weight: 600;">
+                                            Accepter l'invitation
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+    `, inviterName, budgetName, invitationLink)
+
+	return sendEmail(toEmail, fmt.Sprintf("%s vous invite à collaborer", inviterName), htmlBody)
+}
+
+// SendVerificationEmail envoie l'email de vérification
+func SendVerificationEmail(toEmail, userName, token string) error {
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3000"
+	}
+
+	verifyLink := fmt.Sprintf("%s/verify-email?token=%s", frontendURL, token)
+
+	htmlBody := fmt.Sprintf(`
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vérification Email</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f3f4f6;">
+    <table role="presentation" style="width: 100%%; border-collapse: collapse;">
+        <tr>
+            <td style="padding: 40px 0; text-align: center; background: linear-gradient(135deg, #10b981 0%%, #059669 100%%);">
+                <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: bold;">
+                    💰 Budget Famille
+                </h1>
+            </td>
+        </tr>
+        <tr>
+            <td style="padding: 40px 20px;">
+                <table role="presentation" style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                    <tr>
+                        <td style="padding: 40px;">
+                            <h2 style="margin: 0 0 20px 0; color: #1f2937; font-size: 24px;">Bienvenue %s ! 👋</h2>
+                            <p style="margin: 0 0 20px 0; color: #4b5563; font-size: 16px; line-height: 1.6;">
+                                Veuillez vérifier votre email pour activer votre compte Budget Famille.
+                            </p>
+                            <table role="presentation" style="margin: 20px 0;">
+                                <tr>
+                                    <td style="border-radius: 8px; background: linear-gradient(135deg, #10b981 0%%, #059669 100%%);">
+                                        <a href="%s" style="display: inline-block; padding: 16px 32px; color: #ffffff; text-decoration: none; font-size: 16px; font-weight: 600;">
+                                            Vérifier mon email
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+    `, userName, verifyLink)
+
+	return sendEmail(toEmail, "Vérifiez votre compte Budget Famille", htmlBody)
+}
+
+// ============================================================================
+// NEW FEATURE: PASSWORD RESET (Using Resend API - No Regression)
 // ============================================================================
 
 const passwordResetEmailTemplate = `
@@ -67,7 +197,7 @@ const passwordResetEmailTemplate = `
                                     ⚠️ Vous n'avez pas demandé cette réinitialisation ?
                                 </p>
                                 <p style="margin: 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
-                                    Ignorez simplement cet email. Votre mot de passe actuel reste inchangé. Si vous recevez plusieurs emails de ce type, contactez-nous immédiatement.
+                                    Ignorez simplement cet email. Votre mot de passe actuel reste inchangé.
                                 </p>
                             </div>
                         </td>
@@ -90,11 +220,7 @@ const passwordResetEmailTemplate = `
 </html>
 `
 
-// ============================================================================
-// PASSWORD RESET EMAIL FUNCTION
-// ============================================================================
-
-// SendPasswordResetEmail envoie un email de réinitialisation de mot de passe
+// SendPasswordResetEmail envoie un email de réinitialisation via Resend API
 func SendPasswordResetEmail(toEmail, userName, resetToken string) error {
 	frontendURL := os.Getenv("FRONTEND_URL")
 	if frontendURL == "" {
@@ -111,6 +237,7 @@ func SendPasswordResetEmail(toEmail, userName, resetToken string) error {
 		ResetLink: resetLink,
 	}
 
+	// Use template engine to generate the HTML body
 	tmpl, err := template.New("passwordReset").Parse(passwordResetEmailTemplate)
 	if err != nil {
 		log.Printf("❌ Error parsing password reset template: %v", err)
@@ -123,45 +250,61 @@ func SendPasswordResetEmail(toEmail, userName, resetToken string) error {
 		return err
 	}
 
-	// Configuration SMTP
-	smtpHost := os.Getenv("SMTP_HOST")
-	smtpPort := os.Getenv("SMTP_PORT")
-	smtpUser := os.Getenv("SMTP_USER")
-	smtpPass := os.Getenv("SMTP_PASS")
+	// REUSE the existing sendEmail function (Resend API)
+	return sendEmail(toEmail, "Réinitialisation de votre mot de passe Budget Famille", body.String())
+}
+
+// ============================================================================
+// SHARED PRIVATE HELPER (Resend API)
+// ============================================================================
+
+func sendEmail(to, subject, htmlBody string) error {
+	apiKey := os.Getenv("RESEND_API_KEY")
+	if apiKey == "" {
+		log.Println("⚠️ RESEND_API_KEY not set, email not sent")
+		return fmt.Errorf("RESEND_API_KEY not set")
+	}
+
 	fromEmail := os.Getenv("FROM_EMAIL")
-
-	if smtpHost == "" || smtpPort == "" || smtpUser == "" || smtpPass == "" {
-		log.Println("⚠️ SMTP configuration incomplete, email not sent")
-		return fmt.Errorf("SMTP configuration incomplete")
-	}
-
 	if fromEmail == "" {
-		fromEmail = "noreply@budgetfamille.com"
+		fromEmail = "Budget Famille <noreply@budgetfamille.com>"
 	}
 
-	// Construction du message
-	subject := "Réinitialisation de votre mot de passe Budget Famille"
-	msg := []byte(fmt.Sprintf(
-		"From: Budget Famille <%s>\r\n"+
-			"To: %s\r\n"+
-			"Subject: %s\r\n"+
-			"MIME-Version: 1.0\r\n"+
-			"Content-Type: text/html; charset=UTF-8\r\n"+
-			"\r\n"+
-			"%s",
-		fromEmail, toEmail, subject, body.String(),
-	))
+	emailReq := EmailRequest{
+		From:    fromEmail,
+		To:      []string{to},
+		Subject: subject,
+		HTML:    htmlBody,
+	}
 
-	// Authentification et envoi
-	auth := smtp.PlainAuth("", smtpUser, smtpPass, smtpHost)
-	addr := fmt.Sprintf("%s:%s", smtpHost, smtpPort)
-
-	err = smtp.SendMail(addr, auth, fromEmail, []string{toEmail}, msg)
+	jsonData, err := json.Marshal(emailReq)
 	if err != nil {
-		log.Printf("❌ Error sending password reset email to %s: %v", toEmail, err)
+		log.Printf("❌ Error marshaling email request: %v", err)
 		return err
 	}
 
-	log.Printf("✅ Password reset email sent to %s", toEmail)
+	req, err := http.NewRequest("POST", "https://api.resend.com/emails", bytes.NewBuffer(jsonData))
+	if err != nil {
+		log.Printf("❌ Error creating HTTP request: %v", err)
+		return err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("❌ Error sending email via Resend: %v", err)
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		log.Printf("❌ Resend API error: status %d", resp.StatusCode)
+		return fmt.Errorf("email API returned status: %d", resp.StatusCode)
+	}
+
+	log.Printf("✅ Email sent successfully to %s", to)
 	return nil
 }
