@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -15,7 +16,9 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// --- STRUCTURES DÉFINIES ICI (C'était ce qui manquait) ---
+// ============================================================================
+// STRUCTURES
+// ============================================================================
 
 type AuthHandler struct {
 	DB *sql.DB
@@ -37,9 +40,19 @@ type ResendVerificationRequest struct {
 	Email string `json:"email" binding:"required,email"`
 }
 
-// --- HANDLERS ---
+type ForgotPasswordRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
 
-// Signup crée un utilisateur et envoie un email de vérification
+type ResetPasswordRequest struct {
+	Token       string `json:"token" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,min=8"`
+}
+
+// ============================================================================
+// SIGNUP
+// ============================================================================
+
 func (h *AuthHandler) Signup(c *gin.Context) {
 	var req SignupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -89,7 +102,7 @@ func (h *AuthHandler) Signup(c *gin.Context) {
     `, userID, verificationToken, expiresAt)
 
 	if err != nil {
-		fmt.Println("Erreur insert verification:", err)
+		log.Printf("Erreur insert verification: %v", err)
 	}
 
 	// Send Email (in goroutine to be faster)
@@ -101,7 +114,10 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 	})
 }
 
-// Login connecte l'utilisateur et vérifie si l'email est validé
+// ============================================================================
+// LOGIN
+// ============================================================================
+
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -114,7 +130,6 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	var totpEnabled, emailVerified bool
 	var totpSecret sql.NullString
 
-	// Note: On récupère aussi email_verified
 	err := h.DB.QueryRow(`
 		SELECT id, password_hash, name, totp_enabled, totp_secret, email_verified
 		FROM users WHERE email = $1
@@ -136,7 +151,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// --- CHECK VERIFICATION ---
+	// Check email verification
 	if !emailVerified {
 		c.JSON(http.StatusForbidden, gin.H{
 			"error":        "Email non vérifié. Veuillez vérifier votre boîte de réception.",
@@ -151,7 +166,6 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "2FA code required", "require_totp": true})
 			return
 		}
-		// Verify TOTP code here (logic in user handler or util)
 		valid, _ := utils.VerifyTOTP(totpSecret.String, req.TOTPCode)
 		if !valid {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Code 2FA invalide"})
@@ -176,7 +190,10 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	})
 }
 
-// VerifyEmail valide le token reçu par email
+// ============================================================================
+// EMAIL VERIFICATION
+// ============================================================================
+
 func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 	token := c.Query("token")
 	if token == "" {
@@ -212,28 +229,15 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 	// Delete Token
 	h.DB.Exec("DELETE FROM email_verifications WHERE token = $1", token)
 
+	log.Printf("✅ Email verified for user %s", userID)
+
 	c.JSON(http.StatusOK, gin.H{"message": "Email vérifié avec succès ! Vous pouvez vous connecter."})
 }
 
-// --- HELPER FUNCTIONS ---
+// ============================================================================
+// RESEND VERIFICATION
+// ============================================================================
 
-func generateJWT(userID string) (string, error) {
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		if os.Getenv("ENVIRONMENT") == "production" || os.Getenv("GIN_MODE") == "release" {
-			return "", fmt.Errorf("JWT_SECRET is required in production")
-		}
-		secret = "dev-only-insecure-secret"
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": userID,
-		"exp":     time.Now().Add(24 * time.Hour).Unix(),
-	})
-	return token.SignedString([]byte(secret))
-}
-
-
-// ResendVerification génère un nouveau token et renvoie l'email
 func (h *AuthHandler) ResendVerification(c *gin.Context) {
 	var req ResendVerificationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -249,7 +253,7 @@ func (h *AuthHandler) ResendVerification(c *gin.Context) {
 	err := h.DB.QueryRow("SELECT id, name, email_verified FROM users WHERE email = $1", req.Email).Scan(&userID, &name, &isVerified)
 	
 	if err == sql.ErrNoRows {
-		// Sécurité : On ne dit pas si l'email existe ou non, on renvoie OK
+		// Sécurité : On ne dit pas si l'email existe ou non
 		c.JSON(http.StatusOK, gin.H{"message": "Si ce compte existe, un email a été envoyé."})
 		return
 	}
@@ -284,4 +288,170 @@ func (h *AuthHandler) ResendVerification(c *gin.Context) {
 	go utils.SendVerificationEmail(req.Email, name, verificationToken)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Email de vérification envoyé !"})
+}
+
+// ============================================================================
+// PASSWORD RESET - FORGOT PASSWORD
+// ============================================================================
+
+func (h *AuthHandler) ForgotPassword(c *gin.Context) {
+	var req ForgotPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 1. Vérifier si l'utilisateur existe
+	var userID, name string
+	err := h.DB.QueryRow("SELECT id, name FROM users WHERE email = $1", req.Email).Scan(&userID, &name)
+	
+	if err == sql.ErrNoRows {
+		// Sécurité : ne pas révéler si l'email existe
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Si ce compte existe, un email de réinitialisation a été envoyé.",
+		})
+		return
+	}
+
+	if err != nil {
+		log.Printf("❌ Error checking user existence: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur système"})
+		return
+	}
+
+	// 2. Nettoyer les anciens tokens non utilisés pour cet utilisateur
+	_, err = h.DB.Exec("DELETE FROM password_resets WHERE user_id = $1 AND used = FALSE", userID)
+	if err != nil {
+		log.Printf("❌ Error cleaning old tokens: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur système"})
+		return
+	}
+
+	// 3. Créer nouveau token (expire dans 1 heure)
+	resetToken := uuid.New().String()
+	expiresAt := time.Now().Add(1 * time.Hour)
+
+	_, err = h.DB.Exec(`
+		INSERT INTO password_resets (user_id, token, expires_at, used)
+		VALUES ($1, $2, $3, FALSE)
+	`, userID, resetToken, expiresAt)
+
+	if err != nil {
+		log.Printf("❌ Error creating reset token: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Impossible de générer le token"})
+		return
+	}
+
+	// 4. Envoyer l'email de réinitialisation (en goroutine)
+	go utils.SendPasswordResetEmail(req.Email, name, resetToken)
+
+	log.Printf("✅ Password reset token created for user %s (%s)", userID, req.Email)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Si ce compte existe, un email de réinitialisation a été envoyé.",
+	})
+}
+
+// ============================================================================
+// PASSWORD RESET - RESET PASSWORD
+// ============================================================================
+
+func (h *AuthHandler) ResetPassword(c *gin.Context) {
+	var req ResetPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 1. Vérifier le token
+	var userID string
+	var expiresAt time.Time
+	var used bool
+
+	err := h.DB.QueryRow(`
+		SELECT user_id, expires_at, used 
+		FROM password_resets 
+		WHERE token = $1
+	`, req.Token).Scan(&userID, &expiresAt, &used)
+
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Lien invalide ou expiré"})
+		return
+	}
+
+	if err != nil {
+		log.Printf("❌ Error checking reset token: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur système"})
+		return
+	}
+
+	// 2. Vérifier si le token a déjà été utilisé
+	if used {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Ce lien a déjà été utilisé"})
+		return
+	}
+
+	// 3. Vérifier si le token a expiré
+	if time.Now().After(expiresAt) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Le lien a expiré. Veuillez faire une nouvelle demande."})
+		return
+	}
+
+	// 4. Hash du nouveau mot de passe
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("❌ Error hashing password: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur lors du traitement"})
+		return
+	}
+
+	// 5. Mettre à jour le mot de passe
+	_, err = h.DB.Exec(`
+		UPDATE users 
+		SET password_hash = $1, updated_at = NOW()
+		WHERE id = $2
+	`, string(hashedPassword), userID)
+
+	if err != nil {
+		log.Printf("❌ Error updating password: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur lors de la mise à jour"})
+		return
+	}
+
+	// 6. Marquer le token comme utilisé
+	_, err = h.DB.Exec(`
+		UPDATE password_resets 
+		SET used = TRUE 
+		WHERE token = $1
+	`, req.Token)
+
+	if err != nil {
+		// Log l'erreur mais ne bloque pas la réponse (le mot de passe est déjà changé)
+		log.Printf("⚠️ Error marking token as used: %v", err)
+	}
+
+	log.Printf("✅ Password reset successful for user %s", userID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Mot de passe réinitialisé avec succès. Vous pouvez maintenant vous connecter.",
+	})
+}
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+func generateJWT(userID string) (string, error) {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		if os.Getenv("ENVIRONMENT") == "production" || os.Getenv("GIN_MODE") == "release" {
+			return "", fmt.Errorf("JWT_SECRET is required in production")
+		}
+		secret = "dev-only-insecure-secret"
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id": userID,
+		"exp":     time.Now().Add(24 * time.Hour).Unix(),
+	})
+	return token.SignedString([]byte(secret))
 }

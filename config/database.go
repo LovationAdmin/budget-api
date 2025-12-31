@@ -29,10 +29,10 @@ func InitDB() (*sql.DB, error) {
 	// ============================================================================
 	
 	// Augmenter le pool de connexions
-	db.SetMaxOpenConns(25)          // Max 25 connexions simultanées (bon pour Render)
-	db.SetMaxIdleConns(10)          // ✅ AUGMENTÉ: 5 → 10 (évite re-création)
-	db.SetConnMaxLifetime(5 * time.Minute) // ✅ NOUVEAU: Recycler connexions après 5min
-	db.SetConnMaxIdleTime(2 * time.Minute) // ✅ NOUVEAU: Fermer idle après 2min
+	db.SetMaxOpenConns(25)                    // Max 25 connexions simultanées (bon pour Render)
+	db.SetMaxIdleConns(10)                    // 5 → 10 (évite re-création)
+	db.SetConnMaxLifetime(5 * time.Minute)    // Recycler connexions après 5min
+	db.SetConnMaxIdleTime(2 * time.Minute)    // Fermer idle après 2min
 
 	fmt.Println("✅ Database connection pool configured:")
 	fmt.Printf("   - MaxOpenConns: 25\n")
@@ -124,6 +124,18 @@ func RunMigrations(db *sql.DB) error {
 			user_id UUID REFERENCES users(id) ON DELETE CASCADE,
 			token VARCHAR(255) NOT NULL,
 			expires_at TIMESTAMP NOT NULL,
+			created_at TIMESTAMP DEFAULT NOW()
+		)`,
+
+		// ============================================================================
+		// 🆕 PASSWORD RESET TABLE
+		// ============================================================================
+		`CREATE TABLE IF NOT EXISTS password_resets (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			token VARCHAR(255) NOT NULL UNIQUE,
+			expires_at TIMESTAMP NOT NULL,
+			used BOOLEAN DEFAULT FALSE,
 			created_at TIMESTAMP DEFAULT NOW()
 		)`,
 
@@ -254,6 +266,12 @@ func RunMigrations(db *sql.DB) error {
 		// Indexes email_verifications
 		`CREATE INDEX IF NOT EXISTS idx_email_verifications_token ON email_verifications(token)`,
 		`CREATE INDEX IF NOT EXISTS idx_email_verifications_user_id ON email_verifications(user_id)`,
+		
+		// 🆕 Indexes password_resets
+		`CREATE INDEX IF NOT EXISTS idx_password_resets_token ON password_resets(token)`,
+		`CREATE INDEX IF NOT EXISTS idx_password_resets_user_id ON password_resets(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_password_resets_expires_at ON password_resets(expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_password_resets_used ON password_resets(used)`,
 		
 		// Indexes users
 		`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,

@@ -12,10 +12,18 @@ import (
 // SetupAuthRoutes sets up public authentication routes.
 func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	authHandler := &handlers.AuthHandler{DB: db}
+	
+	// Signup & Login
 	rg.POST("/auth/signup", authHandler.Signup)
 	rg.POST("/auth/login", authHandler.Login)
+	
+	// Email Verification
 	rg.GET("/auth/verify", authHandler.VerifyEmail)
 	rg.POST("/auth/verify/resend", authHandler.ResendVerification)
+	
+	// 🆕 Password Reset
+	rg.POST("/auth/forgot-password", authHandler.ForgotPassword)
+	rg.POST("/auth/reset-password", authHandler.ResetPassword)
 }
 
 // SetupBudgetRoutes sets up protected budget and related routes.
@@ -55,7 +63,7 @@ func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	// Account Management
 	rg.DELETE("/user/account", userHandler.DeleteAccount)
 	
-	// ✅ AJOUT : GDPR Data Export
+	// GDPR Data Export
 	rg.GET("/user/export-data", userHandler.ExportUserData)
 }
 
@@ -80,14 +88,12 @@ func SetupEnableBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.GET("/budgets/:id/banking/enablebanking/connections", handler.GetConnections)
 	rg.POST("/budgets/:id/banking/enablebanking/sync", handler.SyncAccounts)
 	
-	// ✅ CONSERVÉ : Routes Enable Banking existantes
 	rg.POST("/banking/enablebanking/refresh", handler.RefreshBalances)
 	rg.GET("/banking/enablebanking/transactions", handler.GetTransactions)
 	rg.DELETE("/banking/enablebanking/connections/:id", handler.DeleteConnection)
 	rg.GET("/banking/budgets/:id/reality-check", handler.GetConnections)
 }
 
-// ✅ CONSERVÉ : Market Suggestions Routes avec WebSocket
 func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *handlers.WSHandler) {
 	handler := handlers.NewMarketSuggestionsHandler(db, wsHandler)
 
@@ -97,7 +103,6 @@ func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *ha
 	rg.POST("/categorize", handler.CategorizeCharge)
 }
 
-// ✅ CONSERVÉ : Admin Suggestions Routes
 func SetupAdminSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	handler := handlers.NewMarketSuggestionsHandler(db, nil)
 	rg.POST("/admin/suggestions/clean-cache", handler.CleanExpiredCache)
