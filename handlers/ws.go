@@ -30,17 +30,22 @@ func NewWSHandler() *WSHandler {
 
 	// 🔥 FIX: HandleConnect doit être enregistré UNE SEULE FOIS ici
 	m.HandleConnect(func(s *melody.Session) {
-		budgetID, exists := s.Get("budget_id")
-		if exists {
-			log.Printf("✅ Client connected to budget: %s", budgetID)
+		budgetID, budgetExists := s.Get("budget_id")
+		userID, userExists := s.Get("user_id")
+		
+		if budgetExists && userExists {
+			log.Printf("✅ Client connected to budget: %s (user: %s)", budgetID, userID)
+		} else if budgetExists {
+			log.Printf("⚠️ Client connected to budget: %s (no user_id)", budgetID)
 		} else {
-			log.Printf("⚠️ Client connected but no budget_id set")
+			log.Printf("⚠️ Client connected but no budget_id/user_id set")
 		}
 	})
 
 	m.HandleDisconnect(func(s *melody.Session) {
 		budgetID, _ := s.Get("budget_id")
-		log.Printf("🔌 Client disconnected from budget: %v", budgetID)
+		userID, _ := s.Get("user_id")
+		log.Printf("🔌 Client disconnected from budget: %v (user: %v)", budgetID, userID)
 	})
 
 	m.HandleError(func(s *melody.Session, err error) {
@@ -52,15 +57,18 @@ func NewWSHandler() *WSHandler {
 
 func (h *WSHandler) HandleWS(c *gin.Context) {
 	budgetID := c.Param("id")
+	userID := c.GetString("user_id") // 🔥 NEW: Get authenticated user ID
 	
-	log.Printf("🔌 Incoming WS connection request for budget: %s", budgetID)
+	log.Printf("🔌 Incoming WS connection request for budget: %s from user: %s", budgetID, userID)
 
-	// 🔥 FIX: Set budget_id AVANT l'upgrade
+	// 🔥 FIX: Set budget_id AND user_id AVANT l'upgrade
 	c.Set("budget_id", budgetID)
+	c.Set("user_id", userID)
 
 	// Upgrade request to WebSocket
 	err := h.M.HandleRequestWithKeys(c.Writer, c.Request, map[string]interface{}{
 		"budget_id": budgetID,
+		"user_id":   userID, // 🔥 NEW: Store user_id in session
 	})
 	
 	if err != nil {
@@ -69,7 +77,7 @@ func (h *WSHandler) HandleWS(c *gin.Context) {
 	}
 }
 
-// BroadcastUpdate sends a simple update signal
+// BroadcastUpdate sends a simple update signal (LEGACY - kept for compatibility)
 func (h *WSHandler) BroadcastUpdate(budgetID string, updateType string, userWhoUpdated string) {
 	msg := []byte(`{"type": "` + updateType + `", "user": "` + userWhoUpdated + `"}`)
 	
@@ -80,6 +88,34 @@ func (h *WSHandler) BroadcastUpdate(budgetID string, updateType string, userWhoU
 
 	if err != nil {
 		log.Printf("⚠️ Error broadcasting to budget %s: %v", budgetID, err)
+	}
+}
+
+// BroadcastUpdateExcludingUser sends update to all users EXCEPT the one who made the change
+// 🔥 NEW: This is the preferred method for budget updates
+func (h *WSHandler) BroadcastUpdateExcludingUser(budgetID string, updateType string, userWhoUpdated string, userIDToExclude string) {
+	msg := []byte(`{"type": "` + updateType + `", "user": "` + userWhoUpdated + `", "user_id": "` + userIDToExclude + `"}`)
+	
+	err := h.M.BroadcastFilter(msg, func(q *melody.Session) bool {
+		id, exists := q.Get("budget_id")
+		if !exists || id != budgetID {
+			return false
+		}
+		
+		// 🔥 EXCLUDE the user who made the update
+		excludeUserID, hasExclude := q.Get("user_id")
+		if hasExclude && excludeUserID == userIDToExclude {
+			log.Printf("🚫 Skipping notification for user who made the update: %s", userIDToExclude)
+			return false
+		}
+		
+		return true
+	})
+
+	if err != nil {
+		log.Printf("⚠️ Error broadcasting to budget %s: %v", budgetID, err)
+	} else {
+		log.Printf("📢 Broadcasted update to budget %s (excluding user %s)", budgetID, userIDToExclude)
 	}
 }
 

@@ -167,7 +167,16 @@ func (h *Handler) UpdateBudgetData(c *gin.Context) {
 		return
 	}
 
-	if err := h.budgetService.UpdateData(c.Request.Context(), budgetID, req.Data); err != nil {
+	// 🔥 NEW: Get user's name for notification
+	var userName string
+	err = h.budgetService.GetDB().QueryRowContext(c.Request.Context(), 
+		"SELECT name FROM users WHERE id = $1", userID).Scan(&userName)
+	if err != nil {
+		userName = "Un membre" // Fallback
+	}
+
+	// 🔥 UPDATED: Pass userID and userName to UpdateData
+	if err := h.budgetService.UpdateData(c.Request.Context(), budgetID, req.Data, userID, userName); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update budget data"})
 		return
 	}

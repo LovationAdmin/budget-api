@@ -17,6 +17,7 @@ import (
 // without importing the handlers package (avoiding circular dependency)
 type Broadcaster interface {
 	BroadcastUpdate(budgetID string, updateType string, userWhoUpdated string)
+	BroadcastUpdateExcludingUser(budgetID string, updateType string, userWhoUpdated string, userIDToExclude string)
 }
 
 type BudgetService struct {
@@ -27,6 +28,11 @@ type BudgetService struct {
 // NewBudgetService accepts the interface
 func NewBudgetService(db *sql.DB, ws Broadcaster) *BudgetService {
 	return &BudgetService{db: db, ws: ws}
+}
+
+// GetDB returns the database connection (needed for handlers)
+func (s *BudgetService) GetDB() *sql.DB {
+	return s.db
 }
 
 // Helper struct for DB storage of encrypted blobs
@@ -219,7 +225,8 @@ func (s *BudgetService) GetData(ctx context.Context, budgetID string) (interface
 }
 
 // UpdateData ENCRYPTS the data before saving it
-func (s *BudgetService) UpdateData(ctx context.Context, budgetID string, data interface{}) error {
+// 🔥 UPDATED: Now accepts userID and userName to exclude the user from notifications
+func (s *BudgetService) UpdateData(ctx context.Context, budgetID string, data interface{}, userID string, userName string) error {
 	// 1. Convert real data to JSON bytes
 	realDataJSON, err := json.Marshal(data)
 	if err != nil {
@@ -267,10 +274,10 @@ func (s *BudgetService) UpdateData(ctx context.Context, budgetID string, data in
 		}
 	}
 
-	// 5. 🔥 TRIGGER NOTIFICATION VIA WEBSOCKET
+	// 5. 🔥 TRIGGER NOTIFICATION VIA WEBSOCKET - EXCLUDING THE USER WHO MADE THE UPDATE
 	if s.ws != nil {
 		// We fire this asynchronously so it doesn't block the HTTP response
-		go s.ws.BroadcastUpdate(budgetID, "budget_updated", "Un membre") 
+		go s.ws.BroadcastUpdateExcludingUser(budgetID, "budget_updated", userName, userID) 
 	}
 
 	return nil
