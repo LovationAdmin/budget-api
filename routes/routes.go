@@ -28,7 +28,10 @@ func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB) {
 
 // SetupBudgetRoutes sets up protected budget and related routes.
 func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *handlers.WSHandler) {
-	budgetService := services.NewBudgetService(db, wsHandler)
+	// Créer les services nécessaires
+	aiService := services.NewClaudeAIService()
+	marketAnalyzer := services.NewMarketAnalyzerService(db, aiService)
+	budgetService := services.NewBudgetService(db, wsHandler, marketAnalyzer)
 	emailService := services.NewEmailService()
 	h := handlers.NewHandler(budgetService, emailService)
 

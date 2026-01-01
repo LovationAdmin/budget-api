@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/LovationAdmin/budget-api/models"
@@ -21,13 +22,18 @@ type Broadcaster interface {
 }
 
 type BudgetService struct {
-	db *sql.DB
-	ws Broadcaster
+	db             *sql.DB
+	ws             Broadcaster
+	marketAnalyzer *MarketAnalyzerService
 }
 
 // NewBudgetService accepts the interface
-func NewBudgetService(db *sql.DB, ws Broadcaster) *BudgetService {
-	return &BudgetService{db: db, ws: ws}
+func NewBudgetService(db *sql.DB, ws Broadcaster, marketAnalyzer *MarketAnalyzerService) *BudgetService {
+	return &BudgetService{
+		db:             db,
+		ws:             ws,
+		marketAnalyzer: marketAnalyzer,
+	}
 }
 
 // GetDB returns the database connection (needed for handlers)
@@ -278,6 +284,26 @@ func (s *BudgetService) UpdateData(ctx context.Context, budgetID string, data in
 	if s.ws != nil {
 		// We fire this asynchronously so it doesn't block the HTTP response
 		go s.ws.BroadcastUpdateExcludingUser(budgetID, "budget_updated", userName, userID) 
+	}
+
+	// 6. 🗑️ INVALIDATE MARKET SUGGESTIONS CACHE
+	if s.marketAnalyzer != nil {
+		// Récupérer le pays de l'utilisateur
+		var country string
+		err := s.db.QueryRowContext(ctx, 
+			`SELECT country FROM users WHERE id = $1`, userID).Scan(&country)
+		
+		if err != nil || country == "" {
+			country = "FR" // Fallback par défaut
+		}
+
+		// Invalider le cache de manière asynchrone pour ne pas bloquer la réponse
+		go func() {
+			bgCtx := context.Background()
+			if err := s.marketAnalyzer.InvalidateCacheForBudget(bgCtx, country); err != nil {
+				log.Printf("[BudgetService] ⚠️ Failed to invalidate cache: %v", err)
+			}
+		}()
 	}
 
 	return nil

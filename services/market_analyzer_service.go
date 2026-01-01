@@ -196,6 +196,34 @@ func (s *MarketAnalyzerService) CleanExpiredCache(ctx context.Context) error {
 }
 
 // ============================================================================
+// 🆕 INVALIDATE CACHE FOR BUDGET
+// ============================================================================
+
+// InvalidateCacheForBudget invalide toutes les suggestions en cache pour un pays donné
+// Appelé automatiquement quand les données d'un budget sont modifiées
+func (s *MarketAnalyzerService) InvalidateCacheForBudget(ctx context.Context, country string) error {
+	if country == "" {
+		country = "FR" // Fallback
+	}
+
+	result, err := s.DB.ExecContext(ctx, 
+		`DELETE FROM market_suggestions WHERE country = $1`, 
+		country)
+	
+	if err != nil {
+		log.Printf("[MarketAnalyzer] ❌ Failed to invalidate cache for country %s: %v", country, err)
+		return err
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows > 0 {
+		log.Printf("[MarketAnalyzer] 🗑️ Invalidated %d cache entries for country %s (budget data changed)", rows, country)
+	}
+	
+	return nil
+}
+
+// ============================================================================
 // COMPETITOR SEARCH via Claude AI
 // ============================================================================
 
