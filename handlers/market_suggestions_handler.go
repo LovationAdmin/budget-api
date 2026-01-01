@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"[github.com/gin-gonic/gin](https://github.com/gin-gonic/gin)"
 
-	"github.com/LovationAdmin/budget-api/models"
-	"github.com/LovationAdmin/budget-api/services"
+	"[github.com/LovationAdmin/budget-api/models](https://github.com/LovationAdmin/budget-api/models)"
+	"[github.com/LovationAdmin/budget-api/services](https://github.com/LovationAdmin/budget-api/services)"
 )
 
 // ============================================================================
@@ -23,9 +23,10 @@ type MarketSuggestionsHandler struct {
 	DB             *sql.DB
 	MarketAnalyzer *services.MarketAnalyzerService
 	AIService      *services.ClaudeAIService
-	WS             *WSHandler 
+	WS             *WSHandler // Added WebSocket Handler
 }
 
+// Updated Constructor to accept WSHandler
 func NewMarketSuggestionsHandler(db *sql.DB, ws *WSHandler) *MarketSuggestionsHandler {
 	aiService := services.NewClaudeAIService()
 	marketAnalyzer := services.NewMarketAnalyzerService(db, aiService)
@@ -47,7 +48,7 @@ type AnalyzeChargeRequest struct {
 	Category      string  `json:"category" binding:"required"`
 	MerchantName  string  `json:"merchant_name"`
 	CurrentAmount float64 `json:"current_amount" binding:"required"`
-	HouseholdSize int     `json:"household_size"`
+	HouseholdSize int     `json:"household_size"` // Optional, defaults to 1
 }
 
 func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
@@ -91,7 +92,7 @@ func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 }
 
 // ============================================================================
-// 2. BULK ANALYZE ALL CHARGES IN A BUDGET
+// 2. BULK ANALYZE ALL CHARGES IN A BUDGET (ASYNC FIX)
 // POST /api/v1/budgets/:id/suggestions/bulk-analyze
 // ============================================================================
 
@@ -125,7 +126,7 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 		return
 	}
 
-	// 2. Respond IMMEDIATELY
+	// 2. Respond IMMEDIATELY to prevent timeout (HTTP 202 Accepted)
 	c.JSON(http.StatusAccepted, gin.H{
 		"message": "Analysis started in background",
 		"status":  "processing",
@@ -133,6 +134,7 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 
 	// 3. Launch background processing
 	go func() {
+		// Create a new context because the request context is cancelled when the handler returns
 		bgCtx := context.Background()
 
 		userCountry, err := h.getUserCountry(bgCtx, userID)
@@ -171,7 +173,7 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 				continue
 			}
 
-			// Add a small delay
+			// Add a small delay to avoid hitting AI rate limits too hard
 			time.Sleep(100 * time.Millisecond)
 
 			suggestion, err := h.MarketAnalyzer.AnalyzeCharge(
@@ -198,13 +200,15 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 					Suggestion:  suggestion,
 				})
 
+				// Track if this was from cache (you may need to add this info to suggestion)
+				// For now, approximate: if competitors exist, assume analysis was done
 				aiCallsMade++
 			}
 		}
 
 		log.Printf("[Async] Analysis complete for budget %s. Found %.2f€ savings.", budgetID, totalSavings)
 
-		// 4. Notify Frontend
+		// 4. 🔥 CRITICAL FIX: Notify Frontend via WebSocket with LOG CONFIRMATION
 		if h.WS != nil {
 			responsePayload := map[string]interface{}{
 				"type": "suggestions_ready",
@@ -218,46 +222,101 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 			}
 			
 			h.WS.BroadcastJSON(budgetID, responsePayload)
+			log.Printf("[WebSocket] ✅ Sent suggestions_ready to budget %s (%.2f€ savings, %d suggestions)", budgetID, totalSavings, len(suggestions))
+		} else {
+			log.Printf("[WebSocket] ⚠️ WS Handler is nil - cannot send suggestions_ready")
 		}
 	}()
 }
 
-// ... (GetCategorySuggestions, CleanExpiredCache, CategorizeCharge remain unchanged) ...
+// ============================================================================
+// 3. GET CACHED SUGGESTIONS FOR A CATEGORY
+// GET /api/v1/suggestions/category/:category
+// ============================================================================
 
 func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 	userID := c.GetString("user_id")
 	category := c.Param("category")
-	userCountry, _ := h.getUserCountry(c.Request.Context(), userID)
 
-	suggestion, err := h.MarketAnalyzer.AnalyzeCharge(c.Request.Context(), category, "", 0, userCountry, 1)
+	userCountry, err := h.getUserCountry(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed"})
+		userCountry = "FR"
+	}
+
+	suggestion, err := h.MarketAnalyzer.AnalyzeCharge(
+		c.Request.Context(),
+		category,
+		"",
+		0,
+		userCountry,
+		1,
+	)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch suggestions"})
 		return
 	}
+
+	if suggestion == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "No suggestions found"})
+		return
+	}
+
 	c.JSON(http.StatusOK, suggestion)
 }
 
+// ============================================================================
+// 4. CLEAN EXPIRED CACHE (Admin/Cron)
+// POST /api/v1/admin/suggestions/clean-cache
+// ============================================================================
+
 func (h *MarketSuggestionsHandler) CleanExpiredCache(c *gin.Context) {
-	h.MarketAnalyzer.CleanExpiredCache(c.Request.Context())
-	c.JSON(http.StatusOK, gin.H{"message": "Cleaned"})
+	if err := h.MarketAnalyzer.CleanExpiredCache(c.Request.Context()); err != nil {
+		log.Printf("Failed to clean cache: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clean cache"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Cache cleaned successfully"})
 }
 
+// ============================================================================
+// 5. CATEGORIZE CHARGE (Hybrid: Static + AI Fallback)
+// POST /api/v1/categorize
+// ============================================================================
+
 func (h *MarketSuggestionsHandler) CategorizeCharge(c *gin.Context) {
-	var req struct { Label string `json:"label"` }
+	var req struct {
+		Label string `json:"label"`
+	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Label required"})
 		return
 	}
+
 	label := strings.TrimSpace(req.Label)
+	if label == "" {
+		c.JSON(http.StatusOK, gin.H{"label": "", "category": "OTHER"})
+		return
+	}
+
+	// Step 1: Try Static Keyword Matching
 	category := determineCategory(label)
+
+	// Step 2: AI Fallback
 	if category == "OTHER" && len(label) > 3 {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
-		if aiCat, err := h.AIService.CategorizeLabel(ctx, label); err == nil {
-			category = aiCat
+
+		aiCategory, err := h.AIService.CategorizeLabel(ctx, label)
+		if err == nil {
+			category = aiCategory
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"label": req.Label, "category": category})
+
+	c.JSON(http.StatusOK, gin.H{
+		"label":    req.Label,
+		"category": category,
+	})
 }
 
 // ============================================================================

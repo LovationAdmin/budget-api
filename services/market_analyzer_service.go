@@ -160,9 +160,10 @@ func (s *MarketAnalyzerService) filterCompetitorsList(competitors []models.Compe
 		normalizedComp := strings.ToLower(strings.TrimSpace(comp.Name))
 		
 		// Check for exact match or containment (e.g. "Netflix" vs "Netflix Standard")
+		// Also check reverse containment (e.g. "Free" vs "Free Mobile")
 		if normalizedComp == normalizedCurrent || 
-		   strings.Contains(normalizedComp, normalizedCurrent) || 
-		   strings.Contains(normalizedCurrent, normalizedComp) {
+		   (len(normalizedCurrent) > 3 && strings.Contains(normalizedComp, normalizedCurrent)) || 
+		   (len(normalizedComp) > 3 && strings.Contains(normalizedCurrent, normalizedComp)) {
 			log.Printf("[MarketAnalyzer] ⚫ Filtering out current provider: %s (matches %s)", comp.Name, currentMerchant)
 			continue
 		}
