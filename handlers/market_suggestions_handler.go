@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"[github.com/gin-gonic/gin](https://github.com/gin-gonic/gin)"
 
-	"github.com/LovationAdmin/budget-api/models"
-	"github.com/LovationAdmin/budget-api/services"
+	"[github.com/LovationAdmin/budget-api/models](https://github.com/LovationAdmin/budget-api/models)"
+	"[github.com/LovationAdmin/budget-api/services](https://github.com/LovationAdmin/budget-api/services)"
 )
 
 // ============================================================================
@@ -321,7 +321,7 @@ func determineCategory(label string) string {
 		},
 		"INTERNET": {
 			"BOX", "FIBRE", "ADSL", "INTERNET", "NUMERICABLE", "STARLINK",
-			"NORDNET", "OVH", "K-NET",
+			"NORDNET", "OVH", "K-NET", "LIVEBOX", "BBOX", "FREEBOX",
 		},
 		"ENERGY": {
 			"EDF", "ENGIE", "TOTAL", "ENERGIE", "ELEC", "GAZ", "ENI",
@@ -346,8 +346,7 @@ func determineCategory(label string) string {
 			"LIME", "AUTOROUTE", "PEAGE", "VINCI", "APRR", "SANEF", "TOTAL ENERGIES", "ESSO", "BP", "SHELL",
 		},
 		"SUBSCRIPTION": {
-			"NETFLIX", "SPOTIFY", "AMAZON", "PRIME", "DISNEY", "CANAL",
-			"APPLE", "GOOGLE", "YOUTUBE", "DEEZER", "HBO", "PARAMOUNT", "ICLOUD", "DROPBOX",
+			"ICLOUD", "DROPBOX", "ADOBE", "MICROSOFT", "GOOGLE ONE", "CHATGPT", "MIDJOURNEY",
 		},
 		"FOOD": {
 			"CARREFOUR", "LECLERC", "AUCHAN", "INTERMARCHE", "LIDL", "ALDI", "MONOPRIX",
@@ -355,11 +354,16 @@ func determineCategory(label string) string {
 			"MC DO", "MCDONALD", "BK", "BURGER KING", "KFC", "STARBUCKS",
 		},
 		"HOUSING": {
-			"LOYER", "RENT", "APPARTEMENT", "LOGEMENT", "CHARGES LOCATIVES",
+			"LOYER", "RENT", "APPARTEMENT", "LOGEMENT", "CHARGES LOCATIVES", "FONCIA", "CITYA",
 		},
-		"LEISURE": {
-			"SPORT", "GYM", "FITNESS", "BASIC FIT", "KEEP COOL", "NEONESS",
-			"CINEMA", "UGC", "PATHE", "GAUMONT",
+		// ✅ FIX: Split LEISURE into SPORT and STREAMING
+		"LEISURE_SPORT": {
+			"SPORT", "GYM", "FITNESS", "BASIC FIT", "KEEP COOL", "NEONESS", "CROSSFIT", "ORANGE BLEUE",
+			"CLUB", "PISCINE", "YOGA",
+		},
+		"LEISURE_STREAMING": {
+			"NETFLIX", "SPOTIFY", "AMAZON", "PRIME", "DISNEY", "CANAL",
+			"APPLE TV", "APPLE MUSIC", "YOUTUBE", "DEEZER", "HBO", "PARAMOUNT", "SALTO", "OCS", "TWITCH",
 		},
 	}
 
@@ -399,20 +403,21 @@ func (h *MarketSuggestionsHandler) checkBudgetAccess(ctx context.Context, userID
 
 func (h *MarketSuggestionsHandler) isSuggestionRelevant(category string) bool {
 	relevantCategories := map[string]bool{
-		"ENERGY":           true,
-		"INTERNET":         true,
-		"MOBILE":           true,
-		"INSURANCE":        true,
-		"INSURANCE_AUTO":   true,
-		"INSURANCE_HOME":   true,
-		"INSURANCE_HEALTH": true,
-		"LOAN":             true,
-		"BANK":             true,
-		// ✅ ADDED MISSING CATEGORIES
-		"TRANSPORT":        true,
-		"LEISURE":          true,
-		"SUBSCRIPTION":     true,
-		"HOUSING":          true,
+		"ENERGY":            true,
+		"INTERNET":          true,
+		"MOBILE":            true,
+		"INSURANCE":         true,
+		"INSURANCE_AUTO":    true,
+		"INSURANCE_HOME":    true,
+		"INSURANCE_HEALTH":  true,
+		"LOAN":              true,
+		"BANK":              true,
+		"TRANSPORT":         true,
+		"LEISURE":           true, // Legacy fallback
+		"LEISURE_SPORT":     true, // ✅ NEW
+		"LEISURE_STREAMING": true, // ✅ NEW
+		"SUBSCRIPTION":      true,
+		"HOUSING":           true,
 	}
 	return relevantCategories[strings.ToUpper(category)]
 }

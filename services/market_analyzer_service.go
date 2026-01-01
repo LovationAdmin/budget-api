@@ -52,12 +52,14 @@ func getChargeType(category string) ChargeType {
 	// Charges FOYER : 1 seul abonnement pour tout le monde
 	foyerCategories := map[string]bool{
 		"ENERGY": true, "INTERNET": true, "INSURANCE_HOME": true,
-		"LOAN": true, "HOUSING": true, "BANK": true,
+		"LOAN": true, "HOUSING": true, "BANK": true, 
+		"LEISURE_STREAMING": true, "SUBSCRIPTION": true, // Often shared
 	}
 
 	// Charges INDIVIDUELLES : chaque personne a son propre abonnement
 	individuelCategories := map[string]bool{
-		"MOBILE": true, "INSURANCE_AUTO": true, "INSURANCE_HEALTH": true, "TRANSPORT": true,
+		"MOBILE": true, "INSURANCE_AUTO": true, "INSURANCE_HEALTH": true, 
+		"TRANSPORT": true, "LEISURE_SPORT": true,
 	}
 
 	if foyerCategories[category] {
@@ -98,8 +100,8 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 	merchantName = strings.TrimSpace(merchantName)
 	effectiveAmount, chargeType := getEffectiveAmount(category, currentAmount, householdSize)
 
-	log.Printf("[MarketAnalyzer] Analyzing: %s, %.2f€ effective, country=%s, household=%d",
-		category, effectiveAmount, country, householdSize)
+	log.Printf("[MarketAnalyzer] Analyzing: %s (Merchant: %s), %.2f€ effective, country=%s, household=%d",
+		category, merchantName, effectiveAmount, country, householdSize)
 
 	// 1. Try cache
 	cached, err := s.getCachedSuggestion(ctx, category, country, merchantName)
@@ -107,6 +109,8 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 		log.Printf("[MarketAnalyzer] ✅ Cache HIT")
 		s.recalculateSavings(cached, effectiveAmount, householdSize, chargeType)
 		s.limitToMaxCompetitors(cached)
+		// ✅ FIX: Filter out current provider from cached results
+		s.filterCurrentProvider(cached, merchantName)
 		return cached, nil
 	}
 
@@ -119,15 +123,18 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 	}
 
 	// 3. Create suggestion (limited to MaxCompetitors)
-	if len(competitors) > MaxCompetitors {
-		competitors = competitors[:MaxCompetitors]
+	// ✅ FIX: Filter out current provider BEFORE saving/returning
+	filteredCompetitors := s.filterCompetitorsList(competitors, merchantName)
+
+	if len(filteredCompetitors) > MaxCompetitors {
+		filteredCompetitors = filteredCompetitors[:MaxCompetitors]
 	}
 
 	suggestion := &models.MarketSuggestion{
 		Category:     category,
 		Country:      country,
 		MerchantName: merchantName,
-		Competitors:  competitors,
+		Competitors:  filteredCompetitors,
 		LastUpdated:  time.Now(),
 		ExpiresAt:    time.Now().Add(30 * 24 * time.Hour),
 	}
@@ -138,6 +145,35 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 	}
 
 	return suggestion, nil
+}
+
+// ✅ NEW: Helper to filter out the current provider from a list of competitors
+func (s *MarketAnalyzerService) filterCompetitorsList(competitors []models.Competitor, currentMerchant string) []models.Competitor {
+	if currentMerchant == "" {
+		return competitors
+	}
+	
+	var valid []models.Competitor
+	normalizedCurrent := strings.ToLower(strings.TrimSpace(currentMerchant))
+
+	for _, comp := range competitors {
+		normalizedComp := strings.ToLower(strings.TrimSpace(comp.Name))
+		
+		// Check for exact match or containment (e.g. "Netflix" vs "Netflix Standard")
+		if normalizedComp == normalizedCurrent || 
+		   strings.Contains(normalizedComp, normalizedCurrent) || 
+		   strings.Contains(normalizedCurrent, normalizedComp) {
+			log.Printf("[MarketAnalyzer] ⚫ Filtering out current provider: %s (matches %s)", comp.Name, currentMerchant)
+			continue
+		}
+		valid = append(valid, comp)
+	}
+	return valid
+}
+
+// ✅ NEW: Helper to filter out current provider from an existing Suggestion object (for cache hits)
+func (s *MarketAnalyzerService) filterCurrentProvider(suggestion *models.MarketSuggestion, currentMerchant string) {
+	suggestion.Competitors = s.filterCompetitorsList(suggestion.Competitors, currentMerchant)
 }
 
 // limitToMaxCompetitors ensures we never return more than MaxCompetitors
@@ -248,11 +284,6 @@ func (s *MarketAnalyzerService) searchCompetitors(
 		return nil, fmt.Errorf("failed to parse AI response: %w", err)
 	}
 
-	// Limit to MaxCompetitors
-	if len(competitors) > MaxCompetitors {
-		competitors = competitors[:MaxCompetitors]
-	}
-
 	return competitors, nil
 }
 
@@ -282,6 +313,7 @@ func (s *MarketAnalyzerService) buildPrompt(
 		priceContext = "pour le foyer"
 	}
 
+	// ✅ UPDATED: More precise category contexts
 	categoryContext := map[string]string{
 		"MOBILE":           "Forfaits mobiles avec appels/SMS illimités et data.",
 		"INTERNET":         "Box internet (ADSL/Fibre).",
@@ -290,7 +322,15 @@ func (s *MarketAnalyzerService) buildPrompt(
 		"INSURANCE_HOME":   "Assurance habitation.",
 		"INSURANCE_HEALTH": "Mutuelle santé.",
 		"LOAN":             "Crédits immobiliers ou consommation.",
+		"LEISURE_SPORT":    "Abonnements salle de sport / fitness (Basic Fit, Fitness Park, etc).",
+		"LEISURE_STREAMING": "Services de streaming vidéo/audio (Netflix, Spotify, etc).",
+		"TRANSPORT":        "Abonnements transports en commun ou télépéage.",
+		"HOUSING":          "Assurances ou services liés au logement (hors loyer).",
 	}[strings.ToUpper(category)]
+
+	if categoryContext == "" {
+		categoryContext = "Service d'abonnement récurrent."
+	}
 
 	currentProvider := merchantName
 	if currentProvider == "" {
@@ -302,6 +342,7 @@ func (s *MarketAnalyzerService) buildPrompt(
 CONTEXTE:
 - Client: %s
 - Catégorie: %s
+- Détails catégorie: %s
 - %s
 - Prix actuel: %.2f€/mois %s (chez %s)
 - %s
@@ -318,6 +359,7 @@ RÈGLES OBLIGATOIRES:
    - "contact_email": email contact si disponible
 5. Si le prix actuel (%.2f€) est déjà inférieur aux offres du marché, retourne {"competitors": []}
 6. potential_savings = (prix_actuel - typical_price) * 12
+7. IMPORTANT: Ne propose PAS le fournisseur actuel (%s) comme alternative !
 
 Réponds UNIQUEMENT en JSON (sans markdown):
 {
@@ -339,6 +381,7 @@ Réponds UNIQUEMENT en JSON (sans markdown):
 		country,
 		familyContext,
 		category,
+		categoryContext,
 		chargeContext,
 		effectiveAmount,
 		priceContext,
@@ -346,6 +389,7 @@ Réponds UNIQUEMENT en JSON (sans markdown):
 		categoryContext,
 		country,
 		effectiveAmount,
+		currentProvider,
 	)
 }
 
