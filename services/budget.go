@@ -286,25 +286,25 @@ func (s *BudgetService) UpdateData(ctx context.Context, budgetID string, data in
 		go s.ws.BroadcastUpdateExcludingUser(budgetID, "budget_updated", userName, userID) 
 	}
 
-	// 6. 🗑️ INVALIDATE MARKET SUGGESTIONS CACHE
-	if s.marketAnalyzer != nil {
-		// Récupérer le pays de l'utilisateur
-		var country string
-		err := s.db.QueryRowContext(ctx, 
-			`SELECT country FROM users WHERE id = $1`, userID).Scan(&country)
+	// 6. 🗑️ INVALIDATE MARKET SUGGESTIONS CACHE - COMMENTED OUT TO FIX CACHE ISSUE
+	// if s.marketAnalyzer != nil {
+	// 	// Récupérer le pays de l'utilisateur
+	// 	var country string
+	// 	err := s.db.QueryRowContext(ctx, 
+	// 		`SELECT country FROM users WHERE id = $1`, userID).Scan(&country)
 		
-		if err != nil || country == "" {
-			country = "FR" // Fallback par défaut
-		}
+	// 	if err != nil || country == "" {
+	// 		country = "FR" // Fallback par défaut
+	// 	}
 
-		// Invalider le cache de manière asynchrone pour ne pas bloquer la réponse
-		go func() {
-			bgCtx := context.Background()
-			if err := s.marketAnalyzer.InvalidateCacheForBudget(bgCtx, country); err != nil {
-				log.Printf("[BudgetService] ⚠️ Failed to invalidate cache: %v", err)
-			}
-		}()
-	}
+	// 	// Invalider le cache de manière asynchrone pour ne pas bloquer la réponse
+	// 	go func() {
+	// 		bgCtx := context.Background()
+	// 		if err := s.marketAnalyzer.InvalidateCacheForBudget(bgCtx, country); err != nil {
+	// 			log.Printf("[BudgetService] ⚠️ Failed to invalidate cache: %v", err)
+	// 		}
+	// 	}()
+	// }
 
 	return nil
 }
