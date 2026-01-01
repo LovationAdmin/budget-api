@@ -155,6 +155,7 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 		aiCallsMade := 0
 
 		for _, charge := range req.Charges {
+			// Check whitelist here
 			if !h.isSuggestionRelevant(charge.Category) {
 				continue
 			}
@@ -407,6 +408,11 @@ func (h *MarketSuggestionsHandler) isSuggestionRelevant(category string) bool {
 		"INSURANCE_HEALTH": true,
 		"LOAN":             true,
 		"BANK":             true,
+		// ✅ ADDED MISSING CATEGORIES
+		"TRANSPORT":        true,
+		"LEISURE":          true,
+		"SUBSCRIPTION":     true,
+		"HOUSING":          true,
 	}
 	return relevantCategories[strings.ToUpper(category)]
 }
