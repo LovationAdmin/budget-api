@@ -1,3 +1,7 @@
+// handlers/auth.go
+// ✅ VERSION OPTIMISÉE - Pour schéma avec country/postal_code
+// ✅ ZÉRO RÉGRESSION - Colonnes garanties par migrations
+
 package handlers
 
 import (
@@ -6,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/LovationAdmin/budget-api/utils"
@@ -24,26 +29,33 @@ type AuthHandler struct {
 	DB *sql.DB
 }
 
+// 🆕 UPDATED - Added optional Country and PostalCode
 type SignupRequest struct {
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required,min=8"`
-	Name     string `json:"name" binding:"required"`
+	Email      string `json:"email" binding:"required,email"`
+	Password   string `json:"password" binding:"required,min=8"`
+	Name       string `json:"name" binding:"required"`
+	Country    string `json:"country"`     // ✅ NEW (optional, defaults to FR)
+	PostalCode string `json:"postal_code"` // ✅ NEW (optional)
 }
 
+// ✅ PRESERVED
 type LoginRequest struct {
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required"`
 	TOTPCode string `json:"totp_code"`
 }
 
+// ✅ PRESERVED
 type ResendVerificationRequest struct {
 	Email string `json:"email" binding:"required,email"`
 }
 
+// ✅ PRESERVED
 type ForgotPasswordRequest struct {
 	Email string `json:"email" binding:"required,email"`
 }
 
+// ✅ PRESERVED
 type ResetPasswordRequest struct {
 	Token       string `json:"token" binding:"required"`
 	NewPassword string `json:"new_password" binding:"required,min=8"`
@@ -60,7 +72,26 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 		return
 	}
 
-	// Check if user exists
+	// 🆕 Handle country (default to FR if empty)
+	country := strings.ToUpper(req.Country)
+	if country == "" {
+		country = "FR"
+	}
+
+	// 🆕 Validate country
+	validCountries := map[string]bool{
+		"FR": true, "BE": true, "DE": true, "ES": true, "IT": true,
+		"PT": true, "NL": true, "LU": true, "AT": true, "IE": true,
+	}
+
+	if !validCountries[country] {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Country not supported. Supported: FR, BE, DE, ES, IT, PT, NL, LU, AT, IE",
+		})
+		return
+	}
+
+	// ✅ EXISTING - Check if user exists
 	var exists bool
 	err := h.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)", req.Email).Scan(&exists)
 	if err != nil {
@@ -73,26 +104,29 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 		return
 	}
 
-	// Hash password
+	// ✅ EXISTING - Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
 		return
 	}
 
-	// Create user (email_verified defaults to FALSE)
+	// 🆕 UPDATED - Create user WITH country and postal_code
 	userID := uuid.New().String()
 	_, err = h.DB.Exec(`
-		INSERT INTO users (id, email, password_hash, name, created_at, updated_at, email_verified)
-		VALUES ($1, $2, $3, $4, $5, $6, FALSE)
-	`, userID, req.Email, string(hashedPassword), req.Name, time.Now(), time.Now())
+		INSERT INTO users (id, email, password_hash, name, country, postal_code, created_at, updated_at, email_verified)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE)
+	`, userID, req.Email, string(hashedPassword), req.Name, country, req.PostalCode, time.Now(), time.Now())
 
 	if err != nil {
+		log.Printf("❌ Error creating user: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur création utilisateur"})
 		return
 	}
 
-	// Create Verification Token
+	log.Printf("✅ User created: %s (Country: %s, Postal: %s)", req.Email, country, req.PostalCode)
+
+	// ✅ EXISTING - Create Verification Token
 	verificationToken := uuid.New().String()
 	expiresAt := time.Now().Add(24 * time.Hour)
 
@@ -105,7 +139,7 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 		log.Printf("Erreur insert verification: %v", err)
 	}
 
-	// Send Email (in goroutine to be faster)
+	// ✅ EXISTING - Send Email
 	go utils.SendVerificationEmail(req.Email, req.Name, verificationToken)
 
 	c.JSON(http.StatusCreated, gin.H{
@@ -125,15 +159,17 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// Get user
+	// 🆕 UPDATED - Get user WITH country and postal_code
 	var userID, passwordHash, name string
+	var country, postalCode sql.NullString
 	var totpEnabled, emailVerified bool
 	var totpSecret sql.NullString
 
 	err := h.DB.QueryRow(`
-		SELECT id, password_hash, name, totp_enabled, totp_secret, email_verified
+		SELECT id, password_hash, name, totp_enabled, totp_secret, email_verified,
+		       COALESCE(country, 'FR'), COALESCE(postal_code, '')
 		FROM users WHERE email = $1
-	`, req.Email).Scan(&userID, &passwordHash, &name, &totpEnabled, &totpSecret, &emailVerified)
+	`, req.Email).Scan(&userID, &passwordHash, &name, &totpEnabled, &totpSecret, &emailVerified, &country, &postalCode)
 
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Identifiants invalides"})
@@ -141,17 +177,18 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	if err != nil {
+		log.Printf("❌ Database error during login: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}
 
-	// Verify password
+	// ✅ EXISTING - Verify password
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Identifiants invalides"})
 		return
 	}
 
-	// Check email verification
+	// ✅ EXISTING - Check email verification
 	if !emailVerified {
 		c.JSON(http.StatusForbidden, gin.H{
 			"error":        "Email non vérifié. Veuillez vérifier votre boîte de réception.",
@@ -160,7 +197,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// Check TOTP if enabled
+	// ✅ EXISTING - Check TOTP if enabled
 	if totpEnabled {
 		if req.TOTPCode == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "2FA code required", "require_totp": true})
@@ -173,25 +210,38 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		}
 	}
 
-	// Generate token
+	// ✅ EXISTING - Generate token
 	token, err := generateJWT(userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
 	}
 
+	// 🆕 UPDATED - Include country and postal_code in response
+	userResponse := gin.H{
+		"id":    userID,
+		"email": req.Email,
+		"name":  name,
+	}
+	
+	// Add location data if available
+	if country.Valid && country.String != "" {
+		userResponse["country"] = country.String
+	}
+	if postalCode.Valid && postalCode.String != "" {
+		userResponse["postal_code"] = postalCode.String
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"token": token,
-		"user": gin.H{
-			"id":    userID,
-			"email": req.Email,
-			"name":  name,
-		},
+		"user":  userResponse,
 	})
+
+	log.Printf("✅ User logged in: %s", req.Email)
 }
 
 // ============================================================================
-// EMAIL VERIFICATION
+// EMAIL VERIFICATION - PRESERVED 100%
 // ============================================================================
 
 func (h *AuthHandler) VerifyEmail(c *gin.Context) {
@@ -204,7 +254,6 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 	var userID string
 	var expiresAt time.Time
 
-	// Find Token
 	err := h.DB.QueryRow(`
         SELECT user_id, expires_at FROM email_verifications WHERE token = $1
     `, token).Scan(&userID, &expiresAt)
@@ -219,14 +268,12 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 		return
 	}
 
-	// Activate User
 	_, err = h.DB.Exec("UPDATE users SET email_verified = TRUE WHERE id = $1", userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur serveur"})
 		return
 	}
 
-	// Delete Token
 	h.DB.Exec("DELETE FROM email_verifications WHERE token = $1", token)
 
 	log.Printf("✅ Email verified for user %s", userID)
@@ -235,7 +282,7 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 }
 
 // ============================================================================
-// RESEND VERIFICATION
+// RESEND VERIFICATION - PRESERVED 100%
 // ============================================================================
 
 func (h *AuthHandler) ResendVerification(c *gin.Context) {
@@ -245,7 +292,6 @@ func (h *AuthHandler) ResendVerification(c *gin.Context) {
 		return
 	}
 
-	// 1. Vérifier si l'utilisateur existe et n'est PAS déjà vérifié
 	var userID string
 	var isVerified bool
 	var name string
@@ -253,7 +299,6 @@ func (h *AuthHandler) ResendVerification(c *gin.Context) {
 	err := h.DB.QueryRow("SELECT id, name, email_verified FROM users WHERE email = $1", req.Email).Scan(&userID, &name, &isVerified)
 	
 	if err == sql.ErrNoRows {
-		// Sécurité : On ne dit pas si l'email existe ou non
 		c.JSON(http.StatusOK, gin.H{"message": "Si ce compte existe, un email a été envoyé."})
 		return
 	}
@@ -263,14 +308,12 @@ func (h *AuthHandler) ResendVerification(c *gin.Context) {
 		return
 	}
 
-	// 2. Nettoyer les anciens tokens
 	_, err = h.DB.Exec("DELETE FROM email_verifications WHERE user_id = $1", userID)
     if err != nil {
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur système"})
         return
     }
 
-	// 3. Créer nouveau token
 	verificationToken := uuid.New().String()
 	expiresAt := time.Now().Add(24 * time.Hour)
 
@@ -284,14 +327,13 @@ func (h *AuthHandler) ResendVerification(c *gin.Context) {
 		return
 	}
 
-	// 4. Renvoyer l'email
 	go utils.SendVerificationEmail(req.Email, name, verificationToken)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Email de vérification envoyé !"})
 }
 
 // ============================================================================
-// PASSWORD RESET - FORGOT PASSWORD
+// FORGOT PASSWORD - PRESERVED 100%
 // ============================================================================
 
 func (h *AuthHandler) ForgotPassword(c *gin.Context) {
@@ -301,12 +343,10 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 		return
 	}
 
-	// 1. Vérifier si l'utilisateur existe
 	var userID, name string
 	err := h.DB.QueryRow("SELECT id, name FROM users WHERE email = $1", req.Email).Scan(&userID, &name)
 	
 	if err == sql.ErrNoRows {
-		// Sécurité : ne pas révéler si l'email existe
 		c.JSON(http.StatusOK, gin.H{
 			"message": "Si ce compte existe, un email de réinitialisation a été envoyé.",
 		})
@@ -319,7 +359,6 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 		return
 	}
 
-	// 2. Nettoyer les anciens tokens non utilisés pour cet utilisateur
 	_, err = h.DB.Exec("DELETE FROM password_resets WHERE user_id = $1 AND used = FALSE", userID)
 	if err != nil {
 		log.Printf("❌ Error cleaning old tokens: %v", err)
@@ -327,7 +366,6 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 		return
 	}
 
-	// 3. Créer nouveau token (expire dans 1 heure)
 	resetToken := uuid.New().String()
 	expiresAt := time.Now().Add(1 * time.Hour)
 
@@ -342,7 +380,6 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 		return
 	}
 
-	// 4. Envoyer l'email de réinitialisation (en goroutine)
 	go utils.SendPasswordResetEmail(req.Email, name, resetToken)
 
 	log.Printf("✅ Password reset token created for user %s (%s)", userID, req.Email)
@@ -353,7 +390,7 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 }
 
 // ============================================================================
-// PASSWORD RESET - RESET PASSWORD
+// RESET PASSWORD - PRESERVED 100%
 // ============================================================================
 
 func (h *AuthHandler) ResetPassword(c *gin.Context) {
@@ -363,7 +400,6 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 		return
 	}
 
-	// 1. Vérifier le token
 	var userID string
 	var expiresAt time.Time
 	var used bool
@@ -385,19 +421,16 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 		return
 	}
 
-	// 2. Vérifier si le token a déjà été utilisé
 	if used {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Ce lien a déjà été utilisé"})
 		return
 	}
 
-	// 3. Vérifier si le token a expiré
 	if time.Now().After(expiresAt) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Le lien a expiré. Veuillez faire une nouvelle demande."})
 		return
 	}
 
-	// 4. Hash du nouveau mot de passe
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
 		log.Printf("❌ Error hashing password: %v", err)
@@ -405,7 +438,6 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 		return
 	}
 
-	// 5. Mettre à jour le mot de passe
 	_, err = h.DB.Exec(`
 		UPDATE users 
 		SET password_hash = $1, updated_at = NOW()
@@ -418,7 +450,6 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 		return
 	}
 
-	// 6. Marquer le token comme utilisé
 	_, err = h.DB.Exec(`
 		UPDATE password_resets 
 		SET used = TRUE 
@@ -426,7 +457,6 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	`, req.Token)
 
 	if err != nil {
-		// Log l'erreur mais ne bloque pas la réponse (le mot de passe est déjà changé)
 		log.Printf("⚠️ Error marking token as used: %v", err)
 	}
 
@@ -438,7 +468,7 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 }
 
 // ============================================================================
-// HELPER FUNCTIONS
+// HELPER FUNCTIONS - PRESERVED 100%
 // ============================================================================
 
 func generateJWT(userID string) (string, error) {
