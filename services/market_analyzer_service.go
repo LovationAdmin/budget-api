@@ -96,14 +96,17 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 	currentAmount float64,
 	country string,
 	householdSize int,
+    // ✅ NOUVEAU PARAMETRE
+    chargeDescription string,
 ) (*models.MarketSuggestion, error) {
 	merchantName = strings.TrimSpace(merchantName)
 	effectiveAmount, chargeType := getEffectiveAmount(category, currentAmount, householdSize)
 
-	log.Printf("[MarketAnalyzer] Analyzing: %s (Merchant: %s), %.2f€ effective, country=%s, household=%d",
-		category, merchantName, effectiveAmount, country, householdSize)
+	log.Printf("[MarketAnalyzer] Analyzing: %s (Merchant: %s), %.2f€ effective, country=%s, household=%d, desc='%s'",
+		category, merchantName, effectiveAmount, country, householdSize, chargeDescription)
 
-	// 1. Try cache
+	// 1. Try cache (Note: Cache logic currently ignores description to keep it simple, 
+    // but in a real V2 we would hash the description into the cache key)
 	cached, err := s.getCachedSuggestion(ctx, category, country, merchantName)
 	if err == nil && cached != nil {
 		log.Printf("[MarketAnalyzer] ✅ Cache HIT")
@@ -117,7 +120,8 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 	// 2. Cache MISS - Call Claude AI
 	log.Printf("[MarketAnalyzer] ⚠️ Cache MISS - Calling Claude AI...")
 
-	competitors, err := s.searchCompetitors(ctx, category, merchantName, effectiveAmount, country, householdSize, chargeType)
+    // ✅ PASSER LA DESCRIPTION
+	competitors, err := s.searchCompetitors(ctx, category, merchantName, effectiveAmount, country, householdSize, chargeType, chargeDescription)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search competitors: %w", err)
 	}
@@ -272,8 +276,11 @@ func (s *MarketAnalyzerService) searchCompetitors(
 	country string,
 	householdSize int,
 	chargeType ChargeType,
+    // ✅ NOUVEAU PARAMETRE
+    chargeDescription string,
 ) ([]models.Competitor, error) {
-	prompt := s.buildPrompt(category, merchantName, effectiveAmount, country, householdSize, chargeType)
+    // ✅ PASSER LA DESCRIPTION AU BUILDER
+	prompt := s.buildPrompt(category, merchantName, effectiveAmount, country, householdSize, chargeType, chargeDescription)
 
 	response, err := s.AIService.CallClaude(ctx, prompt)
 	if err != nil {
@@ -299,6 +306,8 @@ func (s *MarketAnalyzerService) buildPrompt(
 	country string,
 	householdSize int,
 	chargeType ChargeType,
+    // ✅ NOUVEAU PARAMETRE
+    chargeDescription string,
 ) string {
 	familyContext := "individu seul"
 	if householdSize > 1 {
@@ -338,6 +347,12 @@ func (s *MarketAnalyzerService) buildPrompt(
 		currentProvider = "fournisseur actuel inconnu"
 	}
 
+    // ✅ PRÉPARATION DE LA CHAINE DE DETAILS UTILISATEUR
+    userDetailsString := "Aucun détail technique fourni."
+    if chargeDescription != "" {
+        userDetailsString = fmt.Sprintf("DÉTAILS SPÉCIFIQUES FOURNIS PAR L'UTILISATEUR : '%s'. (Utilise impérativement ces infos pour estimer la consommation, la surface ou le type d'offre équivalente).", chargeDescription)
+    }
+
 	return fmt.Sprintf(`Tu es un expert en comparaison de services en %s.
 
 CONTEXTE:
@@ -346,21 +361,25 @@ CONTEXTE:
 - Détails catégorie: %s
 - %s
 - Prix actuel: %.2f€/mois %s (chez %s)
-- %s
+- %s  <-- INFO CRITIQUE ICI
 
 MISSION: Trouve exactement 3 alternatives RÉELLES pour économiser.
 
-RÈGLES OBLIGATOIRES:
-1. Maximum 3 concurrents, pas plus
-2. Fournisseurs RÉELS existant en %s en 2024-2025
-3. Prix RÉALISTES basés sur les offres actuelles
-4. ⚠️ OBLIGATOIRE: Chaque concurrent DOIT avoir:
+RÈGLES CRITIQUES DE COMPARAISON ("APPLES TO APPLES"):
+1. Si l'utilisateur a fourni des détails (ex: "35m2", "12kVA", "Tous risques", "Netflix 4 écrans"), tes suggestions DOIVENT correspondre à ces critères techniques ou de confort.
+2. Si le prix actuel semble très élevé pour les détails fournis (ex: 70€ pour 20m2), signale-le dans les "pros" des concurrents (ex: "Votre tarif actuel est 30%% au-dessus de la moyenne").
+3. Si le prix actuel est bas grâce aux détails (ex: tarif social), ne propose que si tu trouves vraiment mieux.
+4. Pour l'ÉLECTRICITÉ/GAZ : Base-toi sur le prix du kWh actuel en %s pour estimer l'économie si la conso n'est pas explicite.
+
+RÈGLES OBLIGATOIRES DE SORTIE:
+1. Maximum 3 concurrents.
+2. Fournisseurs RÉELS existant en %s.
+3. ⚠️ OBLIGATOIRE: Chaque concurrent DOIT avoir:
    - "website_url": URL officielle du site web (OBLIGATOIRE)
    - "phone_number": numéro service client si disponible
    - "contact_email": email contact si disponible
-5. Si le prix actuel (%.2f€) est déjà inférieur aux offres du marché, retourne {"competitors": []}
-6. potential_savings = (prix_actuel - typical_price) * 12
-7. IMPORTANT: Ne propose PAS le fournisseur actuel (%s) comme alternative !
+4. potential_savings = (prix_actuel - typical_price) * 12.
+5. IMPORTANT: Ne propose PAS le fournisseur actuel (%s) comme alternative !
 
 Réponds UNIQUEMENT en JSON (sans markdown):
 {
@@ -368,9 +387,9 @@ Réponds UNIQUEMENT en JSON (sans markdown):
     {
       "name": "Nom fournisseur",
       "typical_price": 9.99,
-      "best_offer": "Description courte de l'offre",
+      "best_offer": "Offre équivalente aux critères fournis",
       "potential_savings": 96.00,
-      "pros": ["Avantage 1", "Avantage 2"],
+      "pros": ["Avantage technique 1", "Avantage prix 2"],
       "cons": ["Inconvénient 1"],
       "website_url": "https://www.fournisseur.fr",
       "phone_number": "0800 123 456",
@@ -387,10 +406,10 @@ Réponds UNIQUEMENT en JSON (sans markdown):
 		effectiveAmount,
 		priceContext,
 		currentProvider,
-		categoryContext,
+		userDetailsString, // ✅ Injection des détails
 		country,
-		effectiveAmount,
-		currentProvider,
+        country,
+        currentProvider,
 	)
 }
 
