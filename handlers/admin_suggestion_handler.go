@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"github.com/LovationAdmin/budget-api/services"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -10,6 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	
+	"github.com/LovationAdmin/budget-api/services"
 )
 
 type AdminSuggestionHandler struct {
@@ -76,6 +77,9 @@ func (h *AdminSuggestionHandler) RetroactiveAnalysis(c *gin.Context) {
 			label, _ := charge["label"].(string)
 			currentCat, _ := charge["category"].(string)
 			amount, _ := charge["amount"].(float64)
+			
+			// ✅ CORRECTION : Récupérer la description si elle existe
+			description, _ := charge["description"].(string)
 
 			if label == "" || amount == 0 {
 				continue
@@ -90,7 +94,8 @@ func (h *AdminSuggestionHandler) RetroactiveAnalysis(c *gin.Context) {
 			}
 
 			if isCategoryRelevant(detectedCat) {
-				_, err := h.MarketAnalyzer.AnalyzeCharge(bgCtx, detectedCat, "", amount, "FR", 1)
+				// ✅ CORRECTION : Ajout du paramètre description (dernier argument)
+				_, err := h.MarketAnalyzer.AnalyzeCharge(bgCtx, detectedCat, "", amount, "FR", 1, description)
 				if err == nil {
 					stats.CacheEntriesNew++
 				}
