@@ -4,9 +4,9 @@ import (
 	"log"
 	"net/http"
 
-	"[github.com/LovationAdmin/budget-api/services](https://github.com/LovationAdmin/budget-api/services)"
+	"github.com/LovationAdmin/budget-api/services"
 
-	"[github.com/gin-gonic/gin](https://github.com/gin-gonic/gin)"
+	"github.com/gin-gonic/gin"
 )
 
 type Handler struct {
