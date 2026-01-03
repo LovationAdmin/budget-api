@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
@@ -50,8 +49,8 @@ type AnalyzeChargeRequest struct {
 	MerchantName  string  `json:"merchant_name"`
 	CurrentAmount float64 `json:"current_amount" binding:"required"`
 	HouseholdSize int     `json:"household_size"` // Optional, defaults to 1
-    // ✅ AJOUT
-    Description   string  `json:"description,omitempty"`
+	// ✅ AJOUT
+	Description   string  `json:"description,omitempty"`
 }
 
 func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
@@ -83,8 +82,8 @@ func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 		req.CurrentAmount,
 		userCountry,
 		householdSize,
-        // ✅ PASSER LA DESCRIPTION
-        req.Description,
+		// ✅ PASSER LA DESCRIPTION
+		req.Description,
 	)
 
 	if err != nil {
@@ -107,8 +106,8 @@ type ChargeToAnalyze struct {
 	Label        string  `json:"label"`
 	Amount       float64 `json:"amount"`
 	MerchantName string  `json:"merchant_name,omitempty"`
-    // ✅ AJOUT
-    Description  string  `json:"description,omitempty"`
+	// ✅ AJOUT
+	Description  string  `json:"description,omitempty"`
 }
 
 type BulkAnalyzeRequest struct {
@@ -190,8 +189,8 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 				charge.Amount,
 				userCountry,
 				householdSize,
-                // ✅ PASSER LA DESCRIPTION
-                charge.Description,
+				// ✅ PASSER LA DESCRIPTION
+				charge.Description,
 			)
 
 			if err != nil {
@@ -259,8 +258,8 @@ func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 		0,
 		userCountry,
 		1,
-        // ✅ PASSER UNE DESCRIPTION VIDE (Pour un fetch générique)
-        "",
+		// ✅ PASSER UNE DESCRIPTION VIDE (Pour un fetch générique)
+		"",
 	)
 
 	if err != nil {

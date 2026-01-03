@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"log"
 	"net/http"
 	"time"
@@ -98,6 +99,7 @@ func (h *AdminSuggestionHandler) RetroactiveAnalysis(c *gin.Context) {
 				if err == nil {
 					stats.CacheEntriesNew++
 				}
+				// Petit délai pour éviter de surcharger l'API IA
 				time.Sleep(50 * time.Millisecond)
 			}
 		}
