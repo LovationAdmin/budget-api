@@ -1,38 +1,6 @@
 // config/database.go
-// ✅ VERSION CORRIGÉE - Ajout location/currency dans budgets
-// 
-// INSTRUCTIONS: Ajouter ces migrations APRÈS la création de la table budgets
-
-// ============================================================================
-// ✅ MIGRATIONS À AJOUTER
-// ============================================================================
-
-// Ajouter ces lignes dans la fonction RunMigrations(), 
-// APRÈS la création de la table budgets existante :
-
-`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS location VARCHAR(2) DEFAULT 'FR'`,
-`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS currency VARCHAR(3) DEFAULT 'EUR'`,
-
-// ============================================================================
-// ✅ INDEX À AJOUTER
-// ============================================================================
-
-// Ajouter cet index dans la section des indexes (après idx_budgets_owner_id) :
-
-`CREATE INDEX IF NOT EXISTS idx_budgets_location ON budgets(location)`,
-
-// ============================================================================
-// ✅ MISE À JOUR DES BUDGETS EXISTANTS
-// ============================================================================
-
-// Ajouter cette migration pour mettre à jour les budgets existants :
-
-`UPDATE budgets SET location = 'FR' WHERE location IS NULL`,
-`UPDATE budgets SET currency = 'EUR' WHERE currency IS NULL`,
-
-// ============================================================================
-// FICHIER COMPLET database.go AVEC TOUTES LES MODIFICATIONS
-// ============================================================================
+// ✅ VERSION FINALE COMPLÈTE - Location/Currency au niveau budget
+// ✅ TOUTES LES MIGRATIONS INCLUSES - Aucune ligne manquante
 
 package config
 
@@ -60,11 +28,14 @@ func InitDB() (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	// Performance optimizations
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(10)
-	db.SetConnMaxLifetime(5 * time.Minute)
-	db.SetConnMaxIdleTime(2 * time.Minute)
+	// ============================================================================
+	// 🚀 OPTIMISATIONS PERFORMANCE
+	// ============================================================================
+	
+	db.SetMaxOpenConns(25)                    // Max 25 connexions simultanées
+	db.SetMaxIdleConns(10)                    // Garder 10 connexions idle
+	db.SetConnMaxLifetime(5 * time.Minute)    // Recycler après 5min
+	db.SetConnMaxIdleTime(2 * time.Minute)    // Fermer idle après 2min
 
 	fmt.Println("✅ Database connection pool configured:")
 	fmt.Printf("   - MaxOpenConns: 25\n")
@@ -80,7 +51,14 @@ func RunMigrations(db *sql.DB) error {
 	start := time.Now()
 
 	migrations := []string{
+		// ============================================================================
+		// EXTENSIONS
+		// ============================================================================
 		`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`,
+		
+		// ============================================================================
+		// TABLES PRINCIPALES
+		// ============================================================================
 		
 		`CREATE TABLE IF NOT EXISTS users (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -102,10 +80,6 @@ func RunMigrations(db *sql.DB) error {
 			created_at TIMESTAMP DEFAULT NOW(),
 			updated_at TIMESTAMP DEFAULT NOW()
 		)`,
-		
-		// ✅ AJOUT DES COLONNES LOCATION ET CURRENCY
-		`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS location VARCHAR(2) DEFAULT 'FR'`,
-		`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS currency VARCHAR(3) DEFAULT 'EUR'`,
 		
 		`CREATE TABLE IF NOT EXISTS budget_members (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -172,6 +146,10 @@ func RunMigrations(db *sql.DB) error {
 			created_at TIMESTAMP DEFAULT NOW()
 		)`,
 
+		// ============================================================================
+		// TABLES BANKING
+		// ============================================================================
+
 		`CREATE TABLE IF NOT EXISTS bank_connections (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -233,6 +211,10 @@ func RunMigrations(db *sql.DB) error {
 			created_at TIMESTAMP DEFAULT NOW()
 		)`,
 
+		// ============================================================================
+		// TABLES MARKET SUGGESTIONS & AI
+		// ============================================================================
+
 		`CREATE TABLE IF NOT EXISTS market_suggestions (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			category VARCHAR(50) NOT NULL,
@@ -273,48 +255,86 @@ func RunMigrations(db *sql.DB) error {
 		)`,
 
 		// ============================================================================
-		// INDEXES
+		// ✅ NOUVELLES COLONNES BUDGETS : LOCATION & CURRENCY
 		// ============================================================================
 		
+		`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS location VARCHAR(2) DEFAULT 'FR'`,
+		`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS currency VARCHAR(3) DEFAULT 'EUR'`,
+
+		// ============================================================================
+		// INDEXES CRITIQUES POUR PERFORMANCE
+		// ============================================================================
+		
+		// Indexes budget_members
 		`CREATE INDEX IF NOT EXISTS idx_budget_members_budget_id ON budget_members(budget_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_budget_members_user_id ON budget_members(user_id)`,
+		
+		// Indexes budget_data
 		`CREATE INDEX IF NOT EXISTS idx_budget_data_budget_id ON budget_data(budget_id)`,
+		
+		// Indexes invitations
 		`CREATE INDEX IF NOT EXISTS idx_invitations_email ON invitations(email)`,
 		`CREATE INDEX IF NOT EXISTS idx_invitations_token ON invitations(token)`,
 		`CREATE INDEX IF NOT EXISTS idx_invitations_budget_id ON invitations(budget_id)`,
+		
+		// Indexes audit_logs
 		`CREATE INDEX IF NOT EXISTS idx_audit_logs_budget_id ON audit_logs(budget_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id)`,
+		
+		// Indexes sessions
 		`CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_refresh_token ON sessions(refresh_token)`,
+		
+		// Indexes email_verifications
 		`CREATE INDEX IF NOT EXISTS idx_email_verifications_token ON email_verifications(token)`,
 		`CREATE INDEX IF NOT EXISTS idx_email_verifications_user_id ON email_verifications(user_id)`,
+		
+		// Indexes password_resets
 		`CREATE INDEX IF NOT EXISTS idx_password_resets_token ON password_resets(token)`,
 		`CREATE INDEX IF NOT EXISTS idx_password_resets_user_id ON password_resets(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_password_resets_expires_at ON password_resets(expires_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_password_resets_used ON password_resets(used)`,
+		
+		// Indexes users
 		`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_country ON users(country)`,
+		
+		// Indexes budgets
 		`CREATE INDEX IF NOT EXISTS idx_budgets_owner_id ON budgets(owner_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_budgets_created_at ON budgets(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_budgets_location ON budgets(location)`, // ✅ NOUVEAU
 		
-		// ✅ NOUVEL INDEX POUR LOCATION
-		`CREATE INDEX IF NOT EXISTS idx_budgets_location ON budgets(location)`,
-		
+		// Indexes bank_connections
 		`CREATE INDEX IF NOT EXISTS idx_bank_connections_user ON bank_connections(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_bank_connections_budget ON bank_connections(budget_id)`,
+		
+		// Indexes bank_accounts
 		`CREATE INDEX IF NOT EXISTS idx_bank_accounts_connection ON bank_accounts(connection_id)`,
+		
+		// Indexes label_mappings
 		`CREATE INDEX IF NOT EXISTS idx_label_mappings_label ON label_mappings(normalized_label)`,
+		
+		// Indexes banking_connections
 		`CREATE INDEX IF NOT EXISTS idx_banking_connections_user_budget ON banking_connections(user_id, budget_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_banking_connections_session ON banking_connections(session_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_banking_connections_status ON banking_connections(status)`,
+		
+		// Indexes banking_accounts
 		`CREATE INDEX IF NOT EXISTS idx_banking_accounts_connection ON banking_accounts(connection_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_banking_accounts_last_sync ON banking_accounts(last_sync_at)`,
+		
+		// Indexes market_suggestions
 		`CREATE INDEX IF NOT EXISTS idx_market_suggestions_category_country ON market_suggestions(category, country)`,
 		`CREATE INDEX IF NOT EXISTS idx_market_suggestions_expires ON market_suggestions(expires_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_market_suggestions_merchant ON market_suggestions(merchant_name)`,
+		
+		// Indexes ai_api_usage
 		`CREATE INDEX IF NOT EXISTS idx_ai_usage_user ON ai_api_usage(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_ai_usage_type ON ai_api_usage(request_type)`,
 		`CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_api_usage(created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_ai_usage_cache ON ai_api_usage(cache_hit)`,
+		
+		// Indexes affiliate_links
 		`CREATE INDEX IF NOT EXISTS idx_affiliate_category_country ON affiliate_links(category, country)`,
 		`CREATE INDEX IF NOT EXISTS idx_affiliate_active ON affiliate_links(is_active)`,
 
@@ -322,17 +342,22 @@ func RunMigrations(db *sql.DB) error {
 		// CONSTRAINTS
 		// ============================================================================
 		
-		`ALTER TABLE bank_connections DROP CONSTRAINT IF NOT EXISTS bank_connections_provider_connection_id_key`,
-		`ALTER TABLE bank_connections DROP CONSTRAINT IF NOT EXISTS unique_provider_connection_per_budget`,
+		`ALTER TABLE bank_connections DROP CONSTRAINT IF EXISTS bank_connections_provider_connection_id_key`,
+		`ALTER TABLE bank_connections DROP CONSTRAINT IF EXISTS unique_provider_connection_per_budget`,
 		`ALTER TABLE bank_connections ADD CONSTRAINT unique_provider_connection_per_budget UNIQUE (provider_connection_id, budget_id)`,
-		`ALTER TABLE bank_accounts DROP CONSTRAINT IF NOT EXISTS unique_account_per_connection`,
+
+		`ALTER TABLE bank_accounts DROP CONSTRAINT IF EXISTS unique_account_per_connection`,
 		`ALTER TABLE bank_accounts ADD CONSTRAINT unique_account_per_connection UNIQUE (connection_id, external_account_id)`,
-		`ALTER TABLE banking_connections DROP CONSTRAINT IF NOT EXISTS unique_banking_connection_per_budget`,
+
+		`ALTER TABLE banking_connections DROP CONSTRAINT IF EXISTS unique_banking_connection_per_budget`,
 		`ALTER TABLE banking_connections ADD CONSTRAINT unique_banking_connection_per_budget 
 			UNIQUE (user_id, budget_id, aspsp_name, aspsp_country)`,
-		`ALTER TABLE banking_accounts DROP CONSTRAINT IF NOT EXISTS unique_banking_account_per_connection`,
+
+		`ALTER TABLE banking_accounts DROP CONSTRAINT IF EXISTS unique_banking_account_per_connection`,
 		`ALTER TABLE banking_accounts ADD CONSTRAINT unique_banking_account_per_connection 
 			UNIQUE (connection_id, account_id)`,
+
+		// Market suggestions unique indexes
 		`DROP INDEX IF EXISTS idx_unique_market_suggestion_null`,
 		`DROP INDEX IF EXISTS idx_unique_market_suggestion_not_null`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_market_suggestion_null
@@ -341,16 +366,22 @@ func RunMigrations(db *sql.DB) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_market_suggestion_not_null
 			ON market_suggestions (category, country, merchant_name)
 			WHERE merchant_name IS NOT NULL`,
+
+		// Affiliate links unique index
 		`DROP INDEX IF EXISTS idx_unique_affiliate_link`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_affiliate_link
 			ON affiliate_links (category, country, provider_name)`,
 
 		// ============================================================================
-		// ✅ MISE À JOUR DES BUDGETS EXISTANTS
+		// ✅ MIGRATION DES DONNÉES EXISTANTES
 		// ============================================================================
 		
+		// Mettre à jour les budgets existants avec valeurs par défaut
 		`UPDATE budgets SET location = 'FR' WHERE location IS NULL`,
 		`UPDATE budgets SET currency = 'EUR' WHERE currency IS NULL`,
+		
+		// Mettre à jour les users existants avec valeurs par défaut (optionnel)
+		`UPDATE users SET country = 'FR' WHERE country IS NULL`,
 
 		// ============================================================================
 		// SEED DATA
@@ -370,6 +401,7 @@ func RunMigrations(db *sql.DB) error {
 
 	for i, migration := range migrations {
 		if _, err := db.Exec(migration); err != nil {
+			// Log errors but don't fail hard (some migrations may warn on existing DBs)
 			fmt.Printf("⚠️  Migration %d warning: %v\n", i+1, err)
 			errorCount++
 		} else {
