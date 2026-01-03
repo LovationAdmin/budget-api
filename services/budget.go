@@ -185,7 +185,7 @@ func (s *BudgetService) GetUserBudgets(ctx context.Context, userID string) ([]mo
 }
 
 // Update updates a budget name
-func (s *BudgetService) Update(ctx context.Context, id, name string) error {
+func (s *BudgetService) Update(ctx context.Context, id, name, location, currency string) error {
 	query := `
 		UPDATE budgets
 		SET name = $1, 
