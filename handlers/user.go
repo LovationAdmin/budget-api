@@ -1,5 +1,5 @@
 // handlers/user.go
-// VERSION CORRIGÉE SANS COLONNE YEAR
+// ✅ VERSION CORRIGÉE - UpdateLocation et GetLocation SUPPRIMÉS
 
 package handlers
 
@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -36,8 +35,6 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 	err := h.DB.QueryRow(`
 		SELECT id, email, name, 
 		       COALESCE(avatar, ''), 
-		       COALESCE(country, 'FR'),
-		       COALESCE(postal_code, ''),
 		       totp_enabled, email_verified, 
 		       created_at, updated_at
 		FROM users
@@ -47,8 +44,6 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 		&user.Email,
 		&user.Name,
 		&user.Avatar,
-		&user.Country,
-		&user.PostalCode,
 		&user.TOTPEnabled,
 		&user.EmailVerified,
 		&user.CreatedAt,
@@ -98,95 +93,7 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Profile updated successfully",
-		"user": gin.H{
-			"name":   req.Name,
-			"avatar": req.Avatar,
-		},
-	})
-}
-
-// ============================================================================
-// LOCATION MANAGEMENT
-// ============================================================================
-
-type UpdateLocationRequest struct {
-	Country    string `json:"country" binding:"required,len=2"`
-	PostalCode string `json:"postal_code"`
-}
-
-func (h *UserHandler) UpdateLocation(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-		return
-	}
-
-	var req UpdateLocationRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid country code (must be 2 characters)"})
-		return
-	}
-
-	validCountries := map[string]bool{
-		"FR": true, "BE": true, "DE": true, "ES": true, "IT": true,
-		"PT": true, "NL": true, "LU": true, "AT": true, "IE": true,
-	}
-
-	countryUpper := strings.ToUpper(req.Country)
-	if !validCountries[countryUpper] {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Country not supported. Supported countries: FR, BE, DE, ES, IT, PT, NL, LU, AT, IE",
-		})
-		return
-	}
-
-	_, err := h.DB.Exec(`
-		UPDATE users
-		SET country = $1, postal_code = $2, updated_at = NOW()
-		WHERE id = $3
-	`, countryUpper, req.PostalCode, userID)
-
-	if err != nil {
-		log.Printf("Failed to update location for user %s: %v", userID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update location"})
-		return
-	}
-
-	log.Printf("✅ User %s location updated: %s %s", userID, countryUpper, req.PostalCode)
-
-	c.JSON(http.StatusOK, gin.H{
-		"message":     "Location updated successfully",
-		"country":     countryUpper,
-		"postal_code": req.PostalCode,
-	})
-}
-
-func (h *UserHandler) GetLocation(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-		return
-	}
-
-	var country, postalCode string
-	err := h.DB.QueryRow(`
-		SELECT COALESCE(country, 'FR'), COALESCE(postal_code, '')
-		FROM users
-		WHERE id = $1
-	`, userID).Scan(&country, &postalCode)
-
-	if err != nil {
-		log.Printf("Error fetching location: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch location"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"country":     country,
-		"postal_code": postalCode,
-	})
+	c.JSON(http.StatusOK, gin.H{"message": "Profile updated successfully"})
 }
 
 // ============================================================================
@@ -211,27 +118,30 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
+	// Get current password hash
 	var currentHash string
-	err := h.DB.QueryRow(`
-		SELECT password_hash FROM users WHERE id = $1
-	`, userID).Scan(&currentHash)
-
+	err := h.DB.QueryRow(`SELECT password_hash FROM users WHERE id = $1`, userID).Scan(&currentHash)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify password"})
+		log.Printf("Error fetching user: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to change password"})
 		return
 	}
 
+	// Verify current password
 	if !utils.CheckPassword(req.CurrentPassword, currentHash) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Current password is incorrect"})
 		return
 	}
 
+	// Hash new password
 	newHash, err := utils.HashPassword(req.NewPassword)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash new password"})
+		log.Printf("Error hashing password: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to change password"})
 		return
 	}
 
+	// Update password
 	_, err = h.DB.Exec(`
 		UPDATE users
 		SET password_hash = $1, updated_at = NOW()
@@ -239,11 +149,22 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 	`, newHash, userID)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update password"})
+		log.Printf("Error updating password: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to change password"})
 		return
 	}
 
-	log.Printf("✅ User %s password changed successfully", userID)
+	// Invalidate all sessions except current one
+	refreshToken := c.GetHeader("X-Refresh-Token")
+	if refreshToken != "" {
+		_, err = h.DB.Exec(`
+			DELETE FROM sessions
+			WHERE user_id = $1 AND refresh_token != $2
+		`, userID, refreshToken)
+		if err != nil {
+			log.Printf("Error invalidating sessions: %v", err)
+		}
+	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Password changed successfully"})
 }
@@ -252,7 +173,12 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 // 2FA MANAGEMENT
 // ============================================================================
 
-func (h *UserHandler) SetupTOTP(c *gin.Context) {
+type Setup2FAResponse struct {
+	Secret string `json:"secret"`
+	QRCode string `json:"qr_code"`
+}
+
+func (h *UserHandler) Setup2FA(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
@@ -262,16 +188,19 @@ func (h *UserHandler) SetupTOTP(c *gin.Context) {
 	var email string
 	err := h.DB.QueryRow(`SELECT email FROM users WHERE id = $1`, userID).Scan(&email)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user"})
+		log.Printf("Error fetching user: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to setup 2FA"})
 		return
 	}
 
-	secret, qrCode, err := utils.GenerateTOTPSecret(email)
+	secret, qrCode, err := utils.GenerateTOTP(email)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate TOTP"})
+		log.Printf("Error generating TOTP: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to setup 2FA"})
 		return
 	}
 
+	// Store secret temporarily (not enabled yet)
 	_, err = h.DB.Exec(`
 		UPDATE users
 		SET totp_secret = $1, updated_at = NOW()
@@ -279,94 +208,90 @@ func (h *UserHandler) SetupTOTP(c *gin.Context) {
 	`, secret, userID)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to store TOTP secret"})
+		log.Printf("Error storing TOTP secret: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to setup 2FA"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"secret":  secret,
-		"qr_code": qrCode,
+	c.JSON(http.StatusOK, Setup2FAResponse{
+		Secret: secret,
+		QRCode: qrCode,
 	})
 }
 
-type VerifyTOTPRequest struct {
+type Verify2FARequest struct {
 	Code string `json:"code" binding:"required"`
 }
 
-func (h *UserHandler) VerifyTOTP(c *gin.Context) {
+func (h *UserHandler) Verify2FA(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
-	var req VerifyTOTPRequest
+	var req Verify2FARequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	var secret sql.NullString
-	err := h.DB.QueryRow(`
-		SELECT totp_secret FROM users WHERE id = $1
-	`, userID).Scan(&secret)
-
-	if err != nil || !secret.Valid {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "TOTP not set up"})
+	var secret string
+	err := h.DB.QueryRow(`SELECT totp_secret FROM users WHERE id = $1`, userID).Scan(&secret)
+	if err != nil {
+		log.Printf("Error fetching TOTP secret: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify 2FA"})
 		return
 	}
 
-	valid, err := utils.VerifyTOTP(secret.String, req.Code)
-	if err != nil || !valid {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid TOTP code"})
+	if secret == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "2FA not set up"})
 		return
 	}
 
+	if !utils.VerifyTOTP(secret, req.Code) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid code"})
+		return
+	}
+
+	// Enable 2FA
 	_, err = h.DB.Exec(`
 		UPDATE users
-		SET totp_enabled = TRUE, updated_at = NOW()
+		SET totp_enabled = true, updated_at = NOW()
 		WHERE id = $1
 	`, userID)
 
 	if err != nil {
+		log.Printf("Error enabling 2FA: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to enable 2FA"})
 		return
 	}
 
-	log.Printf("✅ 2FA enabled for user %s", userID)
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "2FA enabled successfully",
-		"enabled": true,
-	})
+	c.JSON(http.StatusOK, gin.H{"message": "2FA enabled successfully"})
 }
 
-type DisableTOTPRequest struct {
-	Password string `json:"password" binding:"required"`
-	Code     string `json:"code" binding:"required"`
-}
-
-func (h *UserHandler) DisableTOTP(c *gin.Context) {
+func (h *UserHandler) Disable2FA(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
-	var req DisableTOTPRequest
+	var req struct {
+		Password string `json:"password" binding:"required"`
+	}
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	// Verify password
 	var passwordHash string
-	var secret sql.NullString
-	err := h.DB.QueryRow(`
-		SELECT password_hash, totp_secret FROM users WHERE id = $1
-	`, userID).Scan(&passwordHash, &secret)
-
+	err := h.DB.QueryRow(`SELECT password_hash FROM users WHERE id = $1`, userID).Scan(&passwordHash)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify credentials"})
+		log.Printf("Error fetching user: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to disable 2FA"})
 		return
 	}
 
@@ -375,31 +300,20 @@ func (h *UserHandler) DisableTOTP(c *gin.Context) {
 		return
 	}
 
-	if secret.Valid {
-		valid, err := utils.VerifyTOTP(secret.String, req.Code)
-		if err != nil || !valid {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid 2FA code"})
-			return
-		}
-	}
-
+	// Disable 2FA
 	_, err = h.DB.Exec(`
 		UPDATE users
-		SET totp_enabled = FALSE, totp_secret = NULL, updated_at = NOW()
+		SET totp_enabled = false, totp_secret = '', updated_at = NOW()
 		WHERE id = $1
 	`, userID)
 
 	if err != nil {
+		log.Printf("Error disabling 2FA: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to disable 2FA"})
 		return
 	}
 
-	log.Printf("✅ 2FA disabled for user %s", userID)
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "2FA disabled successfully",
-		"enabled": false,
-	})
+	c.JSON(http.StatusOK, gin.H{"message": "2FA disabled successfully"})
 }
 
 // ============================================================================
@@ -423,13 +337,12 @@ func (h *UserHandler) DeleteAccount(c *gin.Context) {
 		return
 	}
 
+	// Verify password
 	var passwordHash string
-	err := h.DB.QueryRow(`
-		SELECT password_hash FROM users WHERE id = $1
-	`, userID).Scan(&passwordHash)
-
+	err := h.DB.QueryRow(`SELECT password_hash FROM users WHERE id = $1`, userID).Scan(&passwordHash)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify password"})
+		log.Printf("Error fetching user: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete account"})
 		return
 	}
 
@@ -438,21 +351,19 @@ func (h *UserHandler) DeleteAccount(c *gin.Context) {
 		return
 	}
 
+	// Delete user (CASCADE will handle related data)
 	_, err = h.DB.Exec(`DELETE FROM users WHERE id = $1`, userID)
-
 	if err != nil {
-		log.Printf("Error deleting account: %v", err)
+		log.Printf("Error deleting user: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete account"})
 		return
 	}
-
-	log.Printf("✅ User %s account deleted", userID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Account deleted successfully"})
 }
 
 // ============================================================================
-// GDPR DATA EXPORT - VERSION CORRIGÉE
+// GDPR EXPORT
 // ============================================================================
 
 func (h *UserHandler) ExportUserData(c *gin.Context) {
@@ -462,259 +373,71 @@ func (h *UserHandler) ExportUserData(c *gin.Context) {
 		return
 	}
 
-	log.Printf("📊 [GDPR Export] User %s requested data export", userID)
-
-	// 1. Get user profile
+	// Get user data
 	var user models.User
 	err := h.DB.QueryRow(`
-		SELECT id, email, name, 
-		       COALESCE(avatar, ''), 
-		       COALESCE(country, 'FR'),
-		       COALESCE(postal_code, ''),
-		       totp_enabled, email_verified, 
-		       created_at, updated_at
+		SELECT id, email, name, COALESCE(avatar, ''), 
+		       totp_enabled, email_verified, created_at, updated_at
 		FROM users
 		WHERE id = $1
 	`, userID).Scan(
-		&user.ID,
-		&user.Email,
-		&user.Name,
-		&user.Avatar,
-		&user.Country,
-		&user.PostalCode,
-		&user.TOTPEnabled,
-		&user.EmailVerified,
-		&user.CreatedAt,
-		&user.UpdatedAt,
+		&user.ID, &user.Email, &user.Name, &user.Avatar,
+		&user.TOTPEnabled, &user.EmailVerified, &user.CreatedAt, &user.UpdatedAt,
 	)
 
 	if err != nil {
-		log.Printf("❌ [GDPR Export] Failed to fetch user profile: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user data"})
+		log.Printf("Error fetching user: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to export data"})
 		return
 	}
 
-	// 2. Get user's budgets (✅ SANS COLONNE YEAR)
-	budgetRows, err := h.DB.Query(`
-		SELECT DISTINCT ON (b.id)
-			b.id,
-			b.name,
-			b.created_at,
-			b.updated_at,
-			bd.data
-		FROM budgets b
-		LEFT JOIN budget_data bd ON b.id = bd.budget_id
-		WHERE b.owner_id = $1
-		ORDER BY b.id, b.created_at DESC
+	// Get owned budgets
+	rows, err := h.DB.Query(`
+		SELECT id, name, created_at
+		FROM budgets
+		WHERE owner_id = $1
+		ORDER BY created_at DESC
 	`, userID)
 
 	if err != nil {
-		log.Printf("❌ [GDPR Export] Failed to fetch budgets: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch budget data"})
+		log.Printf("Error fetching budgets: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to export data"})
 		return
 	}
-	defer budgetRows.Close()
+	defer rows.Close()
 
-	type BudgetExport struct {
-		ID        string                 `json:"id"`
-		Name      string                 `json:"name"`
-		CreatedAt string                 `json:"created_at"`
-		UpdatedAt string                 `json:"updated_at"`
-		Data      map[string]interface{} `json:"data,omitempty"`
-	}
-
-	var budgets []BudgetExport
-	for budgetRows.Next() {
-		var budget BudgetExport
-		var rawData []byte
-		var createdAt, updatedAt interface{}
-
-		err := budgetRows.Scan(
-			&budget.ID,
-			&budget.Name,
-			&createdAt,
-			&updatedAt,
-			&rawData,
-		)
-
-		if err != nil {
-			log.Printf("⚠️ [GDPR Export] Error scanning budget: %v", err)
+	budgets := []map[string]interface{}{}
+	for rows.Next() {
+		var id, name string
+		var createdAt time.Time
+		if err := rows.Scan(&id, &name, &createdAt); err != nil {
 			continue
 		}
-
-		if t, ok := createdAt.([]uint8); ok {
-			budget.CreatedAt = string(t)
-		}
-		if t, ok := updatedAt.([]uint8); ok {
-			budget.UpdatedAt = string(t)
-		}
-
-		// Decrypt and parse budget data if present
-		if len(rawData) > 0 {
-			var wrapper struct {
-				Encrypted string `json:"encrypted"`
-			}
-
-			if err := json.Unmarshal(rawData, &wrapper); err == nil && wrapper.Encrypted != "" {
-				decryptedBytes, err := utils.Decrypt(wrapper.Encrypted)
-				if err != nil {
-					log.Printf("⚠️ [GDPR Export] Failed to decrypt budget %s: %v", budget.ID, err)
-					budget.Data = map[string]interface{}{
-						"error": "Could not decrypt budget data",
-					}
-				} else {
-					if err := json.Unmarshal(decryptedBytes, &budget.Data); err != nil {
-						log.Printf("⚠️ [GDPR Export] Failed to unmarshal decrypted data: %v", err)
-						budget.Data = map[string]interface{}{
-							"error": "Could not parse decrypted data",
-						}
-					}
-				}
-			} else {
-				if err := json.Unmarshal(rawData, &budget.Data); err != nil {
-					log.Printf("⚠️ [GDPR Export] Failed to unmarshal budget data: %v", err)
-					budget.Data = map[string]interface{}{
-						"error": "Could not parse budget data",
-					}
-				}
-			}
-		}
-
-		budgets = append(budgets, budget)
+		budgets = append(budgets, map[string]interface{}{
+			"id":         id,
+			"name":       name,
+			"created_at": createdAt,
+		})
 	}
 
-	// 3. Get budgets where user is a member (✅ SANS COLONNE YEAR)
-	sharedBudgetRows, err := h.DB.Query(`
-		SELECT 
-			b.id,
-			b.name,
-			bm.role,
-			bm.joined_at
-		FROM budget_members bm
-		JOIN budgets b ON bm.budget_id = b.id
-		WHERE bm.user_id = $1 AND b.owner_id != $1
-		ORDER BY bm.joined_at DESC
-	`, userID)
-
-	if err != nil {
-		log.Printf("⚠️ [GDPR Export] Failed to fetch shared budgets: %v", err)
-	}
-
-	type SharedBudgetExport struct {
-		ID       string `json:"id"`
-		Name     string `json:"name"`
-		Role     string `json:"role"`
-		JoinedAt string `json:"joined_at"`
-	}
-
-	var sharedBudgets []SharedBudgetExport
-	if sharedBudgetRows != nil {
-		defer sharedBudgetRows.Close()
-		for sharedBudgetRows.Next() {
-			var sb SharedBudgetExport
-			var joinedAt interface{}
-
-			err := sharedBudgetRows.Scan(
-				&sb.ID,
-				&sb.Name,
-				&sb.Role,
-				&joinedAt,
-			)
-
-			if err != nil {
-				log.Printf("⚠️ [GDPR Export] Error scanning shared budget: %v", err)
-				continue
-			}
-
-			if t, ok := joinedAt.([]uint8); ok {
-				sb.JoinedAt = string(t)
-			}
-
-			sharedBudgets = append(sharedBudgets, sb)
-		}
-	}
-
-	// 4. Get pending invitations
-	invitationRows, err := h.DB.Query(`
-		SELECT 
-			i.id,
-			i.budget_id,
-			b.name as budget_name,
-			i.status,
-			i.created_at
-		FROM invitations i
-		JOIN budgets b ON i.budget_id = b.id
-		WHERE i.email = (SELECT email FROM users WHERE id = $1)
-		ORDER BY i.created_at DESC
-	`, userID)
-
-	if err != nil {
-		log.Printf("⚠️ [GDPR Export] Failed to fetch invitations: %v", err)
-	}
-
-	type InvitationExport struct {
-		ID         string `json:"id"`
-		BudgetID   string `json:"budget_id"`
-		BudgetName string `json:"budget_name"`
-		Status     string `json:"status"`
-		CreatedAt  string `json:"created_at"`
-	}
-
-	var invitations []InvitationExport
-	if invitationRows != nil {
-		defer invitationRows.Close()
-		for invitationRows.Next() {
-			var inv InvitationExport
-			var createdAt interface{}
-
-			err := invitationRows.Scan(
-				&inv.ID,
-				&inv.BudgetID,
-				&inv.BudgetName,
-				&inv.Status,
-				&createdAt,
-			)
-
-			if err != nil {
-				log.Printf("⚠️ [GDPR Export] Error scanning invitation: %v", err)
-				continue
-			}
-
-			if t, ok := createdAt.([]uint8); ok {
-				inv.CreatedAt = string(t)
-			}
-
-			invitations = append(invitations, inv)
-		}
-	}
-
-	// 5. Build final export
-	exportData := gin.H{
-		"export_info": gin.H{
-			"generated_at": time.Now().Format(time.RFC3339),
-			"user_id":      userID,
-			"format":       "JSON",
-			"compliance":   "GDPR Article 20 - Right to Data Portability",
-		},
-		"user_profile": gin.H{
+	// Compile export data
+	exportData := map[string]interface{}{
+		"user": map[string]interface{}{
 			"id":             user.ID,
 			"email":          user.Email,
 			"name":           user.Name,
 			"avatar":         user.Avatar,
-			"country":        user.Country,
-			"postal_code":    user.PostalCode,
 			"totp_enabled":   user.TOTPEnabled,
 			"email_verified": user.EmailVerified,
-			"created_at":     user.CreatedAt.Format(time.RFC3339),
-			"updated_at":     user.UpdatedAt.Format(time.RFC3339),
+			"created_at":     user.CreatedAt,
+			"updated_at":     user.UpdatedAt,
 		},
-		"owned_budgets":  budgets,
-		"shared_budgets": sharedBudgets,
-		"invitations":    invitations,
-		"note":           "This export contains only YOUR personal data. Data from other users in shared budgets is excluded for privacy reasons.",
+		"owned_budgets": budgets,
+		"export_date":   time.Now(),
+		"format_version": "1.0",
 	}
 
-	log.Printf("✅ [GDPR Export] Successfully generated export for user %s", userID)
-
+	c.Header("Content-Disposition", "attachment; filename=user-data-export.json")
+	c.Header("Content-Type", "application/json")
 	c.JSON(http.StatusOK, exportData)
 }

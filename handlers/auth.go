@@ -1,64 +1,22 @@
 // handlers/auth.go
-// ✅ VERSION OPTIMISÉE - Pour schéma avec country/postal_code
-// ✅ ZÉRO RÉGRESSION - Colonnes garanties par migrations
+// ✅ VERSION CORRIGÉE - Signup sans country/postal_code
 
 package handlers
 
 import (
 	"database/sql"
-	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
-	"github.com/LovationAdmin/budget-api/utils"
-
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
+	"github.com/LovationAdmin/budget-api/models"
+	"github.com/LovationAdmin/budget-api/utils"
 )
-
-// ============================================================================
-// STRUCTURES
-// ============================================================================
 
 type AuthHandler struct {
 	DB *sql.DB
-}
-
-// 🆕 UPDATED - Added optional Country and PostalCode
-type SignupRequest struct {
-	Email      string `json:"email" binding:"required,email"`
-	Password   string `json:"password" binding:"required,min=8"`
-	Name       string `json:"name" binding:"required"`
-	Country    string `json:"country"`     // ✅ NEW (optional, defaults to FR)
-	PostalCode string `json:"postal_code"` // ✅ NEW (optional)
-}
-
-// ✅ PRESERVED
-type LoginRequest struct {
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required"`
-	TOTPCode string `json:"totp_code"`
-}
-
-// ✅ PRESERVED
-type ResendVerificationRequest struct {
-	Email string `json:"email" binding:"required,email"`
-}
-
-// ✅ PRESERVED
-type ForgotPasswordRequest struct {
-	Email string `json:"email" binding:"required,email"`
-}
-
-// ✅ PRESERVED
-type ResetPasswordRequest struct {
-	Token       string `json:"token" binding:"required"`
-	NewPassword string `json:"new_password" binding:"required,min=8"`
 }
 
 // ============================================================================
@@ -66,85 +24,74 @@ type ResetPasswordRequest struct {
 // ============================================================================
 
 func (h *AuthHandler) Signup(c *gin.Context) {
-	var req SignupRequest
+	var req models.SignupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 🆕 Handle country (default to FR if empty)
-	country := strings.ToUpper(req.Country)
-	if country == "" {
-		country = "FR"
-	}
-
-	// 🆕 Validate country
-	validCountries := map[string]bool{
-		"FR": true, "BE": true, "DE": true, "ES": true, "IT": true,
-		"PT": true, "NL": true, "LU": true, "AT": true, "IE": true,
-	}
-
-	if !validCountries[country] {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Country not supported. Supported: FR, BE, DE, ES, IT, PT, NL, LU, AT, IE",
-		})
-		return
-	}
-
-	// ✅ EXISTING - Check if user exists
+	// Check if user already exists
 	var exists bool
 	err := h.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)", req.Email).Scan(&exists)
 	if err != nil {
+		log.Printf("Error checking user existence: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}
 
 	if exists {
-		c.JSON(http.StatusConflict, gin.H{"error": "Cet email est déjà utilisé"})
+		c.JSON(http.StatusConflict, gin.H{"error": "Email already registered"})
 		return
 	}
 
-	// ✅ EXISTING - Hash password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	// Hash password
+	hashedPassword, err := utils.HashPassword(req.Password)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
+		log.Printf("Error hashing password: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create account"})
 		return
 	}
 
-	// 🆕 UPDATED - Create user WITH country and postal_code
+	// Create user
 	userID := uuid.New().String()
-	_, err = h.DB.Exec(`
-		INSERT INTO users (id, email, password_hash, name, country, postal_code, created_at, updated_at, email_verified)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE)
-	`, userID, req.Email, string(hashedPassword), req.Name, country, req.PostalCode, time.Now(), time.Now())
+	now := time.Now()
 
+	// ✅ CORRIGÉ : Plus de country/postal_code dans Signup
+	query := `
+		INSERT INTO users (id, email, password_hash, name, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`
+	
+	_, err = h.DB.Exec(query, userID, req.Email, hashedPassword, req.Name, now, now)
 	if err != nil {
-		log.Printf("❌ Error creating user: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur création utilisateur"})
+		log.Printf("Error creating user: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create account"})
 		return
 	}
 
-	log.Printf("✅ User created: %s (Country: %s, Postal: %s)", req.Email, country, req.PostalCode)
-
-	// ✅ EXISTING - Create Verification Token
+	// Generate email verification token
 	verificationToken := uuid.New().String()
 	expiresAt := time.Now().Add(24 * time.Hour)
 
 	_, err = h.DB.Exec(`
-        INSERT INTO email_verifications (user_id, token, expires_at)
-        VALUES ($1, $2, $3)
-    `, userID, verificationToken, expiresAt)
+		INSERT INTO email_verifications (id, user_id, token, expires_at, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, uuid.New().String(), userID, verificationToken, expiresAt, now)
 
 	if err != nil {
-		log.Printf("Erreur insert verification: %v", err)
+		log.Printf("Error creating verification token: %v", err)
 	}
 
-	// ✅ EXISTING - Send Email
-	go utils.SendVerificationEmail(req.Email, req.Name, verificationToken)
+	// Send verification email
+	go func() {
+		if err := utils.SendVerificationEmail(req.Email, req.Name, verificationToken); err != nil {
+			log.Printf("Error sending verification email: %v", err)
+		}
+	}()
 
 	c.JSON(http.StatusCreated, gin.H{
-		"message":              "Compte créé. Veuillez vérifier vos emails pour l'activer.",
-		"require_verification": true,
+		"message": "Account created successfully. Please check your email to verify your account.",
+		"user_id": userID,
 	})
 }
 
@@ -153,101 +100,105 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 // ============================================================================
 
 func (h *AuthHandler) Login(c *gin.Context) {
-	var req LoginRequest
+	var req models.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 🆕 UPDATED - Get user WITH country and postal_code
-	var userID, passwordHash, name string
-	var country, postalCode sql.NullString
-	var totpEnabled, emailVerified bool
-	var totpSecret sql.NullString
-
+	// Get user
+	var user models.User
 	err := h.DB.QueryRow(`
-		SELECT id, password_hash, name, totp_enabled, totp_secret, email_verified,
-		       COALESCE(country, 'FR'), COALESCE(postal_code, '')
-		FROM users WHERE email = $1
-	`, req.Email).Scan(&userID, &passwordHash, &name, &totpEnabled, &totpSecret, &emailVerified, &country, &postalCode)
+		SELECT id, email, password_hash, name, COALESCE(avatar, ''), 
+		       totp_enabled, totp_secret, email_verified, created_at, updated_at
+		FROM users
+		WHERE email = $1
+	`, req.Email).Scan(
+		&user.ID, &user.Email, &user.PasswordHash, &user.Name, &user.Avatar,
+		&user.TOTPEnabled, &user.TOTPSecret, &user.EmailVerified,
+		&user.CreatedAt, &user.UpdatedAt,
+	)
 
 	if err == sql.ErrNoRows {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Identifiants invalides"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
-
 	if err != nil {
-		log.Printf("❌ Database error during login: %v", err)
+		log.Printf("Error fetching user: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}
 
-	// ✅ EXISTING - Verify password
-	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Identifiants invalides"})
+	// Verify password
+	if !utils.CheckPassword(req.Password, user.PasswordHash) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
 
-	// ✅ EXISTING - Check email verification
-	if !emailVerified {
+	// Check if email is verified
+	if !user.EmailVerified {
 		c.JSON(http.StatusForbidden, gin.H{
-			"error":        "Email non vérifié. Veuillez vérifier votre boîte de réception.",
-			"not_verified": true,
+			"error":          "Email not verified",
+			"requires_verification": true,
 		})
 		return
 	}
 
-	// ✅ EXISTING - Check TOTP if enabled
-	if totpEnabled {
+	// Check 2FA
+	if user.TOTPEnabled {
 		if req.TOTPCode == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "2FA code required", "require_totp": true})
+			c.JSON(http.StatusOK, gin.H{
+				"requires_2fa": true,
+				"message":      "2FA code required",
+			})
 			return
 		}
-		valid, _ := utils.VerifyTOTP(totpSecret.String, req.TOTPCode)
-		if !valid {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Code 2FA invalide"})
+
+		if !utils.VerifyTOTP(user.TOTPSecret, req.TOTPCode) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid 2FA code"})
 			return
 		}
 	}
 
-	// ✅ EXISTING - Generate token
-	token, err := generateJWT(userID)
+	// Generate tokens
+	token, err := utils.GenerateJWT(user.ID, user.Email)
 	if err != nil {
+		log.Printf("Error generating JWT: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
 	}
 
-	// 🆕 UPDATED - Include country and postal_code in response
-	userResponse := gin.H{
-		"id":    userID,
-		"email": req.Email,
-		"name":  name,
-	}
-	
-	// Add location data if available
-	if country.Valid && country.String != "" {
-		userResponse["country"] = country.String
-	}
-	if postalCode.Valid && postalCode.String != "" {
-		userResponse["postal_code"] = postalCode.String
+	refreshToken := uuid.New().String()
+	expiresAt := time.Now().Add(30 * 24 * time.Hour)
+
+	_, err = h.DB.Exec(`
+		INSERT INTO sessions (id, user_id, refresh_token, expires_at, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, uuid.New().String(), user.ID, refreshToken, expiresAt, time.Now())
+
+	if err != nil {
+		log.Printf("Error creating session: %v", err)
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"token": token,
-		"user":  userResponse,
+	// Clear password hash before returning
+	user.PasswordHash = ""
+	user.TOTPSecret = ""
+
+	c.JSON(http.StatusOK, models.LoginResponse{
+		Token:        token,
+		RefreshToken: refreshToken,
+		User:         user,
 	})
-
-	log.Printf("✅ User logged in: %s", req.Email)
 }
 
 // ============================================================================
-// EMAIL VERIFICATION - PRESERVED 100%
+// EMAIL VERIFICATION
 // ============================================================================
 
 func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 	token := c.Query("token")
 	if token == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Token manquant"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Token is required"})
 		return
 	}
 
@@ -255,146 +206,167 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 	var expiresAt time.Time
 
 	err := h.DB.QueryRow(`
-        SELECT user_id, expires_at FROM email_verifications WHERE token = $1
-    `, token).Scan(&userID, &expiresAt)
+		SELECT user_id, expires_at
+		FROM email_verifications
+		WHERE token = $1
+	`, token).Scan(&userID, &expiresAt)
 
 	if err == sql.ErrNoRows {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Lien invalide ou expiré"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Invalid or expired token"})
+		return
+	}
+	if err != nil {
+		log.Printf("Error fetching verification: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}
 
 	if time.Now().After(expiresAt) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Le lien a expiré."})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Token has expired"})
 		return
 	}
 
-	_, err = h.DB.Exec("UPDATE users SET email_verified = TRUE WHERE id = $1", userID)
+	// Update user
+	_, err = h.DB.Exec(`UPDATE users SET email_verified = true WHERE id = $1`, userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur serveur"})
+		log.Printf("Error verifying email: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify email"})
 		return
 	}
 
-	h.DB.Exec("DELETE FROM email_verifications WHERE token = $1", token)
+	// Delete verification token
+	_, err = h.DB.Exec(`DELETE FROM email_verifications WHERE token = $1`, token)
+	if err != nil {
+		log.Printf("Error deleting verification token: %v", err)
+	}
 
-	log.Printf("✅ Email verified for user %s", userID)
-
-	c.JSON(http.StatusOK, gin.H{"message": "Email vérifié avec succès ! Vous pouvez vous connecter."})
+	c.JSON(http.StatusOK, gin.H{"message": "Email verified successfully"})
 }
-
-// ============================================================================
-// RESEND VERIFICATION - PRESERVED 100%
-// ============================================================================
 
 func (h *AuthHandler) ResendVerification(c *gin.Context) {
-	var req ResendVerificationRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	var req struct {
+		Email string `json:"email" binding:"required,email"`
 	}
 
-	var userID string
-	var isVerified bool
-	var name string
-
-	err := h.DB.QueryRow("SELECT id, name, email_verified FROM users WHERE email = $1", req.Email).Scan(&userID, &name, &isVerified)
-	
-	if err == sql.ErrNoRows {
-		c.JSON(http.StatusOK, gin.H{"message": "Si ce compte existe, un email a été envoyé."})
-		return
-	}
-
-	if isVerified {
-		c.JSON(http.StatusConflict, gin.H{"error": "Ce compte est déjà vérifié. Connectez-vous."})
-		return
-	}
-
-	_, err = h.DB.Exec("DELETE FROM email_verifications WHERE user_id = $1", userID)
-    if err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur système"})
-        return
-    }
-
-	verificationToken := uuid.New().String()
-	expiresAt := time.Now().Add(24 * time.Hour)
-
-	_, err = h.DB.Exec(`
-		INSERT INTO email_verifications (user_id, token, expires_at)
-		VALUES ($1, $2, $3)
-	`, userID, verificationToken, expiresAt)
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Impossible de générer le token"})
-		return
-	}
-
-	go utils.SendVerificationEmail(req.Email, name, verificationToken)
-
-	c.JSON(http.StatusOK, gin.H{"message": "Email de vérification envoyé !"})
-}
-
-// ============================================================================
-// FORGOT PASSWORD - PRESERVED 100%
-// ============================================================================
-
-func (h *AuthHandler) ForgotPassword(c *gin.Context) {
-	var req ForgotPasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	var userID, name string
-	err := h.DB.QueryRow("SELECT id, name FROM users WHERE email = $1", req.Email).Scan(&userID, &name)
-	
+	var emailVerified bool
+
+	err := h.DB.QueryRow(`
+		SELECT id, name, email_verified
+		FROM users
+		WHERE email = $1
+	`, req.Email).Scan(&userID, &name, &emailVerified)
+
 	if err == sql.ErrNoRows {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "Si ce compte existe, un email de réinitialisation a été envoyé.",
-		})
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
+	if err != nil {
+		log.Printf("Error fetching user: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	if emailVerified {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Email already verified"})
+		return
+	}
+
+	// Delete old tokens
+	_, err = h.DB.Exec(`DELETE FROM email_verifications WHERE user_id = $1`, userID)
+	if err != nil {
+		log.Printf("Error deleting old tokens: %v", err)
+	}
+
+	// Generate new token
+	verificationToken := uuid.New().String()
+	expiresAt := time.Now().Add(24 * time.Hour)
+
+	_, err = h.DB.Exec(`
+		INSERT INTO email_verifications (id, user_id, token, expires_at, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, uuid.New().String(), userID, verificationToken, expiresAt, time.Now())
 
 	if err != nil {
-		log.Printf("❌ Error checking user existence: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur système"})
+		log.Printf("Error creating verification token: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create verification token"})
 		return
 	}
 
-	_, err = h.DB.Exec("DELETE FROM password_resets WHERE user_id = $1 AND used = FALSE", userID)
+	// Send email
+	go func() {
+		if err := utils.SendVerificationEmail(req.Email, name, verificationToken); err != nil {
+			log.Printf("Error sending verification email: %v", err)
+		}
+	}()
+
+	c.JSON(http.StatusOK, gin.H{"message": "Verification email sent"})
+}
+
+// ============================================================================
+// PASSWORD RESET
+// ============================================================================
+
+func (h *AuthHandler) ForgotPassword(c *gin.Context) {
+	var req struct {
+		Email string `json:"email" binding:"required,email"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var userID, name string
+	err := h.DB.QueryRow(`SELECT id, name FROM users WHERE email = $1`, req.Email).Scan(&userID, &name)
+
+	if err == sql.ErrNoRows {
+		// Don't reveal if email exists
+		c.JSON(http.StatusOK, gin.H{"message": "If the email exists, a reset link will be sent"})
+		return
+	}
 	if err != nil {
-		log.Printf("❌ Error cleaning old tokens: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur système"})
+		log.Printf("Error fetching user: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}
 
+	// Generate reset token
 	resetToken := uuid.New().String()
 	expiresAt := time.Now().Add(1 * time.Hour)
 
 	_, err = h.DB.Exec(`
-		INSERT INTO password_resets (user_id, token, expires_at, used)
-		VALUES ($1, $2, $3, FALSE)
-	`, userID, resetToken, expiresAt)
+		INSERT INTO password_resets (id, user_id, token, expires_at, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, uuid.New().String(), userID, resetToken, expiresAt, time.Now())
 
 	if err != nil {
-		log.Printf("❌ Error creating reset token: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Impossible de générer le token"})
+		log.Printf("Error creating reset token: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create reset token"})
 		return
 	}
 
-	go utils.SendPasswordResetEmail(req.Email, name, resetToken)
+	// Send email
+	go func() {
+		if err := utils.SendPasswordResetEmail(req.Email, name, resetToken); err != nil {
+			log.Printf("Error sending reset email: %v", err)
+		}
+	}()
 
-	log.Printf("✅ Password reset token created for user %s (%s)", userID, req.Email)
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Si ce compte existe, un email de réinitialisation a été envoyé.",
-	})
+	c.JSON(http.StatusOK, gin.H{"message": "If the email exists, a reset link will be sent"})
 }
 
-// ============================================================================
-// RESET PASSWORD - PRESERVED 100%
-// ============================================================================
-
 func (h *AuthHandler) ResetPassword(c *gin.Context) {
-	var req ResetPasswordRequest
+	var req struct {
+		Token    string `json:"token" binding:"required"`
+		Password string `json:"password" binding:"required,min=8"`
+	}
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -405,83 +377,52 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	var used bool
 
 	err := h.DB.QueryRow(`
-		SELECT user_id, expires_at, used 
-		FROM password_resets 
+		SELECT user_id, expires_at, used
+		FROM password_resets
 		WHERE token = $1
 	`, req.Token).Scan(&userID, &expiresAt, &used)
 
 	if err == sql.ErrNoRows {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Lien invalide ou expiré"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Invalid or expired token"})
 		return
 	}
-
 	if err != nil {
-		log.Printf("❌ Error checking reset token: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur système"})
+		log.Printf("Error fetching reset token: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}
 
 	if used {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Ce lien a déjà été utilisé"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Token already used"})
 		return
 	}
 
 	if time.Now().After(expiresAt) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Le lien a expiré. Veuillez faire une nouvelle demande."})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Token has expired"})
 		return
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	// Hash new password
+	hashedPassword, err := utils.HashPassword(req.Password)
 	if err != nil {
-		log.Printf("❌ Error hashing password: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur lors du traitement"})
+		log.Printf("Error hashing password: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reset password"})
 		return
 	}
 
-	_, err = h.DB.Exec(`
-		UPDATE users 
-		SET password_hash = $1, updated_at = NOW()
-		WHERE id = $2
-	`, string(hashedPassword), userID)
-
+	// Update password
+	_, err = h.DB.Exec(`UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`, hashedPassword, userID)
 	if err != nil {
-		log.Printf("❌ Error updating password: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur lors de la mise à jour"})
+		log.Printf("Error updating password: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reset password"})
 		return
 	}
 
-	_, err = h.DB.Exec(`
-		UPDATE password_resets 
-		SET used = TRUE 
-		WHERE token = $1
-	`, req.Token)
-
+	// Mark token as used
+	_, err = h.DB.Exec(`UPDATE password_resets SET used = true WHERE token = $1`, req.Token)
 	if err != nil {
-		log.Printf("⚠️ Error marking token as used: %v", err)
+		log.Printf("Error marking token as used: %v", err)
 	}
 
-	log.Printf("✅ Password reset successful for user %s", userID)
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Mot de passe réinitialisé avec succès. Vous pouvez maintenant vous connecter.",
-	})
-}
-
-// ============================================================================
-// HELPER FUNCTIONS - PRESERVED 100%
-// ============================================================================
-
-func generateJWT(userID string) (string, error) {
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		if os.Getenv("ENVIRONMENT") == "production" || os.Getenv("GIN_MODE") == "release" {
-			return "", fmt.Errorf("JWT_SECRET is required in production")
-		}
-		secret = "dev-only-insecure-secret"
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": userID,
-		"exp":     time.Now().Add(24 * time.Hour).Unix(),
-	})
-	return token.SignedString([]byte(secret))
+	c.JSON(http.StatusOK, gin.H{"message": "Password reset successfully"})
 }

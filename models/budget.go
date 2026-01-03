@@ -1,3 +1,6 @@
+// models/budget.go
+// ✅ VERSION CORRIGÉE - Ajout Location et Currency
+
 package models
 
 import (
@@ -9,11 +12,13 @@ type Budget struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name" binding:"required"`
 	OwnerID   string    `json:"owner_id"`
+	Location  string    `json:"location"`   // ✅ NOUVEAU
+	Currency  string    `json:"currency"`   // ✅ NOUVEAU
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-	IsOwner   bool          `json:"is_owner"`   // To store the CASE statement result
-	OwnerName string        `json:"owner_name"` // To store the user.name from the JOIN
-	Members   []BudgetMember `json:"members"`    // To hold the list of members
+	IsOwner   bool      `json:"is_owner"`
+	OwnerName string    `json:"owner_name"`
+	Members   []BudgetMember `json:"members"`
 }
 
 type BudgetMember struct {
@@ -24,8 +29,8 @@ type BudgetMember struct {
 	Role        string          `json:"role"`
 	Permissions json.RawMessage `json:"permissions"`
 	JoinedAt    time.Time       `json:"joined_at"`
-	UserName  string `json:"user_name"`  // To store u.name from the JOIN (line 236 in service)
-	UserEmail string `json:"user_email"` // To store u.email from the JOIN (line 237 in service)
+	UserName    string          `json:"user_name"`
+	UserEmail   string          `json:"user_email"`
 }
 
 type BudgetData struct {
@@ -38,7 +43,10 @@ type BudgetData struct {
 }
 
 type CreateBudgetRequest struct {
-	Name string `json:"name" binding:"required"`
+	Name     string `json:"name" binding:"required"`
+	Year     int    `json:"year"`
+	Location string `json:"location"` // ✅ NOUVEAU
+	Currency string `json:"currency"` // ✅ NOUVEAU
 }
 
 type UpdateBudgetDataRequest struct {

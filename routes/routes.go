@@ -21,7 +21,7 @@ func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.GET("/auth/verify", authHandler.VerifyEmail)
 	rg.POST("/auth/verify/resend", authHandler.ResendVerification)
 	
-	// 🆕 Password Reset
+	// Password Reset
 	rg.POST("/auth/forgot-password", authHandler.ForgotPassword)
 	rg.POST("/auth/reset-password", authHandler.ResetPassword)
 }
@@ -53,9 +53,9 @@ func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.GET("/user/profile", userHandler.GetProfile)
 	rg.PUT("/user/profile", userHandler.UpdateProfile)
 	
-	// Location
-	rg.PUT("/user/location", userHandler.UpdateLocation)
-	rg.GET("/user/location", userHandler.GetLocation)
+	// ❌ SUPPRIMÉ : Routes Location (maintenant au niveau budget)
+	// rg.PUT("/user/location", userHandler.UpdateLocation)
+	// rg.GET("/user/location", userHandler.GetLocation)
 	
 	// Security
 	rg.POST("/user/password", userHandler.ChangePassword)

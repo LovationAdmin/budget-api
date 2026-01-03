@@ -46,22 +46,34 @@ type EncryptedData struct {
 }
 
 // Create creates a new budget with transactional safety
-func (s *BudgetService) Create(ctx context.Context, name, ownerID string) (*models.Budget, error) {
+// CreateWithLocation creates a new budget with location and currency
+func (s *BudgetService) CreateWithLocation(ctx context.Context, name, ownerID, location, currency string) (*models.Budget, error) {
+	// Valeurs par défaut
+	if location == "" {
+		location = "FR"
+	}
+	if currency == "" {
+		currency = "EUR"
+	}
+
 	budget := &models.Budget{
 		ID:        uuid.New().String(),
 		Name:      name,
 		OwnerID:   ownerID,
+		Location:  location,  // ✅ NOUVEAU
+		Currency:  currency,  // ✅ NOUVEAU
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
 
 	err := utils.WithTransaction(s.db, func(tx *sql.Tx) error {
-		// 1. Insert Budget
+		// 1. Insert Budget AVEC location et currency
 		query := `
-			INSERT INTO budgets (id, name, owner_id, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5)
+			INSERT INTO budgets (id, name, owner_id, location, currency, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
 		`
-		if _, err := tx.ExecContext(ctx, query, budget.ID, budget.Name, budget.OwnerID, budget.CreatedAt, budget.UpdatedAt); err != nil {
+		if _, err := tx.ExecContext(ctx, query, budget.ID, budget.Name, budget.OwnerID, 
+			budget.Location, budget.Currency, budget.CreatedAt, budget.UpdatedAt); err != nil {
 			return err
 		}
 
@@ -87,9 +99,12 @@ func (s *BudgetService) Create(ctx context.Context, name, ownerID string) (*mode
 // GetByID gets a budget by ID
 func (s *BudgetService) GetByID(ctx context.Context, id, userID string) (*models.Budget, error) {
 	query := `
-		SELECT b.id, b.name, b.owner_id, b.created_at, b.updated_at,
-		       CASE WHEN b.owner_id = $2 THEN true ELSE false END as is_owner,
-		       u.name as owner_name
+		SELECT b.id, b.name, b.owner_id, 
+			COALESCE(b.location, 'FR') as location,
+			COALESCE(b.currency, 'EUR') as currency,
+			b.created_at, b.updated_at,
+			CASE WHEN b.owner_id = $2 THEN true ELSE false END as is_owner,
+			u.name as owner_name
 		FROM budgets b
 		LEFT JOIN users u ON b.owner_id = u.id
 		INNER JOIN budget_members bm ON b.id = bm.budget_id
@@ -101,6 +116,8 @@ func (s *BudgetService) GetByID(ctx context.Context, id, userID string) (*models
 		&budget.ID,
 		&budget.Name,
 		&budget.OwnerID,
+		&budget.Location,
+		&budget.Currency,
 		&budget.CreatedAt,
 		&budget.UpdatedAt,
 		&budget.IsOwner,
@@ -124,8 +141,11 @@ func (s *BudgetService) GetByID(ctx context.Context, id, userID string) (*models
 // GetUserBudgets gets all budgets for a user
 func (s *BudgetService) GetUserBudgets(ctx context.Context, userID string) ([]models.Budget, error) {
 	query := `
-		SELECT b.id, b.name, b.owner_id, b.created_at, b.updated_at,
-		       CASE WHEN b.owner_id = $1 THEN true ELSE false END as is_owner
+		SELECT b.id, b.name, b.owner_id, 
+			COALESCE(b.location, 'FR') as location,      -- ✅ AJOUTÉ
+			COALESCE(b.currency, 'EUR') as currency,     -- ✅ AJOUTÉ
+			b.created_at, b.updated_at,
+			CASE WHEN b.owner_id = $1 THEN true ELSE false END as is_owner
 		FROM budgets b
 		INNER JOIN budget_members bm ON b.id = bm.budget_id
 		WHERE bm.user_id = $1
@@ -145,6 +165,8 @@ func (s *BudgetService) GetUserBudgets(ctx context.Context, userID string) ([]mo
 			&budget.ID,
 			&budget.Name,
 			&budget.OwnerID,
+			&budget.Location,   // ✅ AJOUTÉ
+			&budget.Currency,   // ✅ AJOUTÉ
 			&budget.CreatedAt,
 			&budget.UpdatedAt,
 			&budget.IsOwner,
