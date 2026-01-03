@@ -95,9 +95,9 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 	merchantName string,
 	currentAmount float64,
 	country string,
-	currency string, // ✅ NOUVEAU PARAMETRE
+	currency string,
 	householdSize int,
-	chargeDescription string, // ✅ NOUVEAU PARAMETRE
+	chargeDescription string,
 ) (*models.MarketSuggestion, error) {
 	merchantName = strings.TrimSpace(merchantName)
 	effectiveAmount, chargeType := getEffectiveAmount(category, currentAmount, householdSize)
@@ -106,7 +106,6 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 		category, merchantName, effectiveAmount, currency, country, householdSize, chargeDescription)
 
 	// 1. CACHE STRATEGY : Segmenté par Pays
-	// Si le budget passe de FR à CH, la clé de cache change (country est dans la requête)
 	cached, err := s.getCachedSuggestion(ctx, category, country, merchantName)
 	if err == nil && cached != nil {
 		log.Printf("[MarketAnalyzer] ✅ Cache HIT for %s (%s)", category, country)
@@ -120,7 +119,6 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 	// 2. CACHE MISS : Appel AI avec contexte géographique et monétaire
 	log.Printf("[MarketAnalyzer] ⚠️ Cache MISS. AI Prompting for %s in %s (%s)...", category, country, currency)
 
-	// ✅ PASSAGE DE LA DEVISE ET DESCRIPTION
 	competitors, err := s.searchCompetitors(ctx, category, merchantName, effectiveAmount, country, currency, householdSize, chargeType, chargeDescription)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search competitors: %w", err)
@@ -135,7 +133,7 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 
 	suggestion := &models.MarketSuggestion{
 		Category:     category,
-		Country:      country, // Stocké avec le pays pour le cache futur
+		Country:      country,
 		MerchantName: merchantName,
 		Competitors:  filteredCompetitors,
 		LastUpdated:  time.Now(),
@@ -267,13 +265,12 @@ func (s *MarketAnalyzerService) searchCompetitors(
 	merchantName string,
 	effectiveAmount float64,
 	country string,
-	currency string, // ✅ NOUVEAU
+	currency string,
 	householdSize int,
 	chargeType ChargeType,
-	chargeDescription string, // ✅ NOUVEAU
+	chargeDescription string,
 ) ([]models.Competitor, error) {
 	
-	// ✅ PASSER LA DESCRIPTION ET DEVISE AU BUILDER
 	prompt := s.buildPrompt(category, merchantName, effectiveAmount, country, currency, householdSize, chargeType, chargeDescription)
 
 	response, err := s.AIService.CallClaude(ctx, prompt)
@@ -298,26 +295,24 @@ func (s *MarketAnalyzerService) buildPrompt(
 	merchantName string,
 	effectiveAmount float64,
 	country string,
-	currency string, // ✅ NOUVEAU
+	currency string,
 	householdSize int,
 	chargeType ChargeType,
-	chargeDescription string, // ✅ NOUVEAU
+	chargeDescription string,
 ) string {
 	familyContext := "individu seul"
 	if householdSize > 1 {
 		familyContext = fmt.Sprintf("foyer de %d personnes", householdSize)
 	}
 
-	var chargeContext, priceContext string
+	// ✅ CORRECTION ICI : Suppression de priceContext qui était inutilisé
+	var chargeContext string
 	if chargeType == ChargeTypeIndividuel {
 		chargeContext = fmt.Sprintf("Type INDIVIDUEL: %.2f %s/mois PAR PERSONNE", effectiveAmount, currency)
-		priceContext = "par personne"
 	} else {
 		chargeContext = fmt.Sprintf("Type FOYER: %.2f %s/mois TOTAL pour le foyer", effectiveAmount, currency)
-		priceContext = "pour le foyer"
 	}
 
-	// ✅ UPDATED: More precise category contexts
 	categoryContext := map[string]string{
 		"MOBILE": 			"Forfaits mobiles avec appels/SMS illimités et data.",
 		"INTERNET": 		"Box internet (ADSL/Fibre).",
@@ -341,13 +336,11 @@ func (s *MarketAnalyzerService) buildPrompt(
 		currentProvider = "fournisseur actuel inconnu"
 	}
 
-	// ✅ PRÉPARATION DE LA CHAINE DE DETAILS UTILISATEUR
 	userDetailsString := "Aucun détail technique fourni."
 	if chargeDescription != "" {
 		userDetailsString = fmt.Sprintf("DÉTAILS SPÉCIFIQUES FOURNIS PAR L'UTILISATEUR : '%s'. (Utilise impérativement ces infos pour estimer la consommation, la surface ou le type d'offre équivalente).", chargeDescription)
 	}
 
-	// ✅ PROMPT AVEC DEVISE ET PAYS DYNAMIQUES
 	return fmt.Sprintf(`Tu es un expert en comparaison de services en %s.
 
 CONTEXTE:
@@ -399,9 +392,9 @@ Réponds UNIQUEMENT en JSON (sans markdown):
 		categoryContext,
 		chargeContext,
 		effectiveAmount, currency, currentProvider,
-		userDetailsString, // ✅ Injection des détails
-		country, // Disponibles en [PAYS]
-		currency, // Prix en [DEVISE]
+		userDetailsString,
+		country,
+		currency,
 		country,
 		currentProvider,
 	)
