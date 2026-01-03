@@ -64,12 +64,16 @@ func (h *MarketSuggestionsHandler) getBudgetConfig(ctx context.Context, budgetID
 // ============================================================================
 
 type AnalyzeChargeRequest struct {
-	BudgetID      string  `json:"budget_id" binding:"required"` // ✅ OBLIGATOIRE POUR LE CONTEXTE
+	// ⚠️ MODIFICATION : budget_id devient optionnel pour l'outil public
+	BudgetID      string  `json:"budget_id"` 
 	Category      string  `json:"category" binding:"required"`
 	MerchantName  string  `json:"merchant_name"`
 	CurrentAmount float64 `json:"current_amount" binding:"required"`
-	HouseholdSize int     `json:"household_size"` // Optional, defaults to 1
+	HouseholdSize int     `json:"household_size"`
 	Description   string  `json:"description,omitempty"`
+	// ✅ AJOUTS : Pour l'outil public SmartTools (valeurs manuelles)
+	Country       string  `json:"country,omitempty"`
+	Currency      string  `json:"currency,omitempty"`
 }
 
 func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
@@ -79,12 +83,26 @@ func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 		return
 	}
 
-	// ✅ RECUPERATION DYNAMIQUE DEPUIS LE BUDGET
-	country, currency, err := h.getBudgetConfig(c.Request.Context(), req.BudgetID)
-	if err != nil {
-		log.Printf("Failed to get budget config for %s: %v", req.BudgetID, err)
-		// On continue avec les valeurs par défaut (FR/EUR) si erreur, ou on fail.
-		// Ici on continue pour la robustesse.
+	var country, currency string
+
+	// LOGIQUE DE DÉTECTION DU CONTEXTE
+	if req.BudgetID != "" {
+		// Cas 1 : Appel depuis un Budget (Utilisateur connecté) -> On prend la config BDD
+		// On ignore les params country/currency de la requête dans ce cas pour la sécurité/cohérence
+		var err error
+		country, currency, err = h.getBudgetConfig(c.Request.Context(), req.BudgetID)
+		if err != nil {
+			log.Printf("Failed to get budget config for %s: %v", req.BudgetID, err)
+			country, currency = "FR", "EUR"
+		}
+	} else {
+		// Cas 2 : Appel Public (SmartTools) -> On prend les params de la requête
+		country = req.Country
+		currency = req.Currency
+		
+		// Fallbacks par défaut si non fournis
+		if country == "" { country = "FR" }
+		if currency == "" { currency = "EUR" }
 	}
 
 	householdSize := req.HouseholdSize
@@ -100,8 +118,8 @@ func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 		req.Category,
 		req.MerchantName,
 		req.CurrentAmount,
-		country,  // ✅ PAYS DU BUDGET
-		currency, // ✅ DEVISE DU BUDGET
+		country,  // ✅ PAYS DÉTECTÉ
+		currency, // ✅ DEVISE DÉTECTÉE
 		householdSize,
 		req.Description,
 	)
@@ -159,7 +177,6 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 
 	// 3. Launch background processing
 	go func() {
-		// Create a new context because the request context is cancelled when the handler returns
 		bgCtx := context.Background()
 
 		// ✅ RECUPERATION DE LA CONFIG BUDGET AU DÉBUT DU PROCESS
@@ -193,17 +210,16 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 				}
 			}
 
-			// Check whitelist using the (potentially) refined category
+			// Check whitelist
 			if !h.isSuggestionRelevant(analysisCategory) {
 				continue
 			}
 
-			// Add a small delay to avoid hitting AI rate limits too hard
 			time.Sleep(100 * time.Millisecond)
 
 			suggestion, err := h.MarketAnalyzer.AnalyzeCharge(
 				bgCtx,
-				analysisCategory, // Use refined category
+				analysisCategory,
 				charge.MerchantName,
 				charge.Amount,
 				country,  // ✅ PAYS
@@ -233,7 +249,7 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 
 		log.Printf("[Async] Analysis complete for budget %s. Found %.2f %s savings.", budgetID, totalSavings, currency)
 
-		// 4. CRITICAL FIX: Notify Frontend via WebSocket with LOG CONFIRMATION
+		// 4. Notify Frontend via WebSocket
 		if h.WS != nil {
 			responsePayload := map[string]interface{}{
 				"type": "suggestions_ready",
@@ -243,14 +259,11 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 					"household_size":          householdSize,
 					"cache_hits":              cacheHits,
 					"ai_calls_made":           aiCallsMade,
-					"currency":                currency, // ✅ On renvoie la devise pour confirmation front
+					"currency":                currency, // ✅
 				},
 			}
 			
 			h.WS.BroadcastJSON(budgetID, responsePayload)
-			log.Printf("[WebSocket] ✅ Sent suggestions_ready to budget %s", budgetID)
-		} else {
-			log.Printf("[WebSocket] ⚠️ WS Handler is nil - cannot send suggestions_ready")
 		}
 	}()
 }
@@ -264,8 +277,7 @@ func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 	userID := c.GetString("user_id")
 	category := c.Param("category")
 
-	// Note: Pour cet endpoint générique, on utilise le pays du user comme fallback
-	// car on n'a pas de budgetID dans l'URL.
+	// Fallback si pas de budgetID
 	userCountry, err := h.getUserCountry(c.Request.Context(), userID)
 	if err != nil {
 		userCountry = "FR"
@@ -277,7 +289,7 @@ func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 		"",
 		0,
 		userCountry,
-		"EUR", // Default currency for generic browsing
+		"EUR", // Default currency
 		1,
 		"", // Pas de description
 	)
@@ -296,8 +308,7 @@ func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 }
 
 // ============================================================================
-// 4. CLEAN EXPIRED CACHE (Admin/Cron)
-// POST /api/v1/admin/suggestions/clean-cache
+// 4. CLEAN EXPIRED CACHE
 // ============================================================================
 
 func (h *MarketSuggestionsHandler) CleanExpiredCache(c *gin.Context) {
@@ -310,8 +321,7 @@ func (h *MarketSuggestionsHandler) CleanExpiredCache(c *gin.Context) {
 }
 
 // ============================================================================
-// 5. CATEGORIZE CHARGE (Hybrid: Static + AI Fallback)
-// POST /api/v1/categorize
+// 5. CATEGORIZE CHARGE
 // ============================================================================
 
 func (h *MarketSuggestionsHandler) CategorizeCharge(c *gin.Context) {
@@ -329,10 +339,8 @@ func (h *MarketSuggestionsHandler) CategorizeCharge(c *gin.Context) {
 		return
 	}
 
-	// Step 1: Try Static Keyword Matching
 	category := determineCategory(label)
 
-	// Step 2: AI Fallback
 	if category == "OTHER" && len(label) > 3 {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
@@ -399,7 +407,6 @@ func determineCategory(label string) string {
 		"HOUSING": {
 			"LOYER", "RENT", "APPARTEMENT", "LOGEMENT", "CHARGES LOCATIVES", "FONCIA", "CITYA",
 		},
-		// ✅ FIX: Split LEISURE into SPORT and STREAMING
 		"LEISURE_SPORT": {
 			"SPORT", "GYM", "FITNESS", "BASIC FIT", "KEEP COOL", "NEONESS", "CROSSFIT", "ORANGE BLEUE",
 			"CLUB", "PISCINE", "YOGA",
