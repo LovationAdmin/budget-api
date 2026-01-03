@@ -188,10 +188,13 @@ func (s *BudgetService) GetUserBudgets(ctx context.Context, userID string) ([]mo
 func (s *BudgetService) Update(ctx context.Context, id, name string) error {
 	query := `
 		UPDATE budgets
-		SET name = $1, updated_at = $2
-		WHERE id = $3
+		SET name = $1, 
+		    location = COALESCE(NULLIF($2, ''), location), 
+		    currency = COALESCE(NULLIF($3, ''), currency),
+		    updated_at = $4
+		WHERE id = $5
 	`
-	_, err := s.db.ExecContext(ctx, query, name, time.Now(), id)
+	_, err := s.db.ExecContext(ctx, query, name, location, currency, time.Now(), id)
 	return err
 }
 

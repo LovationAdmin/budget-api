@@ -92,7 +92,9 @@ func (h *Handler) UpdateBudget(c *gin.Context) {
 	userID := c.GetString("user_id")
 
 	var req struct {
-		Name string `json:"name" binding:"required"`
+		Name     string `json:"name" binding:"required"`
+		Location string `json:"location"`
+		Currency string `json:"currency"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -107,7 +109,7 @@ func (h *Handler) UpdateBudget(c *gin.Context) {
 		return
 	}
 
-	if err := h.budgetService.Update(c.Request.Context(), budgetID, req.Name); err != nil {
+	if err := h.budgetService.Update(c.Request.Context(), budgetID, req.Name, req.Location, req.Currency); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update budget"})
 		return
 	}
