@@ -35,10 +35,18 @@ type MigrationStats struct {
 	CacheEntriesNew  int `json:"cache_entries_new"`
 }
 
+// RetroactiveAnalysis parcourt tous les budgets pour :
+// 1. Corriger les catégories
+// 2. Pré-générer les suggestions IA en cache (avec le bon pays/devise)
 func (h *AdminSuggestionHandler) RetroactiveAnalysis(c *gin.Context) {
 	stats := MigrationStats{}
 
-	rows, err := h.DB.QueryContext(c.Request.Context(), "SELECT budget_id, data FROM budget_data")
+	// ✅ RECUPERER AUSSI LOCATION ET CURRENCY DU BUDGET
+	rows, err := h.DB.QueryContext(c.Request.Context(), 
+		`SELECT bd.budget_id, bd.data, COALESCE(b.location, 'FR'), COALESCE(b.currency, 'EUR')
+		 FROM budget_data bd
+		 JOIN budgets b ON bd.budget_id = b.id`)
+	
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch budgets"})
 		return
@@ -50,7 +58,9 @@ func (h *AdminSuggestionHandler) RetroactiveAnalysis(c *gin.Context) {
 	for rows.Next() {
 		var budgetID string
 		var dataJSON []byte
-		if err := rows.Scan(&budgetID, &dataJSON); err != nil {
+		var location, currency string // ✅ NOUVELLES VARIABLES
+
+		if err := rows.Scan(&budgetID, &dataJSON, &location, &currency); err != nil {
 			continue
 		}
 
@@ -78,7 +88,7 @@ func (h *AdminSuggestionHandler) RetroactiveAnalysis(c *gin.Context) {
 			currentCat, _ := charge["category"].(string)
 			amount, _ := charge["amount"].(float64)
 			
-			// ✅ CORRECTION : Récupérer la description si elle existe
+			// Récupérer la description si elle existe
 			description, _ := charge["description"].(string)
 
 			if label == "" || amount == 0 {
@@ -94,8 +104,18 @@ func (h *AdminSuggestionHandler) RetroactiveAnalysis(c *gin.Context) {
 			}
 
 			if isCategoryRelevant(detectedCat) {
-				// ✅ CORRECTION : Ajout du paramètre description (dernier argument)
-				_, err := h.MarketAnalyzer.AnalyzeCharge(bgCtx, detectedCat, "", amount, "FR", 1, description)
+				// ✅ APPEL AVEC LOCALISATION ET DEVISE DYNAMIQUES
+				_, err := h.MarketAnalyzer.AnalyzeCharge(
+					bgCtx, 
+					detectedCat, 
+					"",           // Pas de merchant name spécifique pour l'analyse générique
+					amount, 
+					location,     // ✅ PAYS DU BUDGET
+					currency,     // ✅ DEVISE DU BUDGET
+					1,            // Household size par défaut
+					description,  // ✅ DESCRIPTION
+				)
+				
 				if err == nil {
 					stats.CacheEntriesNew++
 				}
@@ -114,7 +134,7 @@ func (h *AdminSuggestionHandler) RetroactiveAnalysis(c *gin.Context) {
 
 			if err == nil {
 				stats.BudgetsUpdated++
-				log.Printf("[Migration] Updated budget %s (fixed categories)", budgetID)
+				log.Printf("[Migration] Updated budget %s (fixed categories, loc: %s)", budgetID, location)
 			} else {
 				log.Printf("[Migration] Failed to save budget %s: %v", budgetID, err)
 			}
@@ -128,10 +148,22 @@ func (h *AdminSuggestionHandler) RetroactiveAnalysis(c *gin.Context) {
 }
 
 func isCategoryRelevant(cat string) bool {
-	switch cat {
-	case "MOBILE", "INTERNET", "ENERGY", "INSURANCE", "LOAN", "BANK":
-		return true
-	default:
-		return false
+	relevantCategories := map[string]bool{
+		"ENERGY":            true,
+		"INTERNET":          true,
+		"MOBILE":            true,
+		"INSURANCE":         true,
+		"INSURANCE_AUTO":    true,
+		"INSURANCE_HOME":    true,
+		"INSURANCE_HEALTH":  true,
+		"LOAN":              true,
+		"BANK":              true,
+		"TRANSPORT":         true,
+		"LEISURE":           true, 
+		"LEISURE_SPORT":     true,
+		"LEISURE_STREAMING": true,
+		"SUBSCRIPTION":      true,
+		"HOUSING":           true,
 	}
+	return relevantCategories[strings.ToUpper(cat)]
 }
