@@ -1,5 +1,5 @@
 // handlers/budget.go
-// ✅ VERSION CORRIGÉE - Support location/currency
+// ✅ VERSION FINALE CORRIGÉE - Compatible avec votre codebase
 
 package handlers
 
@@ -38,13 +38,12 @@ func (h *Handler) GetBudgets(c *gin.Context) {
 }
 
 // CreateBudget creates a new budget
-// ✅ CORRIGÉ : Support location et currency
+// ✅ MODIFIÉ : Accepte location et currency
 func (h *Handler) CreateBudget(c *gin.Context) {
 	var req struct {
 		Name     string `json:"name" binding:"required"`
-		Year     int    `json:"year"`
-		Location string `json:"location"` // ✅ NOUVEAU
-		Currency string `json:"currency"` // ✅ NOUVEAU
+		Location string `json:"location"` // ✅ NOUVEAU (optionnel, défaut: FR)
+		Currency string `json:"currency"` // ✅ NOUVEAU (optionnel, défaut: EUR)
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -52,7 +51,7 @@ func (h *Handler) CreateBudget(c *gin.Context) {
 		return
 	}
 
-	// Valeurs par défaut si non fournies
+	// Valeurs par défaut
 	if req.Location == "" {
 		req.Location = "FR"
 	}
@@ -62,7 +61,7 @@ func (h *Handler) CreateBudget(c *gin.Context) {
 
 	userID := c.GetString("user_id")
 
-	// ✅ Passer location et currency au service
+	// ✅ APPEL : CreateWithLocation (qui sera créé dans services/budget.go)
 	budget, err := h.budgetService.CreateWithLocation(c.Request.Context(), req.Name, userID, req.Location, req.Currency)
 	if err != nil {
 		log.Printf("Error creating budget: %v", err)
@@ -74,7 +73,6 @@ func (h *Handler) CreateBudget(c *gin.Context) {
 }
 
 // GetBudget returns a specific budget
-// ✅ Le service retournera automatiquement location/currency
 func (h *Handler) GetBudget(c *gin.Context) {
 	budgetID := c.Param("id")
 	userID := c.GetString("user_id")
@@ -168,17 +166,9 @@ func (h *Handler) GetBudgetData(c *gin.Context) {
 func (h *Handler) UpdateBudgetData(c *gin.Context) {
 	budgetID := c.Param("id")
 	userID := c.GetString("user_id")
-	userName := c.GetString("user_name")
-
-	// Check access
-	_, err := h.budgetService.GetByID(c.Request.Context(), budgetID, userID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Budget not found"})
-		return
-	}
 
 	var req struct {
-		Data map[string]interface{} `json:"data" binding:"required"`
+		Data interface{} `json:"data" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -186,20 +176,6 @@ func (h *Handler) UpdateBudgetData(c *gin.Context) {
 		return
 	}
 
-	if err := h.budgetService.UpdateData(c.Request.Context(), budgetID, req.Data, userID, userName); err != nil {
-		log.Printf("Error updating budget data: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update budget data"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "Budget data updated successfully"})
-}
-
-// InviteMember invites a user to join the budget
-func (h *Handler) InviteMember(c *gin.Context) {
-	budgetID := c.Param("id")
-	userID := c.GetString("user_id")
-
 	// Check access
 	_, err := h.budgetService.GetByID(c.Request.Context(), budgetID, userID)
 	if err != nil {
@@ -207,6 +183,25 @@ func (h *Handler) InviteMember(c *gin.Context) {
 		return
 	}
 
+	// Get user's name for notification
+	var userName string
+	err = h.budgetService.GetDB().QueryRowContext(c.Request.Context(), 
+		"SELECT name FROM users WHERE id = $1", userID).Scan(&userName)
+	if err != nil {
+		userName = "Un membre" // Fallback
+	}
+
+	// Pass userID and userName to UpdateData
+	if err := h.budgetService.UpdateData(c.Request.Context(), budgetID, req.Data, userID, userName); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update budget data"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Budget data updated successfully"})
+}
+
+// InviteMember invites a member to a budget
+func (h *Handler) InviteMember(c *gin.Context) {
 	var req struct {
 		Email string `json:"email" binding:"required,email"`
 	}
@@ -216,27 +211,67 @@ func (h *Handler) InviteMember(c *gin.Context) {
 		return
 	}
 
-	invitation, err := h.budgetService.InviteMember(c.Request.Context(), budgetID, req.Email, userID)
+	budgetID := c.Param("id")
+	userID := c.GetString("user_id")
+
+	// Check if user is the owner
+	budget, err := h.budgetService.GetByID(c.Request.Context(), budgetID, userID)
 	if err != nil {
-		log.Printf("Error inviting member: %v", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Budget not found"})
+		return
+	}
+
+	if budget.OwnerID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only the owner can invite members"})
+		return
+	}
+
+	// Check if user is already a member
+	isMember, err := h.budgetService.IsMemberByEmail(c.Request.Context(), budgetID, req.Email)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error checking membership"})
+		return
+	}
+	if isMember {
+		c.JSON(http.StatusConflict, gin.H{"error": "Cet utilisateur est déjà membre du budget"})
+		return
+	}
+
+	// Check if there's an existing pending invitation
+	existingInvitation, _ := h.budgetService.GetPendingInvitation(c.Request.Context(), budgetID, req.Email)
+	if existingInvitation != nil {
+		// Delete the old invitation to create a fresh one
+		if err := h.budgetService.DeleteInvitation(c.Request.Context(), existingInvitation.ID); err != nil {
+			log.Printf("Failed to delete old invitation: %v", err)
+		}
+	}
+
+	// Create invitation
+	invitation, err := h.budgetService.CreateInvitation(c.Request.Context(), budgetID, req.Email, userID)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Send invitation email
-	go func() {
-		if err := h.emailService.SendInvitation(req.Email, invitation.Token, budgetID); err != nil {
-			log.Printf("Error sending invitation email: %v", err)
-		}
-	}()
+	// ✅ CORRIGÉ : SendInvitation prend 4 paramètres (email, inviterName, budgetName, token)
+	inviterName := budget.OwnerName
+	if inviterName == "" {
+		inviterName = "Un utilisateur"
+	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Invitation sent successfully"})
+	if err := h.emailService.SendInvitation(req.Email, inviterName, budget.Name, invitation.Token); err != nil {
+		log.Printf("Failed to send invitation email: %v", err)
+		// Don't fail the request if email fails, but log it
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Invitation sent successfully",
+		"invitation": invitation,
+	})
 }
 
-// AcceptInvitation accepts an invitation to join a budget
+// AcceptInvitation accepts an invitation
 func (h *Handler) AcceptInvitation(c *gin.Context) {
-	userID := c.GetString("user_id")
-
 	var req struct {
 		Token string `json:"token" binding:"required"`
 	}
@@ -246,8 +281,9 @@ func (h *Handler) AcceptInvitation(c *gin.Context) {
 		return
 	}
 
+	userID := c.GetString("user_id")
+
 	if err := h.budgetService.AcceptInvitation(c.Request.Context(), req.Token, userID); err != nil {
-		log.Printf("Error accepting invitation: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
