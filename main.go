@@ -2,7 +2,7 @@
 // ============================================================================
 // BUDGET FAMILLE - API BACKEND
 // ============================================================================
-// VERSION CORRIGÉE : Logging sécurisé + Amélioration WebSocket
+// VERSION CORRIGÉE : Routes explicites et correction des arguments
 // ============================================================================
 
 package main
@@ -171,10 +171,25 @@ func main() {
 	// ============================================================================
 	v1 := router.Group("/api/v1")
 	{
+		// 1. Routes Publiques (Auth, Admin)
 		routes.SetupAuthRoutes(v1, db)
 		routes.SetupAdminRoutes(v1, db)
-		routes.SetupAdminSuggestionsRoutes(v1, db, wsHandler)
-		routes.SetupProtectedRoutes(v1, db, wsHandler)
+		
+		// FIXED: SetupAdminSuggestionsRoutes ne prend que 2 arguments
+		routes.SetupAdminSuggestionsRoutes(v1, db)
+
+		// 2. Routes Protégées (Nécessitent une authentification)
+		// On crée un groupe protégé qui applique le middleware d'auth
+		protected := v1.Group("/")
+		protected.Use(middleware.AuthMiddleware())
+		{
+			// FIXED: Appel explicite des routes au lieu de "SetupProtectedRoutes"
+			routes.SetupBudgetRoutes(protected, db, wsHandler)
+			routes.SetupUserRoutes(protected, db)
+			routes.SetupInvitationRoutes(protected, db)
+			routes.SetupEnableBankingRoutes(protected, db)
+			routes.SetupMarketSuggestionsRoutes(protected, db, wsHandler)
+		}
 	}
 
 	// ============================================================================
