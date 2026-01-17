@@ -1,79 +1,216 @@
+// handlers/market_suggestions_handler.go
+// ============================================================================
+// MARKET SUGGESTIONS HANDLER - Analyse IA des charges pour trouver des économies
+// ============================================================================
+// VERSION CORRIGÉE : Logging sécurisé sans données personnelles/financières
+// ============================================================================
+
 package handlers
 
 import (
 	"context"
 	"database/sql"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-
 	"github.com/LovationAdmin/budget-api/models"
 	"github.com/LovationAdmin/budget-api/services"
+	"github.com/LovationAdmin/budget-api/utils"
 )
 
 // ============================================================================
-// MARKET SUGGESTIONS HANDLER
-// Endpoints for obtaining personalized competitor suggestions
+// HANDLER STRUCT
 // ============================================================================
 
 type MarketSuggestionsHandler struct {
 	DB             *sql.DB
 	MarketAnalyzer *services.MarketAnalyzerService
-	AIService      *services.ClaudeAIService
-	WS             *WSHandler // Added WebSocket Handler
+	WS             *WSHandler
 }
 
-// Updated Constructor to accept WSHandler
-func NewMarketSuggestionsHandler(db *sql.DB, ws *WSHandler) *MarketSuggestionsHandler {
-	aiService := services.NewClaudeAIService()
-	marketAnalyzer := services.NewMarketAnalyzerService(db, aiService)
-
+func NewMarketSuggestionsHandler(db *sql.DB, analyzer *services.MarketAnalyzerService, ws *WSHandler) *MarketSuggestionsHandler {
 	return &MarketSuggestionsHandler{
 		DB:             db,
-		MarketAnalyzer: marketAnalyzer,
-		AIService:      aiService,
+		MarketAnalyzer: analyzer,
 		WS:             ws,
 	}
 }
 
-// ✅ HELPER : Récupérer la config du budget (Source de vérité)
-func (h *MarketSuggestionsHandler) getBudgetConfig(ctx context.Context, budgetID string) (string, string, error) {
-	var location, currency sql.NullString
-	// On récupère location et currency, avec fallback si null dans la BDD
-	err := h.DB.QueryRowContext(ctx, 
-		"SELECT location, currency FROM budgets WHERE id = $1", 
-		budgetID).Scan(&location, &currency)
-	
-	loc := "FR"
-	cur := "EUR"
+// ============================================================================
+// CATEGORY DETECTION HELPERS
+// ============================================================================
 
-	if err == nil {
-		if location.Valid && location.String != "" { loc = location.String }
-		if currency.Valid && currency.String != "" { cur = currency.String }
+// determineCategory détecte la catégorie à partir du libellé
+func determineCategory(label string) string {
+	labelLower := strings.ToLower(label)
+
+	// Énergie
+	if strings.Contains(labelLower, "edf") ||
+		strings.Contains(labelLower, "engie") ||
+		strings.Contains(labelLower, "total") ||
+		strings.Contains(labelLower, "électricité") ||
+		strings.Contains(labelLower, "electricite") ||
+		strings.Contains(labelLower, "gaz") ||
+		strings.Contains(labelLower, "énergie") ||
+		strings.Contains(labelLower, "energie") {
+		return "ENERGY"
 	}
-	
-	return loc, cur, err
+
+	// Internet
+	if strings.Contains(labelLower, "orange") ||
+		strings.Contains(labelLower, "sfr") ||
+		strings.Contains(labelLower, "bouygues") ||
+		strings.Contains(labelLower, "free") ||
+		strings.Contains(labelLower, "internet") ||
+		strings.Contains(labelLower, "fibre") ||
+		strings.Contains(labelLower, "box") {
+		return "INTERNET"
+	}
+
+	// Mobile
+	if strings.Contains(labelLower, "mobile") ||
+		strings.Contains(labelLower, "téléphone") ||
+		strings.Contains(labelLower, "telephone") ||
+		strings.Contains(labelLower, "forfait") {
+		return "MOBILE"
+	}
+
+	// Assurances
+	if strings.Contains(labelLower, "assurance") ||
+		strings.Contains(labelLower, "axa") ||
+		strings.Contains(labelLower, "maif") ||
+		strings.Contains(labelLower, "macif") ||
+		strings.Contains(labelLower, "matmut") ||
+		strings.Contains(labelLower, "groupama") {
+		if strings.Contains(labelLower, "auto") || strings.Contains(labelLower, "voiture") {
+			return "INSURANCE_AUTO"
+		}
+		if strings.Contains(labelLower, "habitation") || strings.Contains(labelLower, "maison") || strings.Contains(labelLower, "logement") {
+			return "INSURANCE_HOME"
+		}
+		if strings.Contains(labelLower, "santé") || strings.Contains(labelLower, "sante") || strings.Contains(labelLower, "mutuelle") {
+			return "INSURANCE_HEALTH"
+		}
+		return "INSURANCE_HOME" // Default insurance
+	}
+
+	// Streaming
+	if strings.Contains(labelLower, "netflix") ||
+		strings.Contains(labelLower, "spotify") ||
+		strings.Contains(labelLower, "disney") ||
+		strings.Contains(labelLower, "amazon prime") ||
+		strings.Contains(labelLower, "deezer") ||
+		strings.Contains(labelLower, "canal") ||
+		strings.Contains(labelLower, "streaming") {
+		return "LEISURE_STREAMING"
+	}
+
+	// Sport
+	if strings.Contains(labelLower, "sport") ||
+		strings.Contains(labelLower, "fitness") ||
+		strings.Contains(labelLower, "gym") ||
+		strings.Contains(labelLower, "salle") ||
+		strings.Contains(labelLower, "basic fit") ||
+		strings.Contains(labelLower, "keep cool") {
+		return "LEISURE_SPORT"
+	}
+
+	// Banque
+	if strings.Contains(labelLower, "banque") ||
+		strings.Contains(labelLower, "frais bancaires") ||
+		strings.Contains(labelLower, "carte") {
+		return "BANK"
+	}
+
+	// Prêt / Crédit
+	if strings.Contains(labelLower, "prêt") ||
+		strings.Contains(labelLower, "pret") ||
+		strings.Contains(labelLower, "crédit") ||
+		strings.Contains(labelLower, "credit") ||
+		strings.Contains(labelLower, "emprunt") {
+		return "LOAN"
+	}
+
+	// Transport
+	if strings.Contains(labelLower, "transport") ||
+		strings.Contains(labelLower, "navigo") ||
+		strings.Contains(labelLower, "sncf") ||
+		strings.Contains(labelLower, "ratp") ||
+		strings.Contains(labelLower, "abonnement train") {
+		return "TRANSPORT"
+	}
+
+	return "OTHER"
+}
+
+// isSuggestionRelevant vérifie si une catégorie est éligible aux suggestions
+func (h *MarketSuggestionsHandler) isSuggestionRelevant(category string) bool {
+	relevantCategories := map[string]bool{
+		"ENERGY":            true,
+		"INTERNET":          true,
+		"MOBILE":            true,
+		"INSURANCE":         true,
+		"INSURANCE_AUTO":    true,
+		"INSURANCE_HOME":    true,
+		"INSURANCE_HEALTH":  true,
+		"LOAN":              true,
+		"BANK":              true,
+		"TRANSPORT":         true,
+		"LEISURE_SPORT":     true,
+		"LEISURE_STREAMING": true,
+		"SUBSCRIPTION":      true,
+		"HOUSING":           true,
+	}
+	return relevantCategories[strings.ToUpper(category)]
 }
 
 // ============================================================================
-// 1. ANALYZE A SPECIFIC CHARGE
+// HELPER METHODS
+// ============================================================================
+
+// checkBudgetAccess vérifie si l'utilisateur a accès au budget
+func (h *MarketSuggestionsHandler) checkBudgetAccess(ctx context.Context, userID, budgetID string) (bool, error) {
+	var count int
+	err := h.DB.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM budget_members 
+		WHERE budget_id = $1 AND user_id = $2
+	`, budgetID, userID).Scan(&count)
+
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// getBudgetConfig récupère la localisation et devise d'un budget
+func (h *MarketSuggestionsHandler) getBudgetConfig(ctx context.Context, budgetID string) (string, string, error) {
+	var location, currency string
+	err := h.DB.QueryRowContext(ctx, `
+		SELECT COALESCE(location, 'FR'), COALESCE(currency, 'EUR') 
+		FROM budgets WHERE id = $1
+	`, budgetID).Scan(&location, &currency)
+
+	if err != nil {
+		return "FR", "EUR", err
+	}
+	return location, currency, nil
+}
+
+// ============================================================================
+// 1. ANALYZE SINGLE CHARGE
 // POST /api/v1/suggestions/analyze
 // ============================================================================
 
 type AnalyzeChargeRequest struct {
-	// ⚠️ MODIFICATION : budget_id devient optionnel pour l'outil public
-	BudgetID      string  `json:"budget_id"` 
 	Category      string  `json:"category" binding:"required"`
 	MerchantName  string  `json:"merchant_name"`
-	CurrentAmount float64 `json:"current_amount" binding:"required"`
+	Amount        float64 `json:"amount" binding:"required"`
+	Country       string  `json:"country"`
+	Currency      string  `json:"currency"`
 	HouseholdSize int     `json:"household_size"`
-	Description   string  `json:"description,omitempty"`
-	// ✅ AJOUTS : Pour l'outil public SmartTools (valeurs manuelles)
-	Country       string  `json:"country,omitempty"`
-	Currency      string  `json:"currency,omitempty"`
+	Description   string  `json:"description"`
 }
 
 func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
@@ -83,50 +220,40 @@ func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 		return
 	}
 
-	var country, currency string
-
-	// LOGIQUE DE DÉTECTION DU CONTEXTE
-	if req.BudgetID != "" {
-		// Cas 1 : Appel depuis un Budget (Utilisateur connecté) -> On prend la config BDD
-		// On ignore les params country/currency de la requête dans ce cas pour la sécurité/cohérence
-		var err error
-		country, currency, err = h.getBudgetConfig(c.Request.Context(), req.BudgetID)
-		if err != nil {
-			log.Printf("Failed to get budget config for %s: %v", req.BudgetID, err)
-			country, currency = "FR", "EUR"
-		}
-	} else {
-		// Cas 2 : Appel Public (SmartTools) -> On prend les params de la requête
-		country = req.Country
-		currency = req.Currency
-		
-		// Fallbacks par défaut si non fournis
-		if country == "" { country = "FR" }
-		if currency == "" { currency = "EUR" }
+	// Defaults
+	country := req.Country
+	if country == "" {
+		country = "FR"
 	}
-
+	currency := req.Currency
+	if currency == "" {
+		currency = "EUR"
+	}
 	householdSize := req.HouseholdSize
 	if householdSize < 1 {
 		householdSize = 1
 	}
 
-	log.Printf("[MarketSuggestions] Analyzing single charge: %s (Loc: %s, Curr: %s) - %.2f - Desc: %s",
-		req.Category, country, currency, req.CurrentAmount, req.Description)
+	// ✅ LOGGING SÉCURISÉ - Pas de montant ni données personnelles
+	utils.LogAIAnalysis("SingleAnalyze", req.Category, country, 1)
 
 	suggestion, err := h.MarketAnalyzer.AnalyzeCharge(
 		c.Request.Context(),
 		req.Category,
 		req.MerchantName,
-		req.CurrentAmount,
-		country,  // ✅ PAYS DÉTECTÉ
-		currency, // ✅ DEVISE DÉTECTÉE
+		req.Amount,
+		country,
+		currency,
 		householdSize,
 		req.Description,
 	)
 
 	if err != nil {
-		log.Printf("Market analysis failed: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to analyze charge"})
+		utils.SafeError("Single charge analysis failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Analysis failed",
+			"details": err.Error(),
+		})
 		return
 	}
 
@@ -134,7 +261,58 @@ func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 }
 
 // ============================================================================
-// 2. BULK ANALYZE ALL CHARGES IN A BUDGET (ASYNC FIX)
+// 2. GET CATEGORY SUGGESTIONS (CACHED)
+// GET /api/v1/suggestions/category/:category
+// ============================================================================
+
+func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
+	category := strings.ToUpper(c.Param("category"))
+	country := c.DefaultQuery("country", "FR")
+
+	// ✅ LOGGING SÉCURISÉ
+	utils.SafeInfo("Fetching cached suggestions for %s in %s", category, country)
+
+	// Check cache
+	var suggestion models.MarketSuggestion
+	var competitorsJSON []byte
+
+	err := h.DB.QueryRowContext(c.Request.Context(), `
+		SELECT id, category, country, competitors, last_updated, expires_at
+		FROM market_suggestions
+		WHERE category = $1 AND country = $2 AND merchant_name IS NULL AND expires_at > $3
+		ORDER BY last_updated DESC
+		LIMIT 1
+	`, category, country, time.Now()).Scan(
+		&suggestion.ID,
+		&suggestion.Category,
+		&suggestion.Country,
+		&competitorsJSON,
+		&suggestion.LastUpdated,
+		&suggestion.ExpiresAt,
+	)
+
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":   "No cached suggestions found",
+			"message": "Use POST /suggestions/analyze to generate new suggestions",
+		})
+		return
+	}
+
+	if err != nil {
+		utils.SafeError("Database error fetching suggestions: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"suggestion": suggestion,
+		"cached":     true,
+	})
+}
+
+// ============================================================================
+// 3. BULK ANALYZE ALL CHARGES IN A BUDGET (ASYNC)
 // POST /api/v1/budgets/:id/suggestions/bulk-analyze
 // ============================================================================
 
@@ -169,6 +347,10 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 		return
 	}
 
+	// ✅ LOGGING SÉCURISÉ - Pas d'ID complet ni de montants
+	utils.LogBudgetAction("BulkAnalyze-Start", budgetID, userID)
+	utils.SafeInfo("Bulk analysis requested for %d charges", len(req.Charges))
+
 	// 2. Respond IMMEDIATELY to prevent timeout (HTTP 202 Accepted)
 	c.JSON(http.StatusAccepted, gin.H{
 		"message": "Analysis started in background",
@@ -179,10 +361,10 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 	go func() {
 		bgCtx := context.Background()
 
-		// ✅ RECUPERATION DE LA CONFIG BUDGET AU DÉBUT DU PROCESS
+		// Récupération de la config budget
 		country, currency, err := h.getBudgetConfig(bgCtx, budgetID)
 		if err != nil {
-			log.Printf("[Async] Error: Could not fetch budget config for %s. Using defaults.", budgetID)
+			utils.SafeWarn("Could not fetch budget config, using defaults")
 			country, currency = "FR", "EUR"
 		}
 
@@ -191,30 +373,32 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 			householdSize = 1
 		}
 
-		log.Printf("[Async] Bulk analyzing %d charges for budget %s (Loc: %s, Curr: %s)", len(req.Charges), budgetID, country, currency)
+		// ✅ LOGGING SÉCURISÉ
+		utils.LogAIAnalysis("BulkAnalyze-Process", "MULTIPLE", country, len(req.Charges))
 
 		var suggestions []models.ChargeSuggestion
 		totalSavings := 0.0
 		cacheHits := 0
 		aiCallsMade := 0
+		processedCount := 0
 
 		for _, charge := range req.Charges {
-			
-			// FIX: Force re-check of "LEISURE" category for existing data
+			// Vérifier/corriger la catégorie
 			analysisCategory := charge.Category
-			if charge.Category == "LEISURE" || charge.Category == "OTHER" {
+			if charge.Category == "LEISURE" || charge.Category == "OTHER" || charge.Category == "" {
 				refined := determineCategory(charge.Label)
 				if refined != "OTHER" && refined != "LEISURE" {
-					log.Printf("[Recategorize] Upgrading '%s' from %s to %s", charge.Label, charge.Category, refined)
+					utils.SafeDebug("Recategorized charge from %s to %s", charge.Category, refined)
 					analysisCategory = refined
 				}
 			}
 
-			// Check whitelist
+			// Vérifier si la catégorie est éligible
 			if !h.isSuggestionRelevant(analysisCategory) {
 				continue
 			}
 
+			// Petit délai pour éviter de surcharger l'API
 			time.Sleep(100 * time.Millisecond)
 
 			suggestion, err := h.MarketAnalyzer.AnalyzeCharge(
@@ -222,14 +406,14 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 				analysisCategory,
 				charge.MerchantName,
 				charge.Amount,
-				country,  // ✅ PAYS
-				currency, // ✅ DEVISE
+				country,
+				currency,
 				householdSize,
 				charge.Description,
 			)
 
 			if err != nil {
-				log.Printf("[Async] Failed to analyze charge %s: %v", charge.ID, err)
+				utils.SafeWarn("Failed to analyze charge: %v", err)
 				continue
 			}
 
@@ -245,9 +429,13 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 
 				aiCallsMade++
 			}
+
+			processedCount++
 		}
 
-		log.Printf("[Async] Analysis complete for budget %s. Found %.2f %s savings.", budgetID, totalSavings, currency)
+		// ✅ LOGGING SÉCURISÉ - Pas de montant total exact
+		utils.SafeInfo("Bulk analysis complete: %d charges processed, %d suggestions found", processedCount, len(suggestions))
+		utils.LogBudgetAction("BulkAnalyze-Complete", budgetID, userID)
 
 		// 4. Notify Frontend via WebSocket
 		if h.WS != nil {
@@ -259,215 +447,38 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 					"household_size":          householdSize,
 					"cache_hits":              cacheHits,
 					"ai_calls_made":           aiCallsMade,
-					"currency":                currency, // ✅
+					"currency":                currency,
 				},
 			}
-			
+
 			h.WS.BroadcastJSON(budgetID, responsePayload)
 		}
 	}()
 }
 
 // ============================================================================
-// 3. GET CACHED SUGGESTIONS FOR A CATEGORY
-// GET /api/v1/suggestions/category/:category
+// 4. CATEGORIZE TRANSACTION LABEL
+// POST /api/v1/categorize
 // ============================================================================
 
-func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
-	userID := c.GetString("user_id")
-	category := c.Param("category")
-
-	// Fallback si pas de budgetID
-	userCountry, err := h.getUserCountry(c.Request.Context(), userID)
-	if err != nil {
-		userCountry = "FR"
-	}
-
-	suggestion, err := h.MarketAnalyzer.AnalyzeCharge(
-		c.Request.Context(),
-		category,
-		"",
-		0,
-		userCountry,
-		"EUR", // Default currency
-		1,
-		"", // Pas de description
-	)
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch suggestions"})
-		return
-	}
-
-	if suggestion == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "No suggestions found"})
-		return
-	}
-
-	c.JSON(http.StatusOK, suggestion)
+type CategorizeRequest struct {
+	Label string `json:"label" binding:"required"`
 }
 
-// ============================================================================
-// 4. CLEAN EXPIRED CACHE
-// ============================================================================
-
-func (h *MarketSuggestionsHandler) CleanExpiredCache(c *gin.Context) {
-	if err := h.MarketAnalyzer.CleanExpiredCache(c.Request.Context()); err != nil {
-		log.Printf("Failed to clean cache: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clean cache"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "Cache cleaned successfully"})
-}
-
-// ============================================================================
-// 5. CATEGORIZE CHARGE
-// ============================================================================
-
-func (h *MarketSuggestionsHandler) CategorizeCharge(c *gin.Context) {
-	var req struct {
-		Label string `json:"label"`
-	}
+func (h *MarketSuggestionsHandler) CategorizeLabel(c *gin.Context) {
+	var req CategorizeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Label required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Label is required"})
 		return
 	}
 
-	label := strings.TrimSpace(req.Label)
-	if label == "" {
-		c.JSON(http.StatusOK, gin.H{"label": "", "category": "OTHER"})
-		return
-	}
+	// ✅ LOGGING SÉCURISÉ - Pas de libellé complet
+	utils.SafeDebug("Categorizing label (length: %d)", len(req.Label))
 
-	category := determineCategory(label)
-
-	if category == "OTHER" && len(label) > 3 {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-		defer cancel()
-
-		aiCategory, err := h.AIService.CategorizeLabel(ctx, label)
-		if err == nil {
-			category = aiCategory
-		}
-	}
+	category := determineCategory(req.Label)
 
 	c.JSON(http.StatusOK, gin.H{
 		"label":    req.Label,
 		"category": category,
 	})
-}
-
-// ============================================================================
-// HELPERS
-// ============================================================================
-
-func determineCategory(label string) string {
-	l := strings.ToUpper(strings.TrimSpace(label))
-
-	keywords := map[string][]string{
-		"MOBILE": {
-			"MOBILE", "PORTABLE", "SOSH", "BOUYGUES", "FREE", "ORANGE", "SFR",
-			"RED BY", "PRIXTEL", "NRJ MOBILE", "LEBARA", "LYCA", "YOUPI", "CORIOLIS",
-			"FORFAIT",
-		},
-		"INTERNET": {
-			"BOX", "FIBRE", "ADSL", "INTERNET", "NUMERICABLE", "STARLINK",
-			"NORDNET", "OVH", "K-NET", "LIVEBOX", "BBOX", "FREEBOX",
-		},
-		"ENERGY": {
-			"EDF", "ENGIE", "TOTAL", "ENERGIE", "ELEC", "GAZ", "ENI",
-			"ILEK", "PLANETE OUI", "VATTENFALL", "MINT", "OHM", "MEGA", "BUTAGAZ", "SUEZ", "VEOLIA",
-		},
-		"INSURANCE": {
-			"ASSURANCE", "AXA", "MAIF", "ALLIANZ", "MACIF", "GROUPAMA", "GMF",
-			"MATMUT", "GENERALI", "MMA", "MAAF", "DIRECT ASSURANCE", "OLIVIER",
-			"LEOCARE", "LUKO", "ALAN", "MGEN", "HARMONIE", "MUTUELLE", "PREVOYANCE",
-		},
-		"LOAN": {
-			"PRET", "CREDIT", "ECHEANCE", "EMPRUNT", "MENSUALITE", "IMMOBILIER",
-			"COFIDIS", "CETELEM", "SOFINCO", "FLOA", "BOURSORAMA", "FRANFINANCE", "YOUNITED",
-		},
-		"BANK": {
-			"BANQUE", "CREDIT AGRICOLE", "SOCIETE GENERALE", "BNP", "LCL",
-			"POSTALE", "CAISSE EPARGNE", "POPULAIRE", "CIC", "REVOLUT", "N26",
-			"BOURSO", "FORTUNEO", "MONABANQ", "HELLO", "QONTO", "SHINE",
-		},
-		"TRANSPORT": {
-			"NAVIGO", "RATP", "SNCF", "TGV", "OUIGO", "UBER", "BOLT", "TAXI",
-			"LIME", "AUTOROUTE", "PEAGE", "VINCI", "APRR", "SANEF", "TOTAL ENERGIES", "ESSO", "BP", "SHELL",
-		},
-		"SUBSCRIPTION": {
-			"ICLOUD", "DROPBOX", "ADOBE", "MICROSOFT", "GOOGLE ONE", "CHATGPT", "MIDJOURNEY",
-		},
-		"FOOD": {
-			"CARREFOUR", "LECLERC", "AUCHAN", "INTERMARCHE", "LIDL", "ALDI", "MONOPRIX",
-			"FRANPRIX", "SUPER U", "HYPER U", "CASINO", "PICARD", "UBER EATS", "DELIVEROO",
-			"MC DO", "MCDONALD", "BK", "BURGER KING", "KFC", "STARBUCKS",
-		},
-		"HOUSING": {
-			"LOYER", "RENT", "APPARTEMENT", "LOGEMENT", "CHARGES LOCATIVES", "FONCIA", "CITYA",
-		},
-		"LEISURE_SPORT": {
-			"SPORT", "GYM", "FITNESS", "BASIC FIT", "KEEP COOL", "NEONESS", "CROSSFIT", "ORANGE BLEUE",
-			"CLUB", "PISCINE", "YOGA",
-		},
-		"LEISURE_STREAMING": {
-			"NETFLIX", "SPOTIFY", "AMAZON", "PRIME", "DISNEY", "CANAL",
-			"APPLE TV", "APPLE MUSIC", "YOUTUBE", "DEEZER", "HBO", "PARAMOUNT", "SALTO", "OCS", "TWITCH",
-		},
-	}
-
-	for cat, keys := range keywords {
-		for _, k := range keys {
-			if strings.Contains(l, k) {
-				if k == "SFR" || k == "ORANGE" || k == "BOUYGUES" || k == "FREE" {
-					if strings.Contains(l, "BOX") || strings.Contains(l, "FIBRE") || strings.Contains(l, "FIXE") {
-						return "INTERNET"
-					}
-					if strings.Contains(l, "MOBILE") || strings.Contains(l, "FORFAIT") {
-						return "MOBILE"
-					}
-					return "MOBILE"
-				}
-				return cat
-			}
-		}
-	}
-	return "OTHER"
-}
-
-func (h *MarketSuggestionsHandler) getUserCountry(ctx context.Context, userID string) (string, error) {
-	var country sql.NullString
-	err := h.DB.QueryRowContext(ctx, "SELECT country FROM users WHERE id = $1", userID).Scan(&country)
-	if err != nil || !country.Valid || country.String == "" {
-		return "FR", nil
-	}
-	return country.String, nil
-}
-
-func (h *MarketSuggestionsHandler) checkBudgetAccess(ctx context.Context, userID string, budgetID string) (bool, error) {
-	var exists bool
-	err := h.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM budget_members WHERE budget_id = $1 AND user_id = $2)`, budgetID, userID).Scan(&exists)
-	return exists, err
-}
-
-func (h *MarketSuggestionsHandler) isSuggestionRelevant(category string) bool {
-	relevantCategories := map[string]bool{
-		"ENERGY":            true,
-		"INTERNET":          true,
-		"MOBILE":            true,
-		"INSURANCE":         true,
-		"INSURANCE_AUTO":    true,
-		"INSURANCE_HOME":    true,
-		"INSURANCE_HEALTH":  true,
-		"LOAN":              true,
-		"BANK":              true,
-		"TRANSPORT":         true,
-		"LEISURE":           true, 
-		"LEISURE_SPORT":     true,
-		"LEISURE_STREAMING": true,
-		"SUBSCRIPTION":      true,
-		"HOUSING":           true,
-	}
-	return relevantCategories[strings.ToUpper(category)]
 }

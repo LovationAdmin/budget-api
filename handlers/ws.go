@@ -1,138 +1,278 @@
+// handlers/ws.go
+// ============================================================================
+// WEBSOCKET HANDLER - Communication temps réel pour synchronisation budgets
+// ============================================================================
+// VERSION CORRIGÉE : Logging sécurisé
+// ============================================================================
+
 package handlers
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
-	"time"
+	"sync"
 
 	"github.com/gin-gonic/gin"
-	"github.com/olahol/melody"
+	"github.com/gorilla/websocket"
+	"github.com/LovationAdmin/budget-api/utils"
 )
 
-type WSHandler struct {
-	M *melody.Melody
+// ============================================================================
+// TYPES & CONFIGURATION
+// ============================================================================
+
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin: func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		allowedOrigins := []string{
+			"https://budgetfamille.com",
+			"https://www.budgetfamille.com",
+			"https://budget-ui-two.vercel.app",
+			"http://localhost:3000",
+			"http://localhost:5173",
+		}
+		for _, allowed := range allowedOrigins {
+			if origin == allowed {
+				return true
+			}
+		}
+		return false
+	},
 }
+
+type WSSession struct {
+	Conn     *websocket.Conn
+	BudgetID string
+	UserID   string
+}
+
+type WSHandler struct {
+	sessions map[string]*WSSession // key = conn pointer address
+	mu       sync.RWMutex
+}
+
+// ============================================================================
+// CONSTRUCTOR
+// ============================================================================
 
 func NewWSHandler() *WSHandler {
-	m := melody.New()
-	
-	m.Config.MaxMessageSize = 1024 * 1024 
-	
-	// Keep-Alive Configuration
-	m.Config.PingPeriod = 30 * time.Second
-	m.Config.PongWait = 60 * time.Second
-
-	// Allow Cross-Origin WebSockets
-	m.Upgrader.CheckOrigin = func(r *http.Request) bool {
-		return true
+	return &WSHandler{
+		sessions: make(map[string]*WSSession),
 	}
-
-	// 🔥 FIX: HandleConnect doit être enregistré UNE SEULE FOIS ici
-	m.HandleConnect(func(s *melody.Session) {
-		budgetID, budgetExists := s.Get("budget_id")
-		userID, userExists := s.Get("user_id")
-		
-		if budgetExists && userExists {
-			log.Printf("✅ Client connected to budget: %s (user: %s)", budgetID, userID)
-		} else if budgetExists {
-			log.Printf("⚠️ Client connected to budget: %s (no user_id)", budgetID)
-		} else {
-			log.Printf("⚠️ Client connected but no budget_id/user_id set")
-		}
-	})
-
-	m.HandleDisconnect(func(s *melody.Session) {
-		budgetID, _ := s.Get("budget_id")
-		userID, _ := s.Get("user_id")
-		log.Printf("🔌 Client disconnected from budget: %v (user: %v)", budgetID, userID)
-	})
-
-	m.HandleError(func(s *melody.Session, err error) {
-		log.Printf("⚠️ WebSocket Error: %v", err)
-	})
-
-	return &WSHandler{M: m}
 }
+
+// ============================================================================
+// WEBSOCKET CONNECTION HANDLER
+// ============================================================================
 
 func (h *WSHandler) HandleWS(c *gin.Context) {
 	budgetID := c.Param("id")
-	userID := c.GetString("user_id") // 🔥 NEW: Get authenticated user ID
-	
-	log.Printf("🔌 Incoming WS connection request for budget: %s from user: %s", budgetID, userID)
+	userID := c.Query("user_id")
 
-	// 🔥 FIX: Set budget_id AND user_id AVANT l'upgrade
-	c.Set("budget_id", budgetID)
-	c.Set("user_id", userID)
-
-	// Upgrade request to WebSocket
-	err := h.M.HandleRequestWithKeys(c.Writer, c.Request, map[string]interface{}{
-		"budget_id": budgetID,
-		"user_id":   userID, // 🔥 NEW: Store user_id in session
-	})
-	
-	if err != nil {
-		log.Printf("❌ Failed to upgrade websocket: %v", err)
+	if budgetID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Budget ID required"})
 		return
 	}
+
+	// ✅ LOGGING SÉCURISÉ
+	utils.LogWebSocket("Connect", budgetID, userID)
+
+	// Upgrade HTTP to WebSocket
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		utils.SafeError("WebSocket upgrade failed: %v", err)
+		return
+	}
+
+	// Create session
+	sessionKey := conn.RemoteAddr().String()
+	session := &WSSession{
+		Conn:     conn,
+		BudgetID: budgetID,
+		UserID:   userID,
+	}
+
+	// Register session
+	h.mu.Lock()
+	h.sessions[sessionKey] = session
+	h.mu.Unlock()
+
+	utils.SafeInfo("WebSocket client connected (budget sessions: %d)", h.countBudgetSessions(budgetID))
+
+	// Handle messages
+	go h.handleMessages(sessionKey, session)
 }
 
-// BroadcastUpdate sends a simple update signal (LEGACY - kept for compatibility)
-func (h *WSHandler) BroadcastUpdate(budgetID string, updateType string, userWhoUpdated string) {
-	msg := []byte(`{"type": "` + updateType + `", "user": "` + userWhoUpdated + `"}`)
-	
-	err := h.M.BroadcastFilter(msg, func(q *melody.Session) bool {
-		id, exists := q.Get("budget_id")
-		return exists && id == budgetID
-	})
+// ============================================================================
+// MESSAGE HANDLING
+// ============================================================================
 
-	if err != nil {
-		log.Printf("⚠️ Error broadcasting to budget %s: %v", budgetID, err)
+func (h *WSHandler) handleMessages(sessionKey string, session *WSSession) {
+	defer func() {
+		// Cleanup on disconnect
+		h.mu.Lock()
+		delete(h.sessions, sessionKey)
+		h.mu.Unlock()
+
+		session.Conn.Close()
+		utils.LogWebSocket("Disconnect", session.BudgetID, session.UserID)
+	}()
+
+	for {
+		_, msg, err := session.Conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				utils.SafeWarn("WebSocket read error: %v", err)
+			}
+			break
+		}
+
+		// Parse message
+		var data map[string]interface{}
+		if err := json.Unmarshal(msg, &data); err != nil {
+			continue
+		}
+
+		// Handle ping/pong for keepalive
+		if msgType, ok := data["type"].(string); ok {
+			if msgType == "ping" {
+				session.Conn.WriteJSON(map[string]string{"type": "pong"})
+			}
+		}
 	}
 }
 
-// BroadcastUpdateExcludingUser sends update to all users EXCEPT the one who made the change
-// 🔥 NEW: This is the preferred method for budget updates
-func (h *WSHandler) BroadcastUpdateExcludingUser(budgetID string, updateType string, userWhoUpdated string, userIDToExclude string) {
-	msg := []byte(`{"type": "` + updateType + `", "user": "` + userWhoUpdated + `", "user_id": "` + userIDToExclude + `"}`)
-	
-	err := h.M.BroadcastFilter(msg, func(q *melody.Session) bool {
-		id, exists := q.Get("budget_id")
-		if !exists || id != budgetID {
-			return false
-		}
-		
-		// 🔥 EXCLUDE the user who made the update
-		excludeUserID, hasExclude := q.Get("user_id")
-		if hasExclude && excludeUserID == userIDToExclude {
-			log.Printf("🚫 Skipping notification for user who made the update: %s", userIDToExclude)
-			return false
-		}
-		
-		return true
-	})
+// ============================================================================
+// BROADCAST METHODS
+// ============================================================================
 
-	if err != nil {
-		log.Printf("⚠️ Error broadcasting to budget %s: %v", budgetID, err)
-	} else {
-		log.Printf("📢 Broadcasted update to budget %s (excluding user %s)", budgetID, userIDToExclude)
-	}
-}
-
-// BroadcastJSON sends any struct as JSON payload
+// BroadcastJSON envoie un message JSON à tous les clients d'un budget
 func (h *WSHandler) BroadcastJSON(budgetID string, payload interface{}) {
-	msg, err := json.Marshal(payload)
-	if err != nil {
-		log.Printf("❌ Failed to marshal JSON for broadcast: %v", err)
-		return
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	sentCount := 0
+	for _, session := range h.sessions {
+		if session.BudgetID == budgetID {
+			if err := session.Conn.WriteJSON(payload); err != nil {
+				utils.SafeWarn("Failed to send WebSocket message: %v", err)
+				continue
+			}
+			sentCount++
+		}
 	}
 
-	err = h.M.BroadcastFilter(msg, func(q *melody.Session) bool {
-		id, exists := q.Get("budget_id")
-		return exists && id == budgetID
-	})
+	if sentCount > 0 {
+		utils.SafeInfo("Broadcast sent to %d clients", sentCount)
+	}
+}
 
-	if err != nil {
-		log.Printf("⚠️ Error broadcasting JSON to budget %s: %v", budgetID, err)
+// BroadcastUpdateExcludingUser envoie un message à tous sauf l'utilisateur spécifié
+func (h *WSHandler) BroadcastUpdateExcludingUser(budgetID string, excludeUserID string, updateType string, userName string) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	payload := map[string]interface{}{
+		"type": updateType,
+		"user": userName,
+	}
+
+	sentCount := 0
+	for _, session := range h.sessions {
+		if session.BudgetID == budgetID && session.UserID != excludeUserID {
+			if err := session.Conn.WriteJSON(payload); err != nil {
+				utils.SafeWarn("Failed to send WebSocket message: %v", err)
+				continue
+			}
+			sentCount++
+		}
+	}
+
+	if sentCount > 0 {
+		utils.SafeInfo("Update broadcast to %d clients (excluding modifier)", sentCount)
+	}
+}
+
+// BroadcastToUser envoie un message à un utilisateur spécifique
+func (h *WSHandler) BroadcastToUser(budgetID string, userID string, payload interface{}) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for _, session := range h.sessions {
+		if session.BudgetID == budgetID && session.UserID == userID {
+			if err := session.Conn.WriteJSON(payload); err != nil {
+				utils.SafeWarn("Failed to send WebSocket message to user: %v", err)
+			}
+			return
+		}
+	}
+}
+
+// ============================================================================
+// UTILITY METHODS
+// ============================================================================
+
+// countBudgetSessions compte le nombre de sessions pour un budget
+func (h *WSHandler) countBudgetSessions(budgetID string) int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	count := 0
+	for _, session := range h.sessions {
+		if session.BudgetID == budgetID {
+			count++
+		}
+	}
+	return count
+}
+
+// GetConnectedUsers retourne la liste des utilisateurs connectés à un budget
+func (h *WSHandler) GetConnectedUsers(budgetID string) []string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	users := make([]string, 0)
+	seen := make(map[string]bool)
+
+	for _, session := range h.sessions {
+		if session.BudgetID == budgetID && session.UserID != "" {
+			if !seen[session.UserID] {
+				users = append(users, session.UserID)
+				seen[session.UserID] = true
+			}
+		}
+	}
+
+	return users
+}
+
+// IsUserConnected vérifie si un utilisateur est connecté à un budget
+func (h *WSHandler) IsUserConnected(budgetID string, userID string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for _, session := range h.sessions {
+		if session.BudgetID == budgetID && session.UserID == userID {
+			return true
+		}
+	}
+	return false
+}
+
+// GetStats retourne les statistiques globales des connexions WebSocket
+func (h *WSHandler) GetStats() map[string]interface{} {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	budgets := make(map[string]int)
+	for _, session := range h.sessions {
+		budgets[session.BudgetID]++
+	}
+
+	return map[string]interface{}{
+		"total_connections": len(h.sessions),
+		"active_budgets":    len(budgets),
 	}
 }
