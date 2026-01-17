@@ -206,7 +206,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	// Générer le token JWT
-	token, err := utils.GenerateToken(user.ID, user.Email)
+	token, err := utils.GenerateAccessToken(user.ID, user.Email)
 	if err != nil {
 		utils.SafeError("Failed to generate token: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Login failed"})

@@ -461,9 +461,6 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 // POST /api/v1/categorize
 // ============================================================================
 
-type CategorizeRequest struct {
-	Label string `json:"label" binding:"required"`
-}
 
 func (h *MarketSuggestionsHandler) CategorizeLabel(c *gin.Context) {
 	var req CategorizeRequest
