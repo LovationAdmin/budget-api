@@ -1,3 +1,4 @@
+// routes/routes.go
 package routes
 
 import (
@@ -19,7 +20,8 @@ func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	
 	// Email Verification
 	rg.GET("/auth/verify", authHandler.VerifyEmail)
-	rg.POST("/auth/verify/resend", authHandler.ResendVerification)
+	// FIXED: ResendVerificationEmail match handlers definition
+	rg.POST("/auth/verify/resend", authHandler.ResendVerificationEmail)
 	
 	// Password Reset
 	rg.POST("/auth/forgot-password", authHandler.ForgotPassword)
@@ -52,10 +54,6 @@ func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	// Profile
 	rg.GET("/user/profile", userHandler.GetProfile)
 	rg.PUT("/user/profile", userHandler.UpdateProfile)
-	
-	// ❌ SUPPRIMÉ : Routes Location (maintenant au niveau budget)
-	// rg.PUT("/user/location", userHandler.UpdateLocation)
-	// rg.GET("/user/location", userHandler.GetLocation)
 	
 	// Security
 	rg.POST("/user/password", userHandler.ChangePassword)
@@ -98,16 +96,28 @@ func SetupEnableBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 }
 
 func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *handlers.WSHandler) {
-	handler := handlers.NewMarketSuggestionsHandler(db, wsHandler)
+	// Initialize services locally for handler injection
+	aiService := services.NewClaudeAIService()
+	marketAnalyzer := services.NewMarketAnalyzerService(db, aiService)
+	
+	// Pass all 3 required arguments
+	handler := handlers.NewMarketSuggestionsHandler(db, marketAnalyzer, wsHandler)
 
 	rg.POST("/suggestions/analyze", handler.AnalyzeCharge)
 	rg.GET("/suggestions/category/:category", handler.GetCategorySuggestions)
 	rg.POST("/budgets/:id/suggestions/bulk-analyze", handler.BulkAnalyzeCharges)
-	rg.POST("/categorize", handler.CategorizeCharge)
+	// FIXED: CategorizeLabel match handlers definition
+	rg.POST("/categorize", handler.CategorizeLabel)
 }
 
 func SetupAdminSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
-	handler := handlers.NewMarketSuggestionsHandler(db, nil)
+	// Initialize services locally
+	aiService := services.NewClaudeAIService()
+	marketAnalyzer := services.NewMarketAnalyzerService(db, aiService)
+
+	// Pass nil for wsHandler since admin routes don't use WebSocket
+	handler := handlers.NewMarketSuggestionsHandler(db, marketAnalyzer, nil)
+	
 	rg.POST("/admin/suggestions/clean-cache", handler.CleanExpiredCache)
 	
 	adminHandler := handlers.NewAdminSuggestionHandler(db)

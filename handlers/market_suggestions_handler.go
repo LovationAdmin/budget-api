@@ -87,10 +87,12 @@ func determineCategory(label string) string {
 		if strings.Contains(labelLower, "auto") || strings.Contains(labelLower, "voiture") {
 			return "INSURANCE_AUTO"
 		}
-		if strings.Contains(labelLower, "habitation") || strings.Contains(labelLower, "maison") || strings.Contains(labelLower, "logement") {
+		if strings.Contains(labelLower, "habitation") || strings.Contains(labelLower, "maison") ||
+			strings.Contains(labelLower, "logement") {
 			return "INSURANCE_HOME"
 		}
-		if strings.Contains(labelLower, "santé") || strings.Contains(labelLower, "sante") || strings.Contains(labelLower, "mutuelle") {
+		if strings.Contains(labelLower, "santé") || strings.Contains(labelLower, "sante") ||
+			strings.Contains(labelLower, "mutuelle") {
 			return "INSURANCE_HEALTH"
 		}
 		return "INSURANCE_HOME" // Default insurance
@@ -461,6 +463,9 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 // POST /api/v1/categorize
 // ============================================================================
 
+type CategorizeRequest struct {
+	Label string `json:"label" binding:"required"`
+}
 
 func (h *MarketSuggestionsHandler) CategorizeLabel(c *gin.Context) {
 	var req CategorizeRequest
@@ -478,4 +483,18 @@ func (h *MarketSuggestionsHandler) CategorizeLabel(c *gin.Context) {
 		"label":    req.Label,
 		"category": category,
 	})
+}
+
+// ============================================================================
+// 5. CLEAN CACHE (ADMIN)
+// POST /api/v1/admin/suggestions/clean-cache
+// ============================================================================
+
+func (h *MarketSuggestionsHandler) CleanExpiredCache(c *gin.Context) {
+	if err := h.MarketAnalyzer.CleanExpiredCache(c.Request.Context()); err != nil {
+		utils.SafeWarn("Failed to clean cache: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clean cache"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Cache cleaned successfully"})
 }

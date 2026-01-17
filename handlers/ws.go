@@ -2,7 +2,7 @@
 // ============================================================================
 // WEBSOCKET HANDLER - Communication temps réel pour synchronisation budgets
 // ============================================================================
-// VERSION CORRIGÉE : Logging sécurisé
+// VERSION CORRIGÉE : Complète l'interface Broadcaster
 // ============================================================================
 
 package handlers
@@ -169,19 +169,45 @@ func (h *WSHandler) BroadcastJSON(budgetID string, payload interface{}) {
 	}
 }
 
-// BroadcastUpdateExcludingUser envoie un message à tous sauf l'utilisateur spécifié
-func (h *WSHandler) BroadcastUpdateExcludingUser(budgetID string, excludeUserID string, updateType string, userName string) {
+// BroadcastUpdate implémente l'interface Broadcaster requise par BudgetService
+func (h *WSHandler) BroadcastUpdate(budgetID string, updateType string, userWhoUpdated string) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	payload := map[string]interface{}{
 		"type": updateType,
-		"user": userName,
+		"user": userWhoUpdated,
 	}
 
 	sentCount := 0
 	for _, session := range h.sessions {
-		if session.BudgetID == budgetID && session.UserID != excludeUserID {
+		if session.BudgetID == budgetID {
+			if err := session.Conn.WriteJSON(payload); err != nil {
+				utils.SafeWarn("Failed to send WebSocket message: %v", err)
+				continue
+			}
+			sentCount++
+		}
+	}
+
+	if sentCount > 0 {
+		utils.SafeInfo("Update broadcast sent to %d clients", sentCount)
+	}
+}
+
+// BroadcastUpdateExcludingUser envoie un message à tous sauf l'utilisateur spécifié
+func (h *WSHandler) BroadcastUpdateExcludingUser(budgetID string, updateType string, userWhoUpdated string, userIDToExclude string) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	payload := map[string]interface{}{
+		"type": updateType,
+		"user": userWhoUpdated,
+	}
+
+	sentCount := 0
+	for _, session := range h.sessions {
+		if session.BudgetID == budgetID && session.UserID != userIDToExclude {
 			if err := session.Conn.WriteJSON(payload); err != nil {
 				utils.SafeWarn("Failed to send WebSocket message: %v", err)
 				continue
