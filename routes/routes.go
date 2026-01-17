@@ -20,7 +20,7 @@ func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	
 	// Email Verification
 	rg.GET("/auth/verify", authHandler.VerifyEmail)
-	// FIXED: ResendVerificationEmail match handlers definition
+	// FIXED: Updated method name to match handler definition
 	rg.POST("/auth/verify/resend", authHandler.ResendVerificationEmail)
 	
 	// Password Reset
@@ -33,6 +33,8 @@ func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *handlers.WSHa
 	// Créer les services nécessaires
 	aiService := services.NewClaudeAIService()
 	marketAnalyzer := services.NewMarketAnalyzerService(db, aiService)
+	
+	// wsHandler implements Broadcaster, so this works fine
 	budgetService := services.NewBudgetService(db, wsHandler, marketAnalyzer)
 	emailService := services.NewEmailService()
 	h := handlers.NewHandler(budgetService, emailService)
@@ -96,17 +98,18 @@ func SetupEnableBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 }
 
 func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *handlers.WSHandler) {
-	// Initialize services locally for handler injection
+	// Initialize services locally
 	aiService := services.NewClaudeAIService()
 	marketAnalyzer := services.NewMarketAnalyzerService(db, aiService)
-	
-	// Pass all 3 required arguments
+
+	// FIXED: Pass all 3 required arguments (DB, Analyzer, WS)
 	handler := handlers.NewMarketSuggestionsHandler(db, marketAnalyzer, wsHandler)
 
 	rg.POST("/suggestions/analyze", handler.AnalyzeCharge)
 	rg.GET("/suggestions/category/:category", handler.GetCategorySuggestions)
 	rg.POST("/budgets/:id/suggestions/bulk-analyze", handler.BulkAnalyzeCharges)
-	// FIXED: CategorizeLabel match handlers definition
+	
+	// FIXED: Updated method name to match handler definition
 	rg.POST("/categorize", handler.CategorizeLabel)
 }
 
@@ -115,7 +118,7 @@ func SetupAdminSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	aiService := services.NewClaudeAIService()
 	marketAnalyzer := services.NewMarketAnalyzerService(db, aiService)
 
-	// Pass nil for wsHandler since admin routes don't use WebSocket
+	// FIXED: Pass required arguments. WS is nil for admin routes.
 	handler := handlers.NewMarketSuggestionsHandler(db, marketAnalyzer, nil)
 	
 	rg.POST("/admin/suggestions/clean-cache", handler.CleanExpiredCache)

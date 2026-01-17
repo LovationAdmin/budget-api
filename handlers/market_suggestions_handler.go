@@ -2,7 +2,7 @@
 // ============================================================================
 // MARKET SUGGESTIONS HANDLER - Analyse IA des charges pour trouver des économies
 // ============================================================================
-// VERSION CORRIGÉE : Logging sécurisé sans données personnelles/financières
+// VERSION CORRIGÉE : Suppression du struct dupliqué "CategorizeRequest"
 // ============================================================================
 
 package handlers
@@ -463,12 +463,10 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 // POST /api/v1/categorize
 // ============================================================================
 
-type CategorizeRequest struct {
-	Label string `json:"label" binding:"required"`
-}
+// Struct supprimé ici pour éviter la redeclaration (déjà dans categorization.go)
 
 func (h *MarketSuggestionsHandler) CategorizeLabel(c *gin.Context) {
-	var req CategorizeRequest
+	var req CategorizeRequest // Utilise le struct défini dans handlers/categorization.go
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Label is required"})
 		return
