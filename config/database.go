@@ -1,6 +1,6 @@
 // config/database.go
-// ✅ VERSION FINALE COMPLÈTE - Location/Currency au niveau budget
-// ✅ TOUTES LES MIGRATIONS INCLUSES - Aucune ligne manquante
+// ✅ VERSION FINALE COMPLÈTE - Table names fixed to match handlers
+// ✅ TOUTES LES MIGRATIONS INCLUSES
 
 package config
 
@@ -129,7 +129,8 @@ func RunMigrations(db *sql.DB) error {
 			created_at TIMESTAMP DEFAULT NOW()
 		)`,
 
-		`CREATE TABLE IF NOT EXISTS email_verifications (
+		// FIXED: Table name must be email_verification_tokens (not email_verifications)
+		`CREATE TABLE IF NOT EXISTS email_verification_tokens (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			user_id UUID REFERENCES users(id) ON DELETE CASCADE,
 			token VARCHAR(255) NOT NULL,
@@ -137,7 +138,8 @@ func RunMigrations(db *sql.DB) error {
 			created_at TIMESTAMP DEFAULT NOW()
 		)`,
 
-		`CREATE TABLE IF NOT EXISTS password_resets (
+		// FIXED: Table name must be password_reset_tokens (not password_resets)
+		`CREATE TABLE IF NOT EXISTS password_reset_tokens (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			token VARCHAR(255) NOT NULL UNIQUE,
@@ -286,14 +288,16 @@ func RunMigrations(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_sessions_refresh_token ON sessions(refresh_token)`,
 		
 		// Indexes email_verifications
-		`CREATE INDEX IF NOT EXISTS idx_email_verifications_token ON email_verifications(token)`,
-		`CREATE INDEX IF NOT EXISTS idx_email_verifications_user_id ON email_verifications(user_id)`,
+		// FIXED: Index name updated to match new table name
+		`CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_token ON email_verification_tokens(token)`,
+		`CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user_id ON email_verification_tokens(user_id)`,
 		
 		// Indexes password_resets
-		`CREATE INDEX IF NOT EXISTS idx_password_resets_token ON password_resets(token)`,
-		`CREATE INDEX IF NOT EXISTS idx_password_resets_user_id ON password_resets(user_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_password_resets_expires_at ON password_resets(expires_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_password_resets_used ON password_resets(used)`,
+		// FIXED: Index name updated to match new table name
+		`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token)`,
+		`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires_at ON password_reset_tokens(expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_used ON password_reset_tokens(used)`,
 		
 		// Indexes users
 		`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
