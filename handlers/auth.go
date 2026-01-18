@@ -104,10 +104,9 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 	if frontendURL == "" {
 		frontendURL = "https://budgetfamille.com"
 	}
-	verificationLink := frontendURL + "/verify-email?token=" + verificationToken
 
 	go func() {
-		if err := h.EmailService.SendVerificationEmail(req.Email, req.Name, verificationLink); err != nil {
+		if err := h.EmailService.SendVerificationEmail(req.Email, req.Name, verificationToken); err != nil {
 			utils.SafeWarn("Failed to send verification email: %v", err)
 		}
 	}()
@@ -416,10 +415,9 @@ func (h *AuthHandler) ResendVerificationEmail(c *gin.Context) {
     if frontendURL == "" {
         frontendURL = "https://budgetfamille.com"
     }
-    verificationLink := frontendURL + "/verify-email?token=" + verificationToken
 
     go func() {
-        if err := h.EmailService.SendVerificationEmail(req.Email, name, verificationLink); err != nil {
+        if err := h.EmailService.SendVerificationEmail(req.Email, req.Name, verificationToken); err != nil {
             utils.SafeWarn("Failed to send verification email: %v", err)
         }
     }()
