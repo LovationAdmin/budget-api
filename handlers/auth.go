@@ -1,4 +1,3 @@
-// handlers/auth.go
 package handlers
 
 import (
@@ -27,13 +26,19 @@ func NewAuthHandler(db *sql.DB) *AuthHandler {
 	}
 }
 
-// âœ… HELPER: Cleans token if the frontend accidentally sends the full URL
+// ✅ HELPER: Cleans token if the frontend accidentally sends the full URL
 func cleanToken(token string) string {
 	// If token contains "token=", split it and take the last part
 	if strings.Contains(token, "token=") {
 		parts := strings.Split(token, "token=")
 		if len(parts) > 1 {
-			return strings.TrimSpace(parts[len(parts)-1])
+			// Take the last part and trim any potential URL residue
+			clean := strings.TrimSpace(parts[len(parts)-1])
+			// If there are other parameters (like &something=...), strip them
+			if strings.Contains(clean, "&") {
+				clean = strings.Split(clean, "&")[0]
+			}
+			return clean
 		}
 	}
 	return strings.TrimSpace(token)
@@ -219,11 +224,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 	rawToken := c.Query("token")
 	if rawToken == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Token de vÃ©rification manquant"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Token de vérification manquant"})
 		return
 	}
 
-	// âœ… FIX: Nettoyer le token (si le frontend envoie l'URL complÃ¨te)
+	// ✅ FIX: Nettoyer le token (si le frontend envoie l'URL complète)
 	token := cleanToken(rawToken)
 
 	utils.SafeInfo("Email verification attempt")
@@ -237,20 +242,20 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
     `, token).Scan(&userID, &expiresAt)
 
 	if err == sql.ErrNoRows {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Lien de vÃ©rification invalide ou dÃ©jÃ  utilisÃ©"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Lien de vérification invalide ou déjà utilisé"})
 		return
 	}
 
 	if err != nil {
 		utils.SafeError("Database error verifying email: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur lors de la vÃ©rification"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur lors de la vérification"})
 		return
 	}
 
 	if time.Now().After(expiresAt) {
 		utils.SafeWarn("Expired verification token used")
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Ce lien de vÃ©rification a expirÃ©. Demandez un nouveau lien.",
+			"error":   "Ce lien de vérification a expiré. Demandez un nouveau lien.",
 			"expired": true,
 		})
 		return
@@ -261,14 +266,14 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 
 	if err != nil {
 		utils.SafeError("Failed to check email_verified status: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur lors de la vÃ©rification"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur lors de la vérification"})
 		return
 	}
 
 	if alreadyVerified {
 		h.DB.Exec("DELETE FROM email_verification_tokens WHERE token = $1", token)
 		c.JSON(http.StatusOK, gin.H{
-			"message":          "Email dÃ©jÃ  vÃ©rifiÃ©. Vous pouvez vous connecter.",
+			"message":          "Email déjà vérifié. Vous pouvez vous connecter.",
 			"already_verified": true,
 		})
 		return
@@ -277,7 +282,7 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 	_, err = h.DB.Exec(`UPDATE users SET email_verified = true, updated_at = NOW() WHERE id = $1`, userID)
 	if err != nil {
 		utils.SafeError("Failed to update email_verified: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Impossible de vÃ©rifier l'email"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Impossible de vérifier l'email"})
 		return
 	}
 
@@ -286,7 +291,7 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 	utils.SafeInfo("Email verified successfully for user: %s", userID)
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Email vÃ©rifiÃ© avec succÃ¨s !",
+		"message": "Email vérifié avec succès !",
 		"success": true,
 	})
 }
@@ -316,13 +321,13 @@ func (h *AuthHandler) ResendVerificationEmail(c *gin.Context) {
     `, req.Email).Scan(&userID, &name, &emailVerified)
 
 	if err == sql.ErrNoRows {
-		c.JSON(http.StatusOK, gin.H{"message": "Si un compte existe, un email de vÃ©rification a Ã©tÃ© envoyÃ©."})
+		c.JSON(http.StatusOK, gin.H{"message": "Si un compte existe, un email de vérification a été envoyé."})
 		return
 	}
 
 	if emailVerified {
 		c.JSON(http.StatusOK, gin.H{
-			"message":          "Email dÃ©jÃ  vÃ©rifiÃ©. Vous pouvez vous connecter.",
+			"message":          "Email déjà vérifié. Vous pouvez vous connecter.",
 			"already_verified": true,
 		})
 		return
@@ -351,7 +356,7 @@ func (h *AuthHandler) ResendVerificationEmail(c *gin.Context) {
 
 	if err != nil {
 		utils.SafeError("Failed to create verification token: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Impossible de gÃ©nÃ©rer un nouveau lien"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Impossible de générer un nouveau lien"})
 		return
 	}
 
@@ -364,7 +369,7 @@ func (h *AuthHandler) ResendVerificationEmail(c *gin.Context) {
 	utils.SafeInfo("Verification email resent successfully")
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Email de vÃ©rification envoyÃ© avec succÃ¨s.",
+		"message": "Email de vérification envoyé avec succès.",
 		"success": true,
 	})
 }
@@ -441,7 +446,7 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 		return
 	}
 
-	// âœ… FIX: Nettoyer le token ici aussi
+	// ✅ FIX: Nettoyer le token ici aussi
 	cleanReqToken := cleanToken(req.Token)
 
 	utils.SafeInfo("Password reset execution")
