@@ -417,7 +417,7 @@ func (h *AuthHandler) ResendVerificationEmail(c *gin.Context) {
     }
 
     go func() {
-        if err := h.EmailService.SendVerificationEmail(req.Email, req.Name, verificationToken); err != nil {
+        if err := h.EmailService.SendVerificationEmail(req.Email, name, verificationToken); err != nil {
             utils.SafeWarn("Failed to send verification email: %v", err)
         }
     }()
