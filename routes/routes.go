@@ -19,7 +19,7 @@ func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.POST("/auth/login", authHandler.Login)
 	
 	// Email Verification
-	rg.GET("/auth/verify", authHandler.VerifyEmail)
+	rg.GET("/auth/verify-email", authHandler.VerifyEmail)
 	// FIXED: Updated method name to match handler definition
 	rg.POST("/auth/verify/resend", authHandler.ResendVerificationEmail)
 	

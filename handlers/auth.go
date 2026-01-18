@@ -88,7 +88,7 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 
 	// Créer le token de vérification email
 	verificationToken := uuid.New().String()
-	expiresAt := time.Now().Add(24 * time.Hour)
+	expiresAt := time.Now().Add(48 * time.Hour)
 
 	_, err = h.DB.Exec(`
 		INSERT INTO email_verification_tokens (user_id, token, expires_at, created_at)
@@ -232,60 +232,99 @@ func (h *AuthHandler) Login(c *gin.Context) {
 // ============================================================================
 
 func (h *AuthHandler) VerifyEmail(c *gin.Context) {
-	token := c.Query("token")
-	if token == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Token is required"})
-		return
-	}
+    token := c.Query("token")
+    if token == "" {
+        c.JSON(http.StatusBadRequest, gin.H{
+            "error": "Token de vérification manquant",
+        })
+        return
+    }
 
-	utils.SafeInfo("Email verification attempt")
+    utils.SafeInfo("Email verification attempt")
 
-	// Vérifier le token
-	var userID string
-	var expiresAt time.Time
+    // Vérifier le token
+    var userID string
+    var expiresAt time.Time
 
-	err := h.DB.QueryRow(`
-		SELECT user_id, expires_at FROM email_verification_tokens
-		WHERE token = $1
-	`, token).Scan(&userID, &expiresAt)
+    err := h.DB.QueryRow(`
+        SELECT user_id, expires_at FROM email_verification_tokens
+        WHERE token = $1
+    `, token).Scan(&userID, &expiresAt)
 
-	if err == sql.ErrNoRows {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid or expired token"})
-		return
-	}
+    if err == sql.ErrNoRows {
+        // ✅ Message plus clair
+        c.JSON(http.StatusBadRequest, gin.H{
+            "error": "Lien de vérification invalide ou déjà utilisé",
+        })
+        return
+    }
 
-	if err != nil {
-		utils.SafeError("Database error verifying email: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Verification failed"})
-		return
-	}
+    if err != nil {
+        utils.SafeError("Database error verifying email: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{
+            "error": "Erreur lors de la vérification",
+        })
+        return
+    }
 
-	// Vérifier l'expiration
-	if time.Now().After(expiresAt) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Token has expired"})
-		return
-	}
+    // ✅ FIX 3: Vérifier l'expiration AVANT de modifier l'utilisateur
+    if time.Now().After(expiresAt) {
+        utils.SafeWarn("Expired verification token used")
+        c.JSON(http.StatusBadRequest, gin.H{
+            "error": "Ce lien de vérification a expiré. Demandez un nouveau lien.",
+            "expired": true, // ✅ Flag pour le frontend
+        })
+        return
+    }
 
-	// Marquer l'email comme vérifié
-	_, err = h.DB.Exec(`
-		UPDATE users SET email_verified = true, updated_at = NOW()
-		WHERE id = $1
-	`, userID)
+    // ✅ FIX 4: Vérifier si l'email est déjà vérifié
+    var alreadyVerified bool
+    err = h.DB.QueryRow(`
+        SELECT email_verified FROM users WHERE id = $1
+    `, userID).Scan(&alreadyVerified)
 
-	if err != nil {
-		utils.SafeError("Failed to update email_verified: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Verification failed"})
-		return
-	}
+    if err != nil {
+        utils.SafeError("Failed to check email_verified status: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{
+            "error": "Erreur lors de la vérification",
+        })
+        return
+    }
 
-	// Supprimer le token utilisé
-	h.DB.Exec("DELETE FROM email_verification_tokens WHERE token = $1", token)
+    if alreadyVerified {
+        // ✅ Si déjà vérifié, supprimer le token et retourner succès
+        h.DB.Exec("DELETE FROM email_verification_tokens WHERE token = $1", token)
+        c.JSON(http.StatusOK, gin.H{
+            "message": "Email déjà vérifié. Vous pouvez vous connecter.",
+            "already_verified": true,
+        })
+        return
+    }
 
-	utils.SafeInfo("Email verified successfully")
+    // Marquer l'email comme vérifié
+    _, err = h.DB.Exec(`
+        UPDATE users SET email_verified = true, updated_at = NOW()
+        WHERE id = $1
+    `, userID)
 
-	c.JSON(http.StatusOK, gin.H{"message": "Email verified successfully"})
+    if err != nil {
+        utils.SafeError("Failed to update email_verified: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{
+            "error": "Impossible de vérifier l'email",
+        })
+        return
+    }
+
+    // Supprimer le token utilisé
+    h.DB.Exec("DELETE FROM email_verification_tokens WHERE token = $1", token)
+
+    utils.SafeInfo("Email verified successfully for user: %s", userID)
+
+    c.JSON(http.StatusOK, gin.H{
+        "message": "Email vérifié avec succès !",
+        "success": true,
+    })
 }
-
 // ============================================================================
 // RESEND VERIFICATION EMAIL
 // ============================================================================
@@ -295,73 +334,108 @@ type ResendVerificationRequest struct {
 }
 
 func (h *AuthHandler) ResendVerificationEmail(c *gin.Context) {
-	var req ResendVerificationRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
+    var req ResendVerificationRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
 
-	utils.SafeInfo("Resend verification email request")
+    utils.SafeInfo("Resend verification email request for: %s", req.Email)
 
-	// Récupérer l'utilisateur
-	var userID, name string
-	var emailVerified bool
+    // Récupérer l'utilisateur
+    var userID, name string
+    var emailVerified bool
 
-	err := h.DB.QueryRow(`
-		SELECT id, name, email_verified FROM users WHERE email = $1
-	`, req.Email).Scan(&userID, &name, &emailVerified)
+    err := h.DB.QueryRow(`
+        SELECT id, name, email_verified FROM users WHERE email = $1
+    `, req.Email).Scan(&userID, &name, &emailVerified)
 
-	if err == sql.ErrNoRows {
-		// Ne pas révéler si l'email existe ou non
-		c.JSON(http.StatusOK, gin.H{"message": "If an account exists with this email, a verification email has been sent."})
-		return
-	}
+    if err == sql.ErrNoRows {
+        // ✅ Ne pas révéler si l'email existe
+        c.JSON(http.StatusOK, gin.H{
+            "message": "Si un compte existe, un email de vérification a été envoyé.",
+        })
+        return
+    }
 
-	if err != nil {
-		utils.SafeError("Database error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process request"})
-		return
-	}
+    if err != nil {
+        utils.SafeError("Database error: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{
+            "error": "Erreur lors du traitement",
+        })
+        return
+    }
 
-	// Si déjà vérifié
-	if emailVerified {
-		c.JSON(http.StatusOK, gin.H{"message": "Email is already verified"})
-		return
-	}
+    // Si déjà vérifié
+    if emailVerified {
+        c.JSON(http.StatusOK, gin.H{
+            "message": "Email déjà vérifié. Vous pouvez vous connecter.",
+            "already_verified": true,
+        })
+        return
+    }
 
-	// Supprimer les anciens tokens
-	h.DB.Exec("DELETE FROM email_verification_tokens WHERE user_id = $1", userID)
+    // ✅ FIX 6: Vérifier la limite de renvoi (anti-spam)
+    var lastSentAt sql.NullTime
+    err = h.DB.QueryRow(`
+        SELECT created_at FROM email_verification_tokens 
+        WHERE user_id = $1 
+        ORDER BY created_at DESC 
+        LIMIT 1
+    `, userID).Scan(&lastSentAt)
 
-	// Créer un nouveau token
-	verificationToken := uuid.New().String()
-	expiresAt := time.Now().Add(24 * time.Hour)
+    if lastSentAt.Valid && time.Since(lastSentAt.Time) < 2*time.Minute {
+        c.JSON(http.StatusTooManyRequests, gin.H{
+            "error": "Veuillez attendre 2 minutes avant de renvoyer un email.",
+        })
+        return
+    }
 
-	_, err = h.DB.Exec(`
-		INSERT INTO email_verification_tokens (user_id, token, expires_at, created_at)
-		VALUES ($1, $2, $3, NOW())
-	`, userID, verificationToken, expiresAt)
+    // Supprimer les anciens tokens
+    h.DB.Exec("DELETE FROM email_verification_tokens WHERE user_id = $1", userID)
 
-	if err != nil {
-		utils.SafeError("Failed to create verification token: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process request"})
-		return
-	}
+    // Créer un nouveau token (48h)
+    verificationToken := uuid.New().String()
+    expiresAt := time.Now().Add(48 * time.Hour)
 
-	// Envoyer l'email
-	frontendURL := os.Getenv("FRONTEND_URL")
-	if frontendURL == "" {
-		frontendURL = "https://budgetfamille.com"
-	}
-	verificationLink := frontendURL + "/verify-email?token=" + verificationToken
+    _, err = h.DB.Exec(`
+        INSERT INTO email_verification_tokens (user_id, token, expires_at, created_at)
+        VALUES ($1, $2, $3, NOW())
+    `, userID, verificationToken, expiresAt)
 
-	go func() {
-		if err := h.EmailService.SendVerificationEmail(req.Email, name, verificationLink); err != nil {
-			utils.SafeWarn("Failed to send verification email: %v", err)
-		}
-	}()
+    if err != nil {
+        utils.SafeError("Failed to create verification token: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{
+            "error": "Impossible de générer un nouveau lien",
+        })
+        return
+    }
 
-	c.JSON(http.StatusOK, gin.H{"message": "Verification email sent"})
+    // Envoyer l'email
+    frontendURL := os.Getenv("FRONTEND_URL")
+    if frontendURL == "" {
+        frontendURL = "https://budgetfamille.com"
+    }
+    verificationLink := frontendURL + "/verify-email?token=" + verificationToken
+
+    go func() {
+        if err := h.EmailService.SendVerificationEmail(req.Email, name, verificationLink); err != nil {
+            utils.SafeWarn("Failed to send verification email: %v", err)
+        }
+    }()
+
+    utils.SafeInfo("Verification email resent successfully")
+
+    c.JSON(http.StatusOK, gin.H{
+        "message": "Email de vérification envoyé avec succès.",
+        "success": true,
+    })
 }
+
+
+
+
+
 
 // ============================================================================
 // FORGOT PASSWORD
