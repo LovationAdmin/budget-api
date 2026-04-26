@@ -113,7 +113,7 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"current_password" binding:"required"`
-	NewPassword     string `json:"new_password" binding:"required,min=6"`
+	NewPassword     string `json:"new_password" binding:"required,min=10,max=72"`
 }
 
 func (h *UserHandler) ChangePassword(c *gin.Context) {
@@ -129,10 +129,10 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	var currentHash string
+	var currentHash, userEmail, userName string
 	err := h.DB.QueryRow(`
-		SELECT password_hash FROM users WHERE id = $1
-	`, userID).Scan(&currentHash)
+		SELECT password_hash, email, name FROM users WHERE id = $1
+	`, userID).Scan(&currentHash, &userEmail, &userName)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify password"})
@@ -141,6 +141,18 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 
 	if !utils.CheckPassword(req.CurrentPassword, currentHash) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Current password is incorrect"})
+		return
+	}
+
+	// Empêcher la réutilisation du même mot de passe
+	if utils.CheckPassword(req.NewPassword, currentHash) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "New password must be different from the current one"})
+		return
+	}
+
+	// Validation forte du nouveau mot de passe
+	if err := utils.ValidatePassword(req.NewPassword, userEmail, userName); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 

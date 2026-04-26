@@ -50,8 +50,8 @@ func cleanToken(token string) string {
 
 type SignupRequest struct {
 	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required,min=6"`
-	Name     string `json:"name" binding:"required"`
+	Password string `json:"password" binding:"required,min=10,max=72"`
+	Name     string `json:"name" binding:"required,min=2,max=100"`
 }
 
 func (h *AuthHandler) Signup(c *gin.Context) {
@@ -61,11 +61,17 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 		return
 	}
 
-	utils.SafeInfo("Signup attempt")
+utils.SafeInfo("Signup attempt")
+
+	// Validation forte du mot de passe (au-delà de la longueur min)
+	if err := utils.ValidatePassword(req.Password, req.Email, req.Name); err != nil {
+		utils.LogAuthAction("Signup", req.Email, false)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	var existingID string
-	err := h.DB.QueryRow("SELECT id FROM users WHERE email = $1", req.Email).Scan(&existingID)
-	if err == nil {
+	err := h.DB.QueryRow("SELECT id FROM users WHERE email = $1", req.Email).Scan(&existingID)	if err == nil {
 		utils.LogAuthAction("Signup", req.Email, false)
 		c.JSON(http.StatusConflict, gin.H{"error": "Email already registered"})
 		return
@@ -436,7 +442,7 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 
 type ResetPasswordRequest struct {
 	Token       string `json:"token" binding:"required"`
-	NewPassword string `json:"new_password" binding:"required,min=8"`
+	NewPassword string `json:"new_password" binding:"required,min=10,max=72"`
 }
 
 func (h *AuthHandler) ResetPassword(c *gin.Context) {
@@ -451,13 +457,15 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 
 	utils.SafeInfo("Password reset execution")
 
-	var userID string
+	var userID, userEmail, userName string
 	var expiresAt time.Time
 
 	err := h.DB.QueryRow(`
-		SELECT user_id, expires_at FROM password_reset_tokens
-		WHERE token = $1
-	`, cleanReqToken).Scan(&userID, &expiresAt)
+		SELECT u.id, u.email, u.name, t.expires_at
+		FROM password_reset_tokens t
+		JOIN users u ON u.id = t.user_id
+		WHERE t.token = $1
+	`, cleanReqToken).Scan(&userID, &userEmail, &userName, &expiresAt)
 
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid or expired reset token"})
@@ -472,6 +480,13 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 
 	if time.Now().After(expiresAt) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Reset token has expired"})
+		return
+	}
+
+	// Validation forte du nouveau mot de passe (avec email+nom pour empêcher
+	// l'utilisateur de réutiliser un mot de passe trivialement lié à son compte)
+	if err := utils.ValidatePassword(req.NewPassword, userEmail, userName); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
