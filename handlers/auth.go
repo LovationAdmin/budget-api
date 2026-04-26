@@ -223,18 +223,10 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	// Émettre un refresh token (rotation gérée côté /auth/refresh)
-	refreshSvc := services.NewRefreshTokenService(h.DB)
-	refreshToken, err := refreshSvc.Issue(
-		c.Request.Context(),
-		user.ID,
-		c.Request.UserAgent(),
-		c.ClientIP(),
-	)
 	if err != nil {
 		utils.SafeError("Failed to issue refresh token: %v", err)
 		// On ne bloque PAS le login si le refresh échoue (l'access token est valide)
 		// L'utilisateur sera juste reconnecté à la prochaine expiration.
-		refreshToken = ""
 	}
 
 	utils.LogAuthAction("Login", req.Email, true)
