@@ -1,190 +1,223 @@
 // handlers/auth_refresh.go
 // ============================================================================
-// REFRESH & LOGOUT HANDLERS
+// AUTH REFRESH / LOGOUT HANDLERS
 // ============================================================================
-// Endpoints :
-//   POST /api/v1/auth/refresh    (public)  — échange un refresh token contre
-//                                            un nouvel access token + nouveau
-//                                            refresh token (rotation).
-//   POST /api/v1/auth/logout     (public)  — révoque un refresh token précis.
-//                                            Pas besoin d'être authentifié
-//                                            (l'utilisateur n'a peut-être plus
-//                                            d'access token valide).
-//   POST /api/v1/user/logout-all (protégé) — révoque TOUS les refresh tokens
-//                                            de l'utilisateur authentifié.
+// Trois handlers complémentaires à Login/Signup :
+//   - POST /auth/refresh    : échange le refresh cookie contre un nouvel access token
+//   - POST /auth/logout     : révoque le refresh courant et clear le cookie
+//   - POST /auth/logout-all : révoque tous les refresh tokens du user (auth requise)
+//
+// Cookie : "rt", HttpOnly; Secure; SameSite=None; Path=/api/v1/auth; Max-Age=604800
+// SameSite=None requis pour le cross-origin (front Vercel ↔ API Render).
+// CSRF mitigé par CORS allowlist (AllowCredentials true uniquement pour origines connues).
 // ============================================================================
 
 package handlers
 
 import (
-	"database/sql"
 	"errors"
 	"net/http"
+	"os"
+	"time"
+
+	"github.com/gin-gonic/gin"
 
 	"github.com/LovationAdmin/budget-api/middleware"
 	"github.com/LovationAdmin/budget-api/services"
 	"github.com/LovationAdmin/budget-api/utils"
-
-	"github.com/gin-gonic/gin"
 )
 
-type RefreshTokenHandler struct {
-	DB             *sql.DB
-	RefreshService *services.RefreshTokenService
+// ============================================================================
+// CONSTANTES & HELPERS COOKIES
+// ============================================================================
+
+const (
+	refreshCookieName = "rt"
+	refreshCookiePath = "/api/v1/auth"
+)
+
+func isProd() bool {
+	env := os.Getenv("ENVIRONMENT")
+	return env == "production" || env == "prod"
 }
 
-func NewRefreshTokenHandler(db *sql.DB) *RefreshTokenHandler {
-	return &RefreshTokenHandler{
-		DB:             db,
-		RefreshService: services.NewRefreshTokenService(db),
+// setRefreshCookie pose le cookie de refresh sur la réponse.
+// maxAge en secondes : >0 = durée ; <0 = supprime ; 0 = session.
+func setRefreshCookie(c *gin.Context, value string, maxAgeSeconds int) {
+	secure := isProd()
+	sameSite := http.SameSiteNoneMode
+	if !secure {
+		// SameSite=None exige Secure=true. En dev (HTTP), on retombe sur Lax.
+		sameSite = http.SameSiteLaxMode
 	}
-}
-
-// ----------------------------------------------------------------------------
-// REFRESH
-// ----------------------------------------------------------------------------
-
-type RefreshRequest struct {
-	RefreshToken string `json:"refresh_token" binding:"required"`
-}
-
-// Refresh échange un refresh token valide contre un nouveau couple
-// (access_token, refresh_token). L'ancien refresh token est révoqué (rotation).
-func (h *RefreshTokenHandler) Refresh(c *gin.Context) {
-	var req RefreshRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Refresh token required"})
-		return
-	}
-
-	ctx := c.Request.Context()
-
-	// 1. Valider le refresh token reçu
-	userID, err := h.RefreshService.Validate(ctx, req.RefreshToken)
-	if err != nil {
-		switch {
-		case errors.Is(err, services.ErrRefreshTokenNotFound):
-			utils.SafeWarn("Refresh attempt with unknown token")
-		case errors.Is(err, services.ErrRefreshTokenRevoked):
-			utils.SafeWarn("Refresh attempt with revoked token (possible reuse)")
-		case errors.Is(err, services.ErrRefreshTokenExpired):
-			utils.SafeInfo("Refresh attempt with expired token")
-		default:
-			utils.SafeError("Refresh validation error: %v", err)
-		}
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired refresh token"})
-		return
-	}
-
-	// 2. Récupérer l'email pour générer le nouveau JWT
-	var userEmail string
-	if err := h.DB.QueryRowContext(ctx,
-		"SELECT email FROM users WHERE id = $1", userID,
-	).Scan(&userEmail); err != nil {
-		utils.SafeError("Failed to fetch user during refresh: %v", err)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
-		return
-	}
-
-	// 3. Générer le nouvel access token
-	accessToken, err := utils.GenerateAccessToken(userID, userEmail)
-	if err != nil {
-		utils.SafeError("Failed to generate access token during refresh: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to refresh"})
-		return
-	}
-
-	// 4. Rotation : révoquer l'ancien et émettre un nouveau refresh token
-	if err := h.RefreshService.Revoke(ctx, req.RefreshToken); err != nil {
-		utils.SafeWarn("Failed to revoke old refresh token: %v", err)
-		// On continue : la rotation est best-effort. Pire cas, l'ancien restera
-		// utilisable jusqu'à expiration, mais le nouveau fonctionne déjà.
-	}
-
-	newRefresh, err := h.RefreshService.Issue(ctx,
-		userID,
-		c.Request.UserAgent(),
-		c.ClientIP(),
+	c.SetSameSite(sameSite)
+	c.SetCookie(
+		refreshCookieName,
+		value,
+		maxAgeSeconds,
+		refreshCookiePath,
+		"",     // domain : laisser vide → host de la requête
+		secure, // Secure
+		true,   // HttpOnly
 	)
-	if err != nil {
-		utils.SafeError("Failed to issue new refresh token: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to refresh"})
+}
+
+func clearRefreshCookie(c *gin.Context) {
+	setRefreshCookie(c, "", -1)
+}
+
+// ============================================================================
+// REFRESH HANDLER
+// ============================================================================
+
+// Refresh échange un refresh token (cookie) contre un nouvel access token.
+// POST /api/v1/auth/refresh
+func (h *AuthHandler) Refresh(c *gin.Context) {
+	if h.RefreshTokens == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Refresh service not configured"})
 		return
 	}
+
+	rawToken, err := c.Cookie(refreshCookieName)
+	if err != nil || rawToken == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Missing refresh token"})
+		return
+	}
+
+	userAgent := c.Request.UserAgent()
+	ipAddress := c.ClientIP()
+
+	newRaw, _, userID, rotErr := h.RefreshTokens.Rotate(c.Request.Context(), rawToken, userAgent, ipAddress)
+	if rotErr != nil {
+		clearRefreshCookie(c)
+		switch {
+		case errors.Is(rotErr, services.ErrRefreshTokenReused):
+			utils.SafeWarn("Refresh token reuse detected — family revoked")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Session compromised, please log in again"})
+		case errors.Is(rotErr, services.ErrRefreshTokenExpired):
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Session expired, please log in again"})
+		case errors.Is(rotErr, services.ErrRefreshTokenRevoked),
+			errors.Is(rotErr, services.ErrRefreshTokenNotFound):
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid session"})
+		default:
+			utils.SafeError("Refresh failed: %v", rotErr)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to refresh session"})
+		}
+		return
+	}
+
+	// Charger l'email pour générer le nouvel access token
+	var email string
+	err = h.DB.QueryRow(`SELECT email FROM users WHERE id = $1`, userID).Scan(&email)
+	if err != nil {
+		utils.SafeError("Refresh: failed to load user: %v", err)
+		clearRefreshCookie(c)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+		return
+	}
+
+	accessToken, err := utils.GenerateAccessToken(userID, email)
+	if err != nil {
+		utils.SafeError("Refresh: failed to generate access token: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to issue token"})
+		return
+	}
+
+	maxAge := int(h.RefreshTokens.Lifetime().Seconds())
+	setRefreshCookie(c, newRaw, maxAge)
 
 	c.JSON(http.StatusOK, gin.H{
-		"access_token":  accessToken,
-		"refresh_token": newRefresh,
-		"token":         accessToken, // alias pour rétrocompat avec l'ancien frontend
-		"token_type":    "Bearer",
+		"access_token": accessToken,
+		"expires_in":   15 * 60, // 15 min — à aligner avec JWT_EXPIRY
 	})
 }
 
-// ----------------------------------------------------------------------------
-// LOGOUT (single device)
-// ----------------------------------------------------------------------------
+// ============================================================================
+// LOGOUT
+// ============================================================================
 
-type LogoutRequest struct {
-	RefreshToken string `json:"refresh_token"`
-}
-
-// Logout révoque un refresh token précis. Idempotent : retourne 200 même si
-// le token est inconnu (sinon on permettrait à un attaquant de tester quels
-// tokens sont valides).
-func (h *RefreshTokenHandler) Logout(c *gin.Context) {
-	var req LogoutRequest
-	_ = c.ShouldBindJSON(&req) // body vide accepté
-
-	if req.RefreshToken != "" {
-		// Best effort : on ne révèle pas si le token existait
-		_ = h.RefreshService.Revoke(c.Request.Context(), req.RefreshToken)
+// Logout révoque le refresh courant et clear le cookie.
+// POST /api/v1/auth/logout — pas d'auth Bearer requise (cookie suffit).
+func (h *AuthHandler) Logout(c *gin.Context) {
+	rawToken, err := c.Cookie(refreshCookieName)
+	if err == nil && rawToken != "" && h.RefreshTokens != nil {
+		// Best-effort
+		if revokeErr := h.RefreshTokens.Revoke(c.Request.Context(), rawToken); revokeErr != nil {
+			utils.SafeWarn("Logout: revoke failed: %v", revokeErr)
+		}
 	}
-
+	clearRefreshCookie(c)
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out"})
 }
 
-// ----------------------------------------------------------------------------
-// LOGOUT ALL DEVICES (protégé)
-// ----------------------------------------------------------------------------
+// ============================================================================
+// LOGOUT ALL
+// ============================================================================
 
-// LogoutAll révoque TOUS les refresh tokens actifs de l'utilisateur authentifié.
-// Utile depuis la page Profil pour "se déconnecter de tous les appareils".
-func (h *RefreshTokenHandler) LogoutAll(c *gin.Context) {
+// LogoutAll révoque tous les refresh tokens actifs du user authentifié.
+// POST /api/v1/auth/logout-all — protégé par AuthMiddleware.
+func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
-
-	if err := h.RefreshService.RevokeAllForUser(c.Request.Context(), userID); err != nil {
-		utils.SafeError("Failed to revoke all refresh tokens for user %s: %v", userID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to logout from all devices"})
+	if h.RefreshTokens == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Refresh service not configured"})
 		return
 	}
 
-	utils.SafeInfo("User logged out from all devices")
-	c.JSON(http.StatusOK, gin.H{"message": "Logged out from all devices"})
+	count, err := h.RefreshTokens.RevokeAllForUser(c.Request.Context(), userID)
+	if err != nil {
+		utils.SafeError("LogoutAll: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to log out all devices"})
+		return
+	}
+
+	clearRefreshCookie(c)
+	c.JSON(http.StatusOK, gin.H{
+		"message":         "Logged out from all devices",
+		"sessions_closed": count,
+	})
 }
 
-// ----------------------------------------------------------------------------
-// ACTIVE SESSIONS (protégé) — bonus, pour une future page "Sessions actives"
-// ----------------------------------------------------------------------------
+// ============================================================================
+// HELPER POUR LOGIN
+// ============================================================================
 
-// ActiveSessionsCount retourne le nombre de sessions actives (refresh tokens
-// non-révoqués et non-expirés) pour l'utilisateur authentifié.
-func (h *RefreshTokenHandler) ActiveSessionsCount(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+// IssueRefreshAndSetCookie crée un refresh token et pose le cookie.
+// Appelé depuis Login() après vérification des credentials.
+// Best-effort : si le refresh échoue, on continue sans (l'utilisateur sera
+// juste forcé de se reconnecter à l'expiration de l'access token).
+func (h *AuthHandler) IssueRefreshAndSetCookie(c *gin.Context, userID string) {
+	if h.RefreshTokens == nil {
 		return
 	}
+	userAgent := c.Request.UserAgent()
+	ipAddress := c.ClientIP()
 
-	count, err := h.RefreshService.CountActiveForUser(c.Request.Context(), userID)
+	rawToken, _, err := h.RefreshTokens.Issue(c.Request.Context(), userID, userAgent, ipAddress)
 	if err != nil {
-		utils.SafeError("Failed to count sessions: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch sessions"})
+		utils.SafeWarn("Failed to issue refresh token at login: %v", err)
 		return
 	}
+	maxAge := int(h.RefreshTokens.Lifetime().Seconds())
+	setRefreshCookie(c, rawToken, maxAge)
+}
 
-	c.JSON(http.StatusOK, gin.H{"active_sessions": count})
+// ============================================================================
+// PARSE REFRESH_EXPIRY
+// ============================================================================
+
+// ParseRefreshLifetime lit REFRESH_EXPIRY (ex: "168h") ; default 7j.
+func ParseRefreshLifetime() time.Duration {
+	raw := os.Getenv("REFRESH_EXPIRY")
+	if raw == "" {
+		return 7 * 24 * time.Hour
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return 7 * 24 * time.Hour
+	}
+	return d
 }

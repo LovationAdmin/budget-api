@@ -86,6 +86,8 @@ func main() {
 		"https://budget-ui-two.vercel.app",
 		"http://localhost:3000",
 		"http://localhost:5173",
+		// Optionnel : preview branches Vercel
+		// "https://budget-ui-git-feat-xxx.vercel.app",
 	}
 
 	utils.SafeInfo("CORS configured for %d origins", len(allowedOrigins))
@@ -173,8 +175,16 @@ func main() {
 	// ============================================================================
 	v1 := router.Group("/api/v1")
 	{
+		// Initialiser le service refresh tokens
+		refreshLifetime := handlers.ParseRefreshLifetime()
+		refreshService := services.NewRefreshTokenService(db, refreshLifetime)
+		utils.SafeInfo("Refresh tokens service initialized (lifetime=%s)", refreshLifetime)
+
+		// Cleanup périodique des tokens expirés
+		go scheduleRefreshTokenCleanup(refreshService)
+
 		// 1. Routes Publiques (Auth, Admin)
-		routes.SetupAuthRoutes(v1, db)
+		routes.SetupAuthRoutes(v1, db, refreshService)
 		routes.SetupAdminRoutes(v1, db)
 
 		// FIXED: SetupAdminSuggestionsRoutes ne prend que 2 arguments
@@ -187,7 +197,7 @@ func main() {
 		{
 			// FIXED: Appel explicite des routes au lieu de "SetupProtectedRoutes"
 			routes.SetupBudgetRoutes(protected, db, wsHandler)
-			routes.SetupUserRoutes(protected, db)
+			routes.SetupUserRoutes(protected, db, refreshService)
 			routes.SetupInvitationRoutes(protected, db)
 			routes.SetupEnableBankingRoutes(protected, db)
 			routes.SetupMarketSuggestionsRoutes(protected, db, wsHandler)
@@ -219,30 +229,6 @@ func scheduleCacheCleaning(db *sql.DB) {
 
 	for range ticker.C {
 		cleanExpiredCache(db)
-	}
-}
-
-// scheduleRefreshTokenCleanup nettoie les refresh tokens expirés depuis plus
-// de 30 jours toutes les 24h (fenêtre d'audit conservée 30 jours).
-func scheduleRefreshTokenCleanup(db *sql.DB) {
-	svc := services.NewRefreshTokenService(db)
-	ticker := time.NewTicker(24 * time.Hour)
-	defer ticker.Stop()
-
-	// Premier nettoyage 5 min après le démarrage (laisse l'app se stabiliser)
-	time.Sleep(5 * time.Minute)
-	if rows, err := svc.CleanupExpired(context.Background()); err != nil {
-		utils.SafeWarn("Refresh token cleanup failed: %v", err)
-	} else if rows > 0 {
-		utils.SafeInfo("Cleaned up %d expired refresh tokens", rows)
-	}
-
-	for range ticker.C {
-		if rows, err := svc.CleanupExpired(context.Background()); err != nil {
-			utils.SafeWarn("Refresh token cleanup failed: %v", err)
-		} else if rows > 0 {
-			utils.SafeInfo("Cleaned up %d expired refresh tokens", rows)
-		}
 	}
 }
 
@@ -312,5 +298,24 @@ func cleanExpiredCache(db *sql.DB) {
 	rowsAffected, _ = result.RowsAffected()
 	if rowsAffected > 0 {
 		utils.SafeInfo("Cleaned %d expired invitations", rowsAffected)
+	}
+}
+
+// scheduleRefreshTokenCleanup tourne toutes les 24h et purge les tokens
+// expirés depuis plus de 30 jours.
+func scheduleRefreshTokenCleanup(s *services.RefreshTokenService) {
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	// Premier run après 1 min (évite la charge cold-start)
+	time.Sleep(1 * time.Minute)
+	if n, err := s.CleanupExpired(context.Background()); err == nil && n > 0 {
+		utils.SafeInfo("Cleaned %d expired refresh tokens", n)
+	}
+
+	for range ticker.C {
+		if n, err := s.CleanupExpired(context.Background()); err == nil && n > 0 {
+			utils.SafeInfo("Cleaned %d expired refresh tokens", n)
+		}
 	}
 }

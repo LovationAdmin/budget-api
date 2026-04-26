@@ -15,14 +15,26 @@ import (
 )
 
 type AuthHandler struct {
-	DB           *sql.DB
-	EmailService *services.EmailService
+	DB            *sql.DB
+	EmailService  *services.EmailService
+	RefreshTokens *services.RefreshTokenService
 }
 
+// NewAuthHandler garde la signature historique pour compat. Le RefreshTokens
+// service est nullable : si nil, les routes /refresh /logout retourneront 500.
 func NewAuthHandler(db *sql.DB) *AuthHandler {
 	return &AuthHandler{
 		DB:           db,
 		EmailService: services.NewEmailService(),
+	}
+}
+
+// NewAuthHandlerWithRefresh est l'API moderne, à utiliser depuis routes.go.
+func NewAuthHandlerWithRefresh(db *sql.DB, rt *services.RefreshTokenService) *AuthHandler {
+	return &AuthHandler{
+		DB:            db,
+		EmailService:  services.NewEmailService(),
+		RefreshTokens: rt,
 	}
 }
 
@@ -227,11 +239,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	utils.LogAuthAction("Login", req.Email, true)
 
+	// Émettre le refresh token et poser le cookie httpOnly
+	h.IssueRefreshAndSetCookie(c, user.ID)
+
 	c.JSON(http.StatusOK, gin.H{
-		"token":         token,        // alias pour rétrocompat
-		"access_token":  token,        // nom canonique
-		"refresh_token": refreshToken, // peut être "" si l'émission a échoué
-		"token_type":    "Bearer",
+		"token":      token,
+		"expires_in": 15 * 60, // secondes — aligné sur JWT_EXPIRY=15m
 		"user": gin.H{
 			"id":           user.ID,
 			"email":        user.Email,

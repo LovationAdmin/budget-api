@@ -31,11 +31,11 @@ func InitDB() (*sql.DB, error) {
 	// ============================================================================
 	// 🚀 OPTIMISATIONS PERFORMANCE
 	// ============================================================================
-	
-	db.SetMaxOpenConns(25)                    // Max 25 connexions simultanées
-	db.SetMaxIdleConns(10)                    // Garder 10 connexions idle
-	db.SetConnMaxLifetime(5 * time.Minute)    // Recycler après 5min
-	db.SetConnMaxIdleTime(2 * time.Minute)    // Fermer idle après 2min
+
+	db.SetMaxOpenConns(25)                 // Max 25 connexions simultanées
+	db.SetMaxIdleConns(10)                 // Garder 10 connexions idle
+	db.SetConnMaxLifetime(5 * time.Minute) // Recycler après 5min
+	db.SetConnMaxIdleTime(2 * time.Minute) // Fermer idle après 2min
 
 	fmt.Println("✅ Database connection pool configured:")
 	fmt.Printf("   - MaxOpenConns: 25\n")
@@ -55,11 +55,11 @@ func RunMigrations(db *sql.DB) error {
 		// EXTENSIONS
 		// ============================================================================
 		`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`,
-		
+
 		// ============================================================================
 		// TABLES PRINCIPALES
 		// ============================================================================
-		
+
 		`CREATE TABLE IF NOT EXISTS users (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			email VARCHAR(255) UNIQUE NOT NULL,
@@ -72,7 +72,7 @@ func RunMigrations(db *sql.DB) error {
 			created_at TIMESTAMP DEFAULT NOW(),
 			updated_at TIMESTAMP DEFAULT NOW()
 		)`,
-		
+
 		`CREATE TABLE IF NOT EXISTS budgets (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			name VARCHAR(255) NOT NULL,
@@ -80,7 +80,7 @@ func RunMigrations(db *sql.DB) error {
 			created_at TIMESTAMP DEFAULT NOW(),
 			updated_at TIMESTAMP DEFAULT NOW()
 		)`,
-		
+
 		`CREATE TABLE IF NOT EXISTS budget_members (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			budget_id UUID REFERENCES budgets(id) ON DELETE CASCADE,
@@ -90,7 +90,7 @@ func RunMigrations(db *sql.DB) error {
 			joined_at TIMESTAMP DEFAULT NOW(),
 			UNIQUE(budget_id, user_id)
 		)`,
-		
+
 		`CREATE TABLE IF NOT EXISTS invitations (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			budget_id UUID REFERENCES budgets(id) ON DELETE CASCADE,
@@ -102,7 +102,7 @@ func RunMigrations(db *sql.DB) error {
 			created_at TIMESTAMP DEFAULT NOW(),
 			updated_at TIMESTAMP DEFAULT NOW()
 		)`,
-		
+
 		`CREATE TABLE IF NOT EXISTS budget_data (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			budget_id UUID REFERENCES budgets(id) ON DELETE CASCADE,
@@ -111,7 +111,7 @@ func RunMigrations(db *sql.DB) error {
 			updated_by UUID REFERENCES users(id),
 			updated_at TIMESTAMP DEFAULT NOW()
 		)`,
-		
+
 		`CREATE TABLE IF NOT EXISTS audit_logs (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			budget_id UUID REFERENCES budgets(id) ON DELETE CASCADE,
@@ -120,7 +120,7 @@ func RunMigrations(db *sql.DB) error {
 			changes JSONB,
 			created_at TIMESTAMP DEFAULT NOW()
 		)`,
-		
+
 		`CREATE TABLE IF NOT EXISTS sessions (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -217,14 +217,16 @@ func RunMigrations(db *sql.DB) error {
 		// REFRESH TOKENS
 		// ============================================================================
 		`CREATE TABLE IF NOT EXISTS refresh_tokens (
-			id          TEXT PRIMARY KEY,
-			user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-			token_hash  TEXT NOT NULL UNIQUE,
-			expires_at  TIMESTAMPTZ NOT NULL,
-			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			revoked_at  TIMESTAMPTZ,
-			user_agent  TEXT,
-			ip_address  TEXT
+			id           UUID PRIMARY KEY,
+			user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			family_id    UUID NOT NULL,
+			token_hash   TEXT NOT NULL UNIQUE,
+			issued_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+			expires_at   TIMESTAMP NOT NULL,
+			revoked_at   TIMESTAMP NULL,
+			replaced_by  UUID NULL,
+			user_agent   TEXT,
+			ip_address   VARCHAR(45)
 		)`,
 
 		// ============================================================================
@@ -273,90 +275,91 @@ func RunMigrations(db *sql.DB) error {
 		// ============================================================================
 		// ✅ NOUVELLES COLONNES BUDGETS : LOCATION & CURRENCY
 		// ============================================================================
-		
+
 		`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS location VARCHAR(2) DEFAULT 'FR'`,
 		`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS currency VARCHAR(3) DEFAULT 'EUR'`,
 
 		// ============================================================================
 		// INDEXES CRITIQUES POUR PERFORMANCE
 		// ============================================================================
-		
+
 		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens(token_hash)`,
+		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_family ON refresh_tokens(family_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_active ON refresh_tokens(user_id) WHERE revoked_at IS NULL`,
-
 
 		// Indexes budget_members
 		`CREATE INDEX IF NOT EXISTS idx_budget_members_budget_id ON budget_members(budget_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_budget_members_user_id ON budget_members(user_id)`,
-		
+
 		// Indexes budget_data
 		`CREATE INDEX IF NOT EXISTS idx_budget_data_budget_id ON budget_data(budget_id)`,
-		
+
 		// Indexes invitations
 		`CREATE INDEX IF NOT EXISTS idx_invitations_email ON invitations(email)`,
 		`CREATE INDEX IF NOT EXISTS idx_invitations_token ON invitations(token)`,
 		`CREATE INDEX IF NOT EXISTS idx_invitations_budget_id ON invitations(budget_id)`,
-		
+
 		// Indexes audit_logs
 		`CREATE INDEX IF NOT EXISTS idx_audit_logs_budget_id ON audit_logs(budget_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id)`,
-		
+
 		// Indexes sessions
 		`CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_refresh_token ON sessions(refresh_token)`,
-		
+
 		// Indexes email_verifications
 		// FIXED: Index name updated to match new table name
 		`CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_token ON email_verification_tokens(token)`,
 		`CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user_id ON email_verification_tokens(user_id)`,
-		
+
 		// Indexes password_resets
 		// FIXED: Index name updated to match new table name
 		`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token)`,
 		`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires_at ON password_reset_tokens(expires_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_used ON password_reset_tokens(used)`,
-		
+
 		// Indexes users
 		`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
 		`CREATE INDEX IF NOT EXISTS idx_users_country ON users(country)`,
-		
+
 		// Indexes budgets
 		`CREATE INDEX IF NOT EXISTS idx_budgets_owner_id ON budgets(owner_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_budgets_created_at ON budgets(created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_budgets_location ON budgets(location)`, // ✅ NOUVEAU
-		
+
 		// Indexes bank_connections
 		`CREATE INDEX IF NOT EXISTS idx_bank_connections_user ON bank_connections(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_bank_connections_budget ON bank_connections(budget_id)`,
-		
+
 		// Indexes bank_accounts
 		`CREATE INDEX IF NOT EXISTS idx_bank_accounts_connection ON bank_accounts(connection_id)`,
-		
+
 		// Indexes label_mappings
 		`CREATE INDEX IF NOT EXISTS idx_label_mappings_label ON label_mappings(normalized_label)`,
-		
+
 		// Indexes banking_connections
 		`CREATE INDEX IF NOT EXISTS idx_banking_connections_user_budget ON banking_connections(user_id, budget_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_banking_connections_session ON banking_connections(session_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_banking_connections_status ON banking_connections(status)`,
-		
+
 		// Indexes banking_accounts
 		`CREATE INDEX IF NOT EXISTS idx_banking_accounts_connection ON banking_accounts(connection_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_banking_accounts_last_sync ON banking_accounts(last_sync_at)`,
-		
+
 		// Indexes market_suggestions
 		`CREATE INDEX IF NOT EXISTS idx_market_suggestions_category_country ON market_suggestions(category, country)`,
 		`CREATE INDEX IF NOT EXISTS idx_market_suggestions_expires ON market_suggestions(expires_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_market_suggestions_merchant ON market_suggestions(merchant_name)`,
-		
+
 		// Indexes ai_api_usage
 		`CREATE INDEX IF NOT EXISTS idx_ai_usage_user ON ai_api_usage(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_ai_usage_type ON ai_api_usage(request_type)`,
 		`CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_api_usage(created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_ai_usage_cache ON ai_api_usage(cache_hit)`,
-		
+
 		// Indexes affiliate_links
 		`CREATE INDEX IF NOT EXISTS idx_affiliate_category_country ON affiliate_links(category, country)`,
 		`CREATE INDEX IF NOT EXISTS idx_affiliate_active ON affiliate_links(is_active)`,
@@ -364,7 +367,7 @@ func RunMigrations(db *sql.DB) error {
 		// ============================================================================
 		// CONSTRAINTS
 		// ============================================================================
-		
+
 		`ALTER TABLE bank_connections DROP CONSTRAINT IF EXISTS bank_connections_provider_connection_id_key`,
 		`ALTER TABLE bank_connections DROP CONSTRAINT IF EXISTS unique_provider_connection_per_budget`,
 		`ALTER TABLE bank_connections ADD CONSTRAINT unique_provider_connection_per_budget UNIQUE (provider_connection_id, budget_id)`,
@@ -398,18 +401,18 @@ func RunMigrations(db *sql.DB) error {
 		// ============================================================================
 		// ✅ MIGRATION DES DONNÉES EXISTANTES
 		// ============================================================================
-		
+
 		// Mettre à jour les budgets existants avec valeurs par défaut
 		`UPDATE budgets SET location = 'FR' WHERE location IS NULL`,
 		`UPDATE budgets SET currency = 'EUR' WHERE currency IS NULL`,
-		
+
 		// Mettre à jour les users existants avec valeurs par défaut (optionnel)
 		`UPDATE users SET country = 'FR' WHERE country IS NULL`,
 
 		// ============================================================================
 		// SEED DATA
 		// ============================================================================
-		
+
 		`INSERT INTO affiliate_links (category, country, provider_name, affiliate_url, commission_rate, priority) 
 		VALUES 
 			('INTERNET', 'FR', 'Ariase', 'https://www.ariase.com/box', 5.00, 1),

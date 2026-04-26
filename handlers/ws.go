@@ -10,11 +10,12 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"sync"
 
+	"github.com/LovationAdmin/budget-api/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/LovationAdmin/budget-api/utils"
 )
 
 // ============================================================================
@@ -26,12 +27,19 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
 		origin := r.Header.Get("Origin")
+		frontendURL := os.Getenv("FRONTEND_URL")
+		if frontendURL == "" {
+			frontendURL = "http://localhost:3000"
+		}
 		allowedOrigins := []string{
+			frontendURL,
 			"https://budgetfamille.com",
 			"https://www.budgetfamille.com",
 			"https://budget-ui-two.vercel.app",
 			"http://localhost:3000",
 			"http://localhost:5173",
+			// Optionnel : preview branches Vercel
+			// "https://budget-ui-git-feat-xxx.vercel.app",
 		}
 		for _, allowed := range allowedOrigins {
 			if origin == allowed {

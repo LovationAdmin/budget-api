@@ -11,22 +11,21 @@ import (
 )
 
 // SetupAuthRoutes sets up public authentication routes.
-func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB) {
-	authHandler := &handlers.AuthHandler{DB: db}
-	refreshHandler := handlers.NewRefreshTokenHandler(db)
-	
+func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB, rt *services.RefreshTokenService) {
+	authHandler := handlers.NewAuthHandlerWithRefresh(db, rt)
+
 	// Signup & Login
 	rg.POST("/auth/signup", authHandler.Signup)
 	rg.POST("/auth/login", authHandler.Login)
-	
-	// Refresh & Logout (publics : pas besoin d'access token valide)
-	rg.POST("/auth/refresh", refreshHandler.Refresh)
-	rg.POST("/auth/logout", refreshHandler.Logout)
-	
+
+	// Refresh & Logout (cookie-based, pas d'auth Bearer requise)
+	rg.POST("/auth/refresh", authHandler.Refresh)
+	rg.POST("/auth/logout", authHandler.Logout)
+
 	// Email Verification
 	rg.GET("/auth/verify-email", authHandler.VerifyEmail)
 	rg.POST("/auth/verify/resend", authHandler.ResendVerificationEmail)
-	
+
 	// Password Reset
 	rg.POST("/auth/forgot-password", authHandler.ForgotPassword)
 	rg.POST("/auth/reset-password", authHandler.ResetPassword)
@@ -37,7 +36,7 @@ func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *handlers.WSHa
 	// Créer les services nécessaires
 	aiService := services.NewClaudeAIService()
 	marketAnalyzer := services.NewMarketAnalyzerService(db, aiService)
-	
+
 	// wsHandler implements Broadcaster, so this works fine
 	budgetService := services.NewBudgetService(db, wsHandler, marketAnalyzer)
 	emailService := services.NewEmailService()
@@ -54,9 +53,13 @@ func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *handlers.WSHa
 	rg.POST("/invitations/accept", h.AcceptInvitation)
 }
 
-func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB) {
-	userHandler := &handlers.UserHandler{DB: db}
-	
+func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB, rt *services.RefreshTokenService) {
+	userHandler := &handlers.UserHandler{DB: db, RefreshTokens: rt}
+	authHandler := handlers.NewAuthHandlerWithRefresh(db, rt)
+
+	// Logout multi-device : révoque tous les refresh tokens du user
+	rg.POST("/auth/logout-all", authHandler.LogoutAll)
+
 	// Profile
 	rg.GET("/user/profile", userHandler.GetProfile)
 	rg.PUT("/user/profile", userHandler.UpdateProfile)
@@ -65,16 +68,16 @@ func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	refreshHandler := handlers.NewRefreshTokenHandler(db)
 	rg.POST("/user/logout-all", refreshHandler.LogoutAll)
 	rg.GET("/user/sessions/count", refreshHandler.ActiveSessionsCount)
-	
+
 	// Security
 	rg.POST("/user/password", userHandler.ChangePassword)
 	rg.POST("/user/2fa/setup", userHandler.SetupTOTP)
 	rg.POST("/user/2fa/verify", userHandler.VerifyTOTP)
 	rg.POST("/user/2fa/disable", userHandler.DisableTOTP)
-	
+
 	// Account Management
 	rg.DELETE("/user/account", userHandler.DeleteAccount)
-	
+
 	// GDPR Data Export
 	rg.GET("/user/export-data", userHandler.ExportUserData)
 }
@@ -99,7 +102,7 @@ func SetupEnableBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	rg.GET("/banking/enablebanking/callback", handler.HandleCallback)
 	rg.GET("/budgets/:id/banking/enablebanking/connections", handler.GetConnections)
 	rg.POST("/budgets/:id/banking/enablebanking/sync", handler.SyncAccounts)
-	
+
 	rg.POST("/banking/enablebanking/refresh", handler.RefreshBalances)
 	rg.GET("/banking/enablebanking/transactions", handler.GetTransactions)
 	rg.DELETE("/banking/enablebanking/connections/:id", handler.DeleteConnection)
@@ -117,7 +120,7 @@ func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *ha
 	rg.POST("/suggestions/analyze", handler.AnalyzeCharge)
 	rg.GET("/suggestions/category/:category", handler.GetCategorySuggestions)
 	rg.POST("/budgets/:id/suggestions/bulk-analyze", handler.BulkAnalyzeCharges)
-	
+
 	// FIXED: Updated method name to match handler definition
 	rg.POST("/categorize", handler.CategorizeLabel)
 }
@@ -129,9 +132,9 @@ func SetupAdminSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
 
 	// FIXED: Pass required arguments. WS is nil for admin routes.
 	handler := handlers.NewMarketSuggestionsHandler(db, marketAnalyzer, nil)
-	
+
 	rg.POST("/admin/suggestions/clean-cache", handler.CleanExpiredCache)
-	
+
 	adminHandler := handlers.NewAdminSuggestionHandler(db)
 	rg.POST("/admin/suggestions/retroactive-analyze", adminHandler.RetroactiveAnalysis)
 }

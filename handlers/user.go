@@ -9,14 +9,16 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/LovationAdmin/budget-api/middleware"
 	"github.com/LovationAdmin/budget-api/models"
+	"github.com/LovationAdmin/budget-api/services"
 	"github.com/LovationAdmin/budget-api/utils"
+	"github.com/gin-gonic/gin"
 )
 
 type UserHandler struct {
-	DB *sql.DB
+	DB            *sql.DB
+	RefreshTokens *services.RefreshTokenService
 }
 
 // ============================================================================
@@ -174,6 +176,14 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 	}
 
 	log.Printf("✅ User %s password changed successfully", userID)
+
+	// Sécurité : révoquer toutes les sessions actives.
+	// Si un attaquant connaissait l'ancien mot de passe, ses sessions tombent.
+	if h.RefreshTokens != nil {
+		if _, err := h.RefreshTokens.RevokeAllForUser(c.Request.Context(), userID); err != nil {
+			log.Printf("⚠️ Failed to revoke refresh tokens after password change: %v", err)
+		}
+	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Password changed successfully"})
 }
