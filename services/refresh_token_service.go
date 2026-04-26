@@ -40,10 +40,10 @@ import (
 // ============================================================================
 
 var (
-	ErrRefreshTokenNotFound  = errors.New("refresh token not found")
-	ErrRefreshTokenExpired   = errors.New("refresh token expired")
-	ErrRefreshTokenRevoked   = errors.New("refresh token revoked")
-	ErrRefreshTokenReused    = errors.New("refresh token reuse detected")
+	ErrRefreshTokenNotFound = errors.New("refresh token not found")
+	ErrRefreshTokenExpired  = errors.New("refresh token expired")
+	ErrRefreshTokenRevoked  = errors.New("refresh token revoked")
+	ErrRefreshTokenReused   = errors.New("refresh token reuse detected")
 )
 
 // ============================================================================

@@ -35,15 +35,15 @@ type EnableBankingService struct {
 
 func NewEnableBankingService() *EnableBankingService {
 	log.Println("🔐 Initializing Enable Banking Service...")
-	
+
 	appID := os.Getenv("ENABLE_BANKING_APP_ID")
 	if appID == "" {
 		log.Fatal("❌ ENABLE_BANKING_APP_ID environment variable is not set")
 	}
 	log.Printf("✅ App ID configured: %s...", appID[:min(8, len(appID))])
-	
+
 	privateKey := loadPrivateKey()
-	
+
 	return &EnableBankingService{
 		BaseURL:    "https://api.enablebanking.com",
 		AppID:      appID,
@@ -57,11 +57,11 @@ func NewEnableBankingService() *EnableBankingService {
 func loadPrivateKey() *rsa.PrivateKey {
 	log.Println("🔑 Loading private key...")
 	var pemData []byte
-	
+
 	// Essayer base64 d'abord
 	if base64Key := os.Getenv("ENABLE_BANKING_PRIVATE_KEY_BASE64"); base64Key != "" {
 		log.Println("📦 Found ENABLE_BANKING_PRIVATE_KEY_BASE64")
-		
+
 		decoded, err := base64.StdEncoding.DecodeString(base64Key)
 		if err != nil {
 			log.Fatalf("❌ Failed to decode base64 private key: %v", err)
@@ -113,22 +113,22 @@ func loadPrivateKey() *rsa.PrivateKey {
 
 func (s *EnableBankingService) generateJWT() (string, error) {
 	now := time.Now()
-	
+
 	claims := jwt.MapClaims{
 		"iss": "enablebanking.com",
 		"aud": "api.enablebanking.com",
 		"iat": now.Unix(),
 		"exp": now.Add(1 * time.Hour).Unix(),
 	}
-	
+
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	token.Header["kid"] = s.AppID
-	
+
 	signed, err := token.SignedString(s.PrivateKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to sign JWT: %w", err)
 	}
-	
+
 	return signed, nil
 }
 
@@ -137,7 +137,7 @@ func (s *EnableBankingService) setHeaders(req *http.Request) error {
 	if err != nil {
 		return err
 	}
-	
+
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	return nil
@@ -148,20 +148,20 @@ func (s *EnableBankingService) setHeaders(req *http.Request) error {
 // ============================================================================
 
 type SandboxUser struct {
-    Username string `json:"username,omitempty"`
-    Password string `json:"password,omitempty"`
-    OTP      string `json:"otp,omitempty"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	OTP      string `json:"otp,omitempty"`
 }
 
 type ASPSP struct {
-    Name    string `json:"name"`
-    Country string `json:"country"`
-    Logo    string `json:"logo"`
-    BIC     string `json:"bic,omitempty"`
-    Sandbox *struct {
-        Users []SandboxUser `json:"users"`  // ✅ CORRECT
-    } `json:"sandbox,omitempty"`
-    Beta bool `json:"beta"`
+	Name    string `json:"name"`
+	Country string `json:"country"`
+	Logo    string `json:"logo"`
+	BIC     string `json:"bic,omitempty"`
+	Sandbox *struct {
+		Users []SandboxUser `json:"users"` // ✅ CORRECT
+	} `json:"sandbox,omitempty"`
+	Beta bool `json:"beta"`
 }
 
 type Access struct {
@@ -367,7 +367,7 @@ func (s *EnableBankingService) CreateSession(ctx context.Context, code, state st
 	}
 
 	log.Printf("✅ Session created: %s with %d accounts", sessionResp.SessionID, len(sessionResp.Accounts))
-	
+
 	for i, acc := range sessionResp.Accounts {
 		iban := acc.AccountID.IBAN
 		if iban == "" && acc.AccountID.Other != nil {
@@ -375,7 +375,7 @@ func (s *EnableBankingService) CreateSession(ctx context.Context, code, state st
 		}
 		log.Printf("   📊 Account %d: %s | IBAN: %s | UID: %s", i+1, acc.Name, iban, acc.UID)
 	}
-	
+
 	return &sessionResp, nil
 }
 
@@ -383,7 +383,7 @@ func (s *EnableBankingService) CreateSession(ctx context.Context, code, state st
 func (s *EnableBankingService) GetBalances(ctx context.Context, sessionID, accountUID string) ([]Balance, error) {
 	url := fmt.Sprintf("%s/accounts/%s/balances", s.BaseURL, accountUID)
 	log.Printf("💰 Fetching balances for account UID: %s", accountUID)
-	
+
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err := s.setHeaders(req); err != nil {
 		return nil, err
@@ -411,7 +411,7 @@ func (s *EnableBankingService) GetBalances(ctx context.Context, sessionID, accou
 	for i, bal := range balancesResp.Balances {
 		log.Printf("   💰 Balance %d: %s = %s %s", i+1, bal.Name, bal.BalanceAmount.Amount, bal.BalanceAmount.Currency)
 	}
-	
+
 	return balancesResp.Balances, nil
 }
 
@@ -421,7 +421,7 @@ func (s *EnableBankingService) GetTransactions(ctx context.Context, accountUID s
 	if dateFrom != "" && dateTo != "" {
 		url += fmt.Sprintf("?date_from=%s&date_to=%s", dateFrom, dateTo)
 	}
-	
+
 	log.Printf("💳 Fetching transactions for account: %s (from %s to %s)", accountUID, dateFrom, dateTo)
 
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -455,7 +455,7 @@ func (s *EnableBankingService) GetTransactions(ctx context.Context, accountUID s
 func (s *EnableBankingService) DeleteSession(ctx context.Context, sessionID string) error {
 	url := fmt.Sprintf("%s/sessions/%s", s.BaseURL, sessionID)
 	log.Printf("🗑️  Deleting session: %s", sessionID)
-	
+
 	req, _ := http.NewRequestWithContext(ctx, "DELETE", url, nil)
 	if err := s.setHeaders(req); err != nil {
 		return err
