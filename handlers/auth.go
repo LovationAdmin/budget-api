@@ -71,7 +71,8 @@ utils.SafeInfo("Signup attempt")
 	}
 
 	var existingID string
-	err := h.DB.QueryRow("SELECT id FROM users WHERE email = $1", req.Email).Scan(&existingID)	if err == nil {
+	err := h.DB.QueryRow("SELECT id FROM users WHERE email = $1", req.Email).Scan(&existingID)	
+	if err == nil {
 		utils.LogAuthAction("Signup", req.Email, false)
 		c.JSON(http.StatusConflict, gin.H{"error": "Email already registered"})
 		return
