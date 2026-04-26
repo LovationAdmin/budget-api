@@ -65,7 +65,7 @@ func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB, rt *services.RefreshTokenS
 	rg.PUT("/user/profile", userHandler.UpdateProfile)
 
 	// Sessions (refresh tokens)
-	refreshHandler := handlers.NewRefreshTokenHandler(db)
+	refreshHandler := handlers.Refresh(db)
 	rg.POST("/user/logout-all", refreshHandler.LogoutAll)
 	rg.GET("/user/sessions/count", refreshHandler.ActiveSessionsCount)
 
