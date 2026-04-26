@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/LovationAdmin/budget-api/models"
 	"github.com/LovationAdmin/budget-api/services"
 	"github.com/LovationAdmin/budget-api/utils"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type AuthHandler struct {
@@ -61,7 +61,7 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 		return
 	}
 
-utils.SafeInfo("Signup attempt")
+	utils.SafeInfo("Signup attempt")
 
 	// Validation forte du mot de passe (au-delà de la longueur min)
 	if err := utils.ValidatePassword(req.Password, req.Email, req.Name); err != nil {
@@ -71,7 +71,7 @@ utils.SafeInfo("Signup attempt")
 	}
 
 	var existingID string
-	err := h.DB.QueryRow("SELECT id FROM users WHERE email = $1", req.Email).Scan(&existingID)	
+	err := h.DB.QueryRow("SELECT id FROM users WHERE email = $1", req.Email).Scan(&existingID)
 	if err == nil {
 		utils.LogAuthAction("Signup", req.Email, false)
 		c.JSON(http.StatusConflict, gin.H{"error": "Email already registered"})
@@ -210,10 +210,28 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	// Émettre un refresh token (rotation gérée côté /auth/refresh)
+	refreshSvc := services.NewRefreshTokenService(h.DB)
+	refreshToken, err := refreshSvc.Issue(
+		c.Request.Context(),
+		user.ID,
+		c.Request.UserAgent(),
+		c.ClientIP(),
+	)
+	if err != nil {
+		utils.SafeError("Failed to issue refresh token: %v", err)
+		// On ne bloque PAS le login si le refresh échoue (l'access token est valide)
+		// L'utilisateur sera juste reconnecté à la prochaine expiration.
+		refreshToken = ""
+	}
+
 	utils.LogAuthAction("Login", req.Email, true)
 
 	c.JSON(http.StatusOK, gin.H{
-		"token": token,
+		"token":         token,        // alias pour rétrocompat
+		"access_token":  token,        // nom canonique
+		"refresh_token": refreshToken, // peut être "" si l'émission a échoué
+		"token_type":    "Bearer",
 		"user": gin.H{
 			"id":           user.ID,
 			"email":        user.Email,

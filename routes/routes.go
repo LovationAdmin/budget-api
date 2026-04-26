@@ -13,14 +13,18 @@ import (
 // SetupAuthRoutes sets up public authentication routes.
 func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	authHandler := &handlers.AuthHandler{DB: db}
+	refreshHandler := handlers.NewRefreshTokenHandler(db)
 	
 	// Signup & Login
 	rg.POST("/auth/signup", authHandler.Signup)
 	rg.POST("/auth/login", authHandler.Login)
 	
+	// Refresh & Logout (publics : pas besoin d'access token valide)
+	rg.POST("/auth/refresh", refreshHandler.Refresh)
+	rg.POST("/auth/logout", refreshHandler.Logout)
+	
 	// Email Verification
 	rg.GET("/auth/verify-email", authHandler.VerifyEmail)
-	// FIXED: Updated method name to match handler definition
 	rg.POST("/auth/verify/resend", authHandler.ResendVerificationEmail)
 	
 	// Password Reset
@@ -56,6 +60,11 @@ func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	// Profile
 	rg.GET("/user/profile", userHandler.GetProfile)
 	rg.PUT("/user/profile", userHandler.UpdateProfile)
+
+	// Sessions (refresh tokens)
+	refreshHandler := handlers.NewRefreshTokenHandler(db)
+	rg.POST("/user/logout-all", refreshHandler.LogoutAll)
+	rg.GET("/user/sessions/count", refreshHandler.ActiveSessionsCount)
 	
 	// Security
 	rg.POST("/user/password", userHandler.ChangePassword)

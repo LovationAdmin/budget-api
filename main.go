@@ -17,6 +17,7 @@ import (
 	"github.com/LovationAdmin/budget-api/handlers"
 	"github.com/LovationAdmin/budget-api/middleware"
 	"github.com/LovationAdmin/budget-api/routes"
+	"github.com/LovationAdmin/budget-api/services"
 	"github.com/LovationAdmin/budget-api/utils"
 
 	"github.com/gin-contrib/cors"
@@ -62,6 +63,7 @@ func main() {
 
 	// Démarrer le nettoyage automatique du cache
 	go scheduleCacheCleaning(db)
+	go scheduleRefreshTokenCleanup(db)
 
 	// Initialiser le handler WebSocket
 	wsHandler := handlers.NewWSHandler()
@@ -174,7 +176,7 @@ func main() {
 		// 1. Routes Publiques (Auth, Admin)
 		routes.SetupAuthRoutes(v1, db)
 		routes.SetupAdminRoutes(v1, db)
-		
+
 		// FIXED: SetupAdminSuggestionsRoutes ne prend que 2 arguments
 		routes.SetupAdminSuggestionsRoutes(v1, db)
 
@@ -217,6 +219,30 @@ func scheduleCacheCleaning(db *sql.DB) {
 
 	for range ticker.C {
 		cleanExpiredCache(db)
+	}
+}
+
+// scheduleRefreshTokenCleanup nettoie les refresh tokens expirés depuis plus
+// de 30 jours toutes les 24h (fenêtre d'audit conservée 30 jours).
+func scheduleRefreshTokenCleanup(db *sql.DB) {
+	svc := services.NewRefreshTokenService(db)
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	// Premier nettoyage 5 min après le démarrage (laisse l'app se stabiliser)
+	time.Sleep(5 * time.Minute)
+	if rows, err := svc.CleanupExpired(context.Background()); err != nil {
+		utils.SafeWarn("Refresh token cleanup failed: %v", err)
+	} else if rows > 0 {
+		utils.SafeInfo("Cleaned up %d expired refresh tokens", rows)
+	}
+
+	for range ticker.C {
+		if rows, err := svc.CleanupExpired(context.Background()); err != nil {
+			utils.SafeWarn("Refresh token cleanup failed: %v", err)
+		} else if rows > 0 {
+			utils.SafeInfo("Cleaned up %d expired refresh tokens", rows)
+		}
 	}
 }
 

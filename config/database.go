@@ -214,6 +214,20 @@ func RunMigrations(db *sql.DB) error {
 		)`,
 
 		// ============================================================================
+		// REFRESH TOKENS
+		// ============================================================================
+		`CREATE TABLE IF NOT EXISTS refresh_tokens (
+			id          TEXT PRIMARY KEY,
+			user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			token_hash  TEXT NOT NULL UNIQUE,
+			expires_at  TIMESTAMPTZ NOT NULL,
+			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			revoked_at  TIMESTAMPTZ,
+			user_agent  TEXT,
+			ip_address  TEXT
+		)`,
+
+		// ============================================================================
 		// TABLES MARKET SUGGESTIONS & AI
 		// ============================================================================
 
@@ -267,6 +281,11 @@ func RunMigrations(db *sql.DB) error {
 		// INDEXES CRITIQUES POUR PERFORMANCE
 		// ============================================================================
 		
+		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_active ON refresh_tokens(user_id) WHERE revoked_at IS NULL`,
+
+
 		// Indexes budget_members
 		`CREATE INDEX IF NOT EXISTS idx_budget_members_budget_id ON budget_members(budget_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_budget_members_user_id ON budget_members(user_id)`,
