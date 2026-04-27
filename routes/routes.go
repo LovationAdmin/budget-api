@@ -64,11 +64,6 @@ func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB, rt *services.RefreshTokenS
 	rg.GET("/user/profile", userHandler.GetProfile)
 	rg.PUT("/user/profile", userHandler.UpdateProfile)
 
-	// Sessions (refresh tokens)
-	refreshHandler := handlers.Refresh(db)
-	rg.POST("/user/logout-all", refreshHandler.LogoutAll)
-	rg.GET("/user/sessions/count", refreshHandler.ActiveSessionsCount)
-
 	// Security
 	rg.POST("/user/password", userHandler.ChangePassword)
 	rg.POST("/user/2fa/setup", userHandler.SetupTOTP)
