@@ -71,6 +71,23 @@ func main() {
 	router := gin.Default()
 
 	// ============================================================================
+	// TRUSTED PROXIES
+	// ============================================================================
+	// En prod, on est derrière le proxy Render → c.ClientIP() retournerait
+	// l'IP du proxy si on ne configure pas la confiance. On accepte les headers
+	// X-Forwarded-For en prod ; un attaquant pourrait spoofer son IP, mais
+	// notre rate limiting est principalement par EMAIL (pas par IP) pour les
+	// endpoints sensibles, donc l'impact est limité.
+	if isProd := os.Getenv("ENVIRONMENT") == "production"; isProd {
+		// nil = trust all (X-Forwarded-For pris tel quel, comme c'est Render qui le set)
+		_ = router.SetTrustedProxies(nil)
+		utils.SafeInfo("Trusted proxies: ALL (production mode)")
+	} else {
+		// En dev, pas de proxy → trust uniquement loopback
+		_ = router.SetTrustedProxies([]string{"127.0.0.1", "::1"})
+	}
+
+	// ============================================================================
 	// CONFIGURATION CORS
 	// ============================================================================
 	frontendURL := os.Getenv("FRONTEND_URL")
@@ -155,8 +172,9 @@ func main() {
 		)
 	})
 
-	// Rate Limiter
-	router.Use(middleware.RateLimiter())
+	// Rate Limiter : on ne met PLUS de limit global ici.
+	// Les limits sont appliqués par endpoint via les middlewares dédiés
+	// (voir routes/routes.go). Voir middleware/auth_ratelimit.go pour la liste.
 
 	// ============================================================================
 	// HEALTH CHECK

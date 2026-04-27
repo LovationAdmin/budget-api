@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/LovationAdmin/budget-api/handlers"
+	"github.com/LovationAdmin/budget-api/middleware"
 	"github.com/LovationAdmin/budget-api/services"
 )
 
@@ -14,21 +15,21 @@ import (
 func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB, rt *services.RefreshTokenService) {
 	authHandler := handlers.NewAuthHandlerWithRefresh(db, rt)
 
-	// Signup & Login
-	rg.POST("/auth/signup", authHandler.Signup)
-	rg.POST("/auth/login", authHandler.Login)
+	// Signup & Login (avec rate limits ciblés)
+	rg.POST("/auth/signup", middleware.SignupRateLimit(), authHandler.Signup)
+	rg.POST("/auth/login", middleware.LoginRateLimit(), authHandler.Login)
 
 	// Refresh & Logout (cookie-based, pas d'auth Bearer requise)
-	rg.POST("/auth/refresh", authHandler.Refresh)
+	rg.POST("/auth/refresh", middleware.RefreshRateLimit(), authHandler.Refresh)
 	rg.POST("/auth/logout", authHandler.Logout)
 
 	// Email Verification
 	rg.GET("/auth/verify-email", authHandler.VerifyEmail)
-	rg.POST("/auth/verify/resend", authHandler.ResendVerificationEmail)
+	rg.POST("/auth/verify/resend", middleware.VerifyResendRateLimit(), authHandler.ResendVerificationEmail)
 
 	// Password Reset
-	rg.POST("/auth/forgot-password", authHandler.ForgotPassword)
-	rg.POST("/auth/reset-password", authHandler.ResetPassword)
+	rg.POST("/auth/forgot-password", middleware.ForgotPasswordRateLimit(), authHandler.ForgotPassword)
+	rg.POST("/auth/reset-password", middleware.ResetPasswordRateLimit(), authHandler.ResetPassword)
 }
 
 // SetupBudgetRoutes sets up protected budget and related routes.
