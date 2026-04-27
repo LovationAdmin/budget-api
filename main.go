@@ -63,7 +63,6 @@ func main() {
 
 	// Démarrer le nettoyage automatique du cache
 	go scheduleCacheCleaning(db)
-	go scheduleRefreshTokenCleanup(db)
 
 	// Initialiser le handler WebSocket
 	wsHandler := handlers.NewWSHandler()
