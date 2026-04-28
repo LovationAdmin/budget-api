@@ -278,6 +278,7 @@ func RunMigrations(db *sql.DB) error {
 
 		`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS location VARCHAR(2) DEFAULT 'FR'`,
 		`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS currency VARCHAR(3) DEFAULT 'EUR'`,
+		`ALTER TABLE users ADD COLUMN has_seen_tutorial BOOLEAN DEFAULT FALSE`,
 
 		// ============================================================================
 		// INDEXES CRITIQUES POUR PERFORMANCE
