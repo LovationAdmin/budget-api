@@ -36,7 +36,7 @@ const (
 // ============================================================================
 // Match "budget-ui.vercel.app", "budget-ui-two.vercel.app",
 // "budget-ui-git-feature-orgname.vercel.app", "budget-ui-abc123-orgname.vercel.app"
-var vercelPreviewPattern = regexp.MustCompile(`^https://budget-ui[a-z0-9\-]*\.vercel\.app$`)
+var vercelPreviewPattern = regexp.MustCompile(`^https://budget-[a-z0-9\-]+\.vercel\.app$`)
 
 func main() {
 	// Charger les variables d'environnement
