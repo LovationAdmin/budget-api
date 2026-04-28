@@ -2,7 +2,7 @@
 // ============================================================================
 // BUDGET FAMILLE - API BACKEND
 // ============================================================================
-// VERSION CORRIGÉE : Routes explicites et correction des arguments
+// VERSION 2.4.1 — CORS robuste (AllowOriginFunc + Vercel previews + X-Admin-Secret)
 // ============================================================================
 
 package main
@@ -11,6 +11,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"regexp"
 	"time"
 
 	"github.com/LovationAdmin/budget-api/config"
@@ -27,8 +28,15 @@ import (
 
 const (
 	AppName    = "Budget Famille API"
-	AppVersion = "2.4.0"
+	AppVersion = "2.4.1"
 )
+
+// ============================================================================
+// CORS — Vercel preview pattern
+// ============================================================================
+// Match "budget-ui.vercel.app", "budget-ui-two.vercel.app",
+// "budget-ui-git-feature-orgname.vercel.app", "budget-ui-abc123-orgname.vercel.app"
+var vercelPreviewPattern = regexp.MustCompile(`^https://budget-ui[a-z0-9\-]*\.vercel\.app$`)
 
 func main() {
 	// Charger les variables d'environnement
@@ -92,42 +100,63 @@ func main() {
 	}
 
 	// ============================================================================
-	// CONFIGURATION CORS
+	// CONFIGURATION CORS — v2 (robuste, supporte Vercel previews + X-Admin-Secret)
 	// ============================================================================
 	frontendURL := os.Getenv("FRONTEND_URL")
 	if frontendURL == "" {
 		frontendURL = "http://localhost:3000"
 	}
 
-	allowedOrigins := []string{
-		frontendURL,
-		"https://budgetfamille.com",
-		"https://www.budgetfamille.com",
-		"https://budget-ui-two.vercel.app",
-		"http://localhost:3000",
-		"http://localhost:5173",
-		// Optionnel : preview branches Vercel
-		// "https://budget-ui-git-feat-xxx.vercel.app",
+	// Origines fixes (production + dev local)
+	fixedOrigins := map[string]bool{
+		frontendURL:                     true,
+		"https://budgetfamille.com":     true,
+		"https://www.budgetfamille.com": true,
+		"http://localhost:3000":         true,
+		"http://localhost:5173":         true,
 	}
 
-	utils.SafeInfo("CORS configured for %d origins", len(allowedOrigins))
+	utils.SafeInfo("CORS configured: %d fixed origins + Vercel preview pattern", len(fixedOrigins))
 
 	corsConfig := cors.Config{
-		AllowOrigins: allowedOrigins,
-		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		// AllowOriginFunc prend le pas sur AllowOrigins → décision dynamique
+		AllowOriginFunc: func(origin string) bool {
+			// 1. Liste fixe (production + localhost)
+			if fixedOrigins[origin] {
+				return true
+			}
+			// 2. Vercel previews (regex)
+			if vercelPreviewPattern.MatchString(origin) {
+				return true
+			}
+			// 3. Logger les origines rejetées (utile pour debug)
+			//    Tu peux retirer ce log une fois la config stable
+			utils.SafeWarn("CORS rejected origin: %s", origin)
+			return false
+		},
+		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
 		AllowHeaders: []string{
 			"Origin",
 			"Content-Type",
 			"Authorization",
+			"X-Admin-Secret", // ← requis pour /admin/stats
+			"X-Requested-With",
+			"Accept",
 			"Upgrade",
 			"Connection",
 			"Sec-WebSocket-Key",
 			"Sec-WebSocket-Version",
 			"Sec-WebSocket-Extensions",
 		},
-		ExposeHeaders:    []string{"Content-Length"},
+		ExposeHeaders: []string{
+			"Content-Length",
+			"X-RateLimit-Limit",
+			"X-RateLimit-Remaining",
+			"X-RateLimit-Reset",
+			"Retry-After",
+		},
 		AllowCredentials: true,
-		MaxAge:           86400,
+		MaxAge:           86400, // 24h cache du préflight
 	}
 
 	// Appliquer CORS en premier
