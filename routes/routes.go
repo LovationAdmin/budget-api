@@ -89,6 +89,10 @@ func SetupAdminRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	adminHandler := &handlers.AdminHandler{DB: db}
 	rg.POST("/admin/migrate-budgets", adminHandler.MigrateAllBudgets)
 	rg.POST("/admin/migrate-budget/:id", adminHandler.MigrateSingleBudget)
+
+	// Stats endpoint (X-Admin-Secret header required)
+	statsHandler := handlers.NewAdminStatsHandler(db)
+	rg.GET("/admin/stats", statsHandler.GetStats)
 }
 
 func SetupEnableBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {

@@ -93,6 +93,14 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		switch {
 		case errors.Is(rotErr, services.ErrRefreshTokenReused):
 			utils.SafeWarn("Refresh token reuse detected — family revoked")
+			utils.CaptureSecurityEvent(
+				"refresh_token_reuse",
+				"Refresh token reuse detected — family revoked",
+				map[string]string{
+					"ip":         c.ClientIP(),
+					"user_agent": c.Request.UserAgent(),
+				},
+			)
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Session compromised, please log in again"})
 		case errors.Is(rotErr, services.ErrRefreshTokenExpired):
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Session expired, please log in again"})

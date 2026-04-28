@@ -188,11 +188,19 @@ func SafeWarn(format string, args ...interface{}) {
 	log.Printf("[WARN] %s", maskedMessage)
 }
 
-// SafeError log un message d'erreur
+// SafeError log un message d'erreur ET envoie à Sentry si activé.
+// Le message est masqué (PII) avant les deux destinations.
 func SafeError(format string, args ...interface{}) {
 	message := fmt.Sprintf(format, args...)
 	maskedMessage := MaskString(message)
 	log.Printf("[ERROR] %s", maskedMessage)
+
+	// Envoie à Sentry (no-op si Sentry pas init).
+	// On crée une "erreur" depuis le message déjà masqué pour bénéficier
+	// des stack traces Sentry.
+	if sentryEnabled {
+		CaptureMessageAsError(maskedMessage)
+	}
 }
 
 // ============================================================================

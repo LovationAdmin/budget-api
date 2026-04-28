@@ -61,6 +61,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Init Sentry (no-op si SENTRY_DSN n'est pas défini)
+	flushSentry := utils.InitSentry(AppName, AppVersion)
+	defer flushSentry()
+
 	// Démarrer le nettoyage automatique du cache
 	go scheduleCacheCleaning(db)
 
@@ -128,6 +132,9 @@ func main() {
 
 	// Appliquer CORS en premier
 	router.Use(cors.New(corsConfig))
+
+	// Sentry middleware : capture des panics + 5xx (no-op si Sentry pas init)
+	router.Use(middleware.SentryMiddleware())
 
 	// ============================================================================
 	// WEBSOCKET ROUTE (avant le middleware de logging pour éviter les blocages)
@@ -211,6 +218,7 @@ func main() {
 		// On crée un groupe protégé qui applique le middleware d'auth
 		protected := v1.Group("/")
 		protected.Use(middleware.AuthMiddleware())
+		protected.Use(middleware.SentryUserTagger())
 		{
 			// FIXED: Appel explicite des routes au lieu de "SetupProtectedRoutes"
 			routes.SetupBudgetRoutes(protected, db, wsHandler)
