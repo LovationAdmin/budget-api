@@ -93,6 +93,10 @@ func SetupAdminRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	// Stats endpoint (X-Admin-Secret header required)
 	statsHandler := handlers.NewAdminStatsHandler(db)
 	rg.GET("/admin/stats", statsHandler.GetStats)
+
+	// ✅ NEW: Re-engagement campaigns
+	campaignsHandler := handlers.NewAdminCampaignsHandler(db, services.NewEmailService())
+	rg.POST("/admin/campaigns/send", campaignsHandler.SendReengagementCampaign)
 }
 
 func SetupEnableBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {

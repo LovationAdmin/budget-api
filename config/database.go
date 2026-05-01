@@ -138,7 +138,6 @@ func RunMigrations(db *sql.DB) error {
 			created_at TIMESTAMP DEFAULT NOW()
 		)`,
 
-		// FIXED: Table name must be password_reset_tokens (not password_resets)
 		`CREATE TABLE IF NOT EXISTS password_reset_tokens (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -147,6 +146,23 @@ func RunMigrations(db *sql.DB) error {
 			used BOOLEAN DEFAULT FALSE,
 			created_at TIMESTAMP DEFAULT NOW()
 		)`,
+
+		`CREATE  TABLE IF NOT EXISTS email_campaign_sends (
+			id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			campaign_id      VARCHAR(120) NOT NULL,
+			user_id          UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			status           VARCHAR(20) NOT NULL,        -- 'sent' | 'failed'
+			provider_msg_id  VARCHAR(160),
+			error_message    TEXT,
+			created_at       TIMESTAMP DEFAULT NOW(),
+			CONSTRAINT email_campaign_sends_unique UNIQUE (campaign_id, user_id)
+		)
+
+		CREATE INDEX IF NOT EXISTS idx_email_campaign_sends_campaign
+			ON email_campaign_sends (campaign_id)
+
+		CREATE INDEX IF NOT EXISTS idx_email_campaign_sends_status
+			ON email_campaign_sends (status)`,
 
 		// ============================================================================
 		// TABLES BANKING
