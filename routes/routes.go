@@ -23,6 +23,17 @@ func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB, rt *services.RefreshTokenS
 	rg.POST("/auth/refresh", middleware.RefreshRateLimit(), authHandler.Refresh)
 	rg.POST("/auth/logout", authHandler.Logout)
 
+	// Mobile auth — refresh token returned in JSON body (no cookie reliance).
+	// Same rotation + reuse-detection as the cookie variant.
+	rg.POST("/auth/mobile/login", middleware.LoginRateLimit(), authHandler.MobileLogin)
+	rg.POST("/auth/mobile/refresh", middleware.RefreshRateLimit(), authHandler.MobileRefresh)
+	rg.POST("/auth/mobile/logout", authHandler.MobileLogout)
+
+	// Magic link (passwordless sign-in, single-use, 15 min TTL)
+	magicHandler := handlers.NewMagicLinkHandler(db, rt)
+	rg.POST("/auth/magic-link/request", middleware.RefreshRateLimit(), magicHandler.Request)
+	rg.POST("/auth/magic-link/verify", middleware.RefreshRateLimit(), magicHandler.Verify)
+
 	// Email Verification
 	rg.GET("/auth/verify-email", authHandler.VerifyEmail)
 	rg.POST("/auth/verify/resend", middleware.VerifyResendRateLimit(), authHandler.ResendVerificationEmail)
@@ -76,6 +87,12 @@ func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB, rt *services.RefreshTokenS
 
 	// GDPR Data Export
 	rg.GET("/user/export-data", userHandler.ExportUserData)
+
+	// Devices (Expo push tokens) — registered on every mobile login.
+	devicesHandler := handlers.NewDevicesHandler(db)
+	rg.POST("/user/devices", devicesHandler.Register)
+	rg.GET("/user/devices", devicesHandler.List)
+	rg.DELETE("/user/devices", devicesHandler.Delete)
 }
 
 func SetupInvitationRoutes(rg *gin.RouterGroup, db *sql.DB) {

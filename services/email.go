@@ -29,3 +29,9 @@ func (s *EmailService) SendVerificationEmail(toEmail, userName, token string) er
 func (s *EmailService) SendPasswordResetEmail(toEmail, userName, resetToken string) error {
 	return utils.SendPasswordResetEmail(toEmail, userName, resetToken)
 }
+
+// SendMagicLinkEmail wrapper calling utils.
+// `link` is the full URL the email recipient taps to sign in.
+func (s *EmailService) SendMagicLinkEmail(toEmail, userName, link string) error {
+	return utils.SendMagicLinkEmail(toEmail, userName, link)
+}
