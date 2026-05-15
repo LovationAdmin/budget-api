@@ -97,6 +97,33 @@ func SetupAdminRoutes(rg *gin.RouterGroup, db *sql.DB) {
 	// ✅ NEW: Re-engagement campaigns
 	campaignsHandler := handlers.NewAdminCampaignsHandler(db, services.NewEmailService())
 	rg.POST("/admin/campaigns/send", campaignsHandler.SendReengagementCampaign)
+
+	// ✅ NEW: Monthly recap — same admin-secret protection as the rest
+	recapHandler := handlers.NewAdminMonthlyRecapHandler(
+		db,
+		services.NewEmailService(),
+		newMonthlyRecapService(db),
+	)
+	rg.POST("/admin/campaigns/monthly-recap", recapHandler.SendMonthlyRecap)
+}
+
+// newMonthlyRecapService wires the recap service against a BudgetService.
+// The BudgetService here is created with nil ws/marketAnalyzer because the
+// recap path only ever reads — we never broadcast or trigger cache work from
+// it.
+func newMonthlyRecapService(db *sql.DB) *services.MonthlyRecapService {
+	budgetService := services.NewBudgetService(db, nil, nil)
+	return services.NewMonthlyRecapService(db, budgetService)
+}
+
+// NewMonthlyRecapHandlerForScheduler exposes the recap handler to main.go so
+// the scheduled job can drive it without a HTTP round-trip.
+func NewMonthlyRecapHandlerForScheduler(db *sql.DB) *handlers.AdminMonthlyRecapHandler {
+	return handlers.NewAdminMonthlyRecapHandler(
+		db,
+		services.NewEmailService(),
+		newMonthlyRecapService(db),
+	)
 }
 
 func SetupEnableBankingRoutes(rg *gin.RouterGroup, db *sql.DB) {

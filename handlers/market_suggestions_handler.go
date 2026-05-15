@@ -11,6 +11,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,19 @@ import (
 	"github.com/LovationAdmin/budget-api/services"
 	"github.com/LovationAdmin/budget-api/utils"
 )
+
+// clampHouseholdParam mirrors services.bucketHouseholdSize so the
+// /suggestions/category endpoint matches the cache key used elsewhere.
+func clampHouseholdParam(raw string) int {
+	n, _ := strconv.Atoi(strings.TrimSpace(raw))
+	if n < 1 {
+		return 1
+	}
+	if n > 4 {
+		return 4
+	}
+	return n
+}
 
 // ============================================================================
 // HANDLER STRUCT
@@ -269,31 +283,18 @@ func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 
 func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 	category := strings.ToUpper(c.Param("category"))
-	country := c.DefaultQuery("country", "FR")
+	country := strings.ToUpper(c.DefaultQuery("country", "FR"))
+	currency := strings.ToUpper(c.DefaultQuery("currency", "EUR"))
+	householdSize := clampHouseholdParam(c.DefaultQuery("household_size", "1"))
 
 	// ✅ LOGGING SÉCURISÉ
-	utils.SafeInfo("Fetching cached suggestions for %s in %s", category, country)
+	utils.SafeInfo("Fetching cached suggestions for %s in %s/%s (hh=%d)", category, country, currency, householdSize)
 
-	// Check cache
-	var suggestion models.MarketSuggestion
-	var competitorsJSON []byte
+	// Check cache via the analyzer so we share the exact cache key shape used
+	// when writing entries (avoids two readers diverging on bucket logic).
+	suggestion, err := h.MarketAnalyzer.GetCachedSuggestion(c.Request.Context(), category, country, currency, householdSize, "")
 
-	err := h.DB.QueryRowContext(c.Request.Context(), `
-		SELECT id, category, country, competitors, last_updated, expires_at
-		FROM market_suggestions
-		WHERE category = $1 AND country = $2 AND merchant_name IS NULL AND expires_at > $3
-		ORDER BY last_updated DESC
-		LIMIT 1
-	`, category, country, time.Now()).Scan(
-		&suggestion.ID,
-		&suggestion.Category,
-		&suggestion.Country,
-		&competitorsJSON,
-		&suggestion.LastUpdated,
-		&suggestion.ExpiresAt,
-	)
-
-	if err == sql.ErrNoRows {
+	if err == sql.ErrNoRows || suggestion == nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error":   "No cached suggestions found",
 			"message": "Use POST /suggestions/analyze to generate new suggestions",

@@ -35,16 +35,30 @@ type CampaignVariant string
 const (
 	CampaignReengagementVerified   CampaignVariant = "reengagement_verified"
 	CampaignReengagementUnverified CampaignVariant = "reengagement_unverified"
+	CampaignMonthlyRecapFR         CampaignVariant = "monthly_recap_fr"
+	CampaignMonthlyRecapEN         CampaignVariant = "monthly_recap_en"
 )
 
 var campaignTemplateFiles = map[CampaignVariant]string{
 	CampaignReengagementVerified:   "campaign_templates/reengagement_founder.html",
 	CampaignReengagementUnverified: "campaign_templates/reengagement_unverified.html",
+	CampaignMonthlyRecapFR:         "campaign_templates/monthly_recap_fr.html",
+	CampaignMonthlyRecapEN:         "campaign_templates/monthly_recap_en.html",
 }
 
 var campaignSubjects = map[CampaignVariant]string{
 	CampaignReengagementVerified:   "Budget Famille : navigation repensée 👋",
 	CampaignReengagementUnverified: "Votre compte Budget Famille est encore en attente",
+}
+
+// monthlyRecapSubject returns a subject line tailored to the locale and
+// reporting month — kept dynamic so the inbox shows the right month rather
+// than a generic "Monthly recap" string.
+func monthlyRecapSubject(locale, monthLabel, budgetName string) string {
+	if locale == "fr" {
+		return fmt.Sprintf("Récap %s — %s", monthLabel, budgetName)
+	}
+	return fmt.Sprintf("Recap for %s — %s", monthLabel, budgetName)
 }
 
 // ============================================================================
@@ -91,6 +105,84 @@ func RenderCampaignEmail(variant CampaignVariant, userName, campaignID string) (
 	}
 
 	return campaignSubjects[variant], buf.String(), nil
+}
+
+// formatMoney renders an amount with the given currency symbol. We display
+// the integer part with a thin no-break-space group separator (1 234) which
+// reads well in both French and English HTML rendering.
+func formatMoney(amount float64, symbol string) string {
+	negative := amount < 0
+	if negative {
+		amount = -amount
+	}
+	integer := int64(amount + 0.5)
+	rendered := groupedThousands(integer)
+	if negative {
+		return "−" + rendered + " " + symbol
+	}
+	return rendered + " " + symbol
+}
+
+func groupedThousands(n int64) string {
+	if n == 0 {
+		return "0"
+	}
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	// Insert NBSP every 3 digits from the right.
+	first := len(s) % 3
+	var parts []string
+	if first > 0 {
+		parts = append(parts, s[:first])
+	}
+	for i := first; i < len(s); i += 3 {
+		parts = append(parts, s[i:i+3])
+	}
+	return strings.Join(parts, " ")
+}
+
+// monthlyRecapFuncs are the template helpers exposed inside the recap
+// templates. Keep this list small — every entry expands the surface area we
+// have to keep in sync between the two locales.
+func monthlyRecapFuncs() template.FuncMap {
+	return template.FuncMap{
+		"formatMoney": formatMoney,
+	}
+}
+
+// RenderMonthlyRecapEmail renders the locale-appropriate monthly recap
+// template. `data` should be a *services.RecapData (or any struct exposing the
+// same exported fields the template references). We accept `interface{}` to
+// avoid importing the services package from utils.
+//
+// `locale` should be "fr" or "en"; anything else falls back to English.
+func RenderMonthlyRecapEmail(locale, monthLabel, budgetName string, data interface{}) (subject string, html string, err error) {
+	variant := CampaignMonthlyRecapEN
+	if locale == "fr" {
+		variant = CampaignMonthlyRecapFR
+	}
+
+	file, ok := campaignTemplateFiles[variant]
+	if !ok {
+		return "", "", fmt.Errorf("unknown monthly recap variant: %q", variant)
+	}
+	raw, err := campaignTemplates.ReadFile(file)
+	if err != nil {
+		return "", "", fmt.Errorf("read template %s: %w", file, err)
+	}
+	tmpl, err := template.New(string(variant)).Funcs(monthlyRecapFuncs()).Parse(string(raw))
+	if err != nil {
+		return "", "", fmt.Errorf("parse template %s: %w", file, err)
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", "", fmt.Errorf("execute template %s: %w", file, err)
+	}
+
+	return monthlyRecapSubject(locale, monthLabel, budgetName), buf.String(), nil
 }
 
 // ============================================================================

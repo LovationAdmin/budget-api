@@ -297,7 +297,18 @@ func RunMigrations(db *sql.DB) error {
 
 		`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS location VARCHAR(2) DEFAULT 'FR'`,
 		`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS currency VARCHAR(3) DEFAULT 'EUR'`,
-		`ALTER TABLE users ADD COLUMN has_seen_tutorial BOOLEAN DEFAULT FALSE`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS has_seen_tutorial BOOLEAN DEFAULT FALSE`,
+
+		// ============================================================================
+		// MARKET SUGGESTIONS — cache key refinement (currency + household)
+		// ============================================================================
+		// Bug: cache previously keyed on (category, country, merchant_name) only,
+		// so a 4-person household in FR/EUR would receive the same competitor list
+		// as a single person in FR/CHF. We now segment by currency and a bucketed
+		// household_size (1, 2, 3, 4+) so per-person amounts and currency-specific
+		// pricing don't leak across users.
+		`ALTER TABLE market_suggestions ADD COLUMN IF NOT EXISTS currency VARCHAR(3) NOT NULL DEFAULT 'EUR'`,
+		`ALTER TABLE market_suggestions ADD COLUMN IF NOT EXISTS household_size SMALLINT NOT NULL DEFAULT 1`,
 
 		// ============================================================================
 		// INDEXES CRITIQUES POUR PERFORMANCE
@@ -403,14 +414,15 @@ func RunMigrations(db *sql.DB) error {
 		`ALTER TABLE banking_accounts ADD CONSTRAINT unique_banking_account_per_connection 
 			UNIQUE (connection_id, account_id)`,
 
-		// Market suggestions unique indexes
+		// Market suggestions unique indexes — keyed on the full cache tuple so
+		// (category, country, currency, household_size, merchant_name) is unique.
 		`DROP INDEX IF EXISTS idx_unique_market_suggestion_null`,
 		`DROP INDEX IF EXISTS idx_unique_market_suggestion_not_null`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_market_suggestion_null
-			ON market_suggestions (category, country)
+			ON market_suggestions (category, country, currency, household_size)
 			WHERE merchant_name IS NULL`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_market_suggestion_not_null
-			ON market_suggestions (category, country, merchant_name)
+			ON market_suggestions (category, country, currency, household_size, merchant_name)
 			WHERE merchant_name IS NOT NULL`,
 
 		// Affiliate links unique index

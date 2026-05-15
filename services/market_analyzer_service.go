@@ -35,6 +35,38 @@ func NewMarketAnalyzerService(db *sql.DB, aiService *ClaudeAIService) *MarketAna
 
 const MaxCompetitors = 3 // Maximum number of suggestions to return
 
+// bucketHouseholdSize collapses raw household_size into a small set of cache
+// buckets so cardinality stays bounded. We bucket as 1, 2, 3, 4+ — beyond
+// 4 the marginal effect on which providers are relevant is small enough that
+// hitting the cache is more valuable than perfect granularity.
+func bucketHouseholdSize(n int) int {
+	if n < 1 {
+		return 1
+	}
+	if n > 4 {
+		return 4
+	}
+	return n
+}
+
+// normalizeCurrency upper-cases and falls back to EUR when empty/unset.
+func normalizeCurrency(currency string) string {
+	c := strings.ToUpper(strings.TrimSpace(currency))
+	if c == "" {
+		return "EUR"
+	}
+	return c
+}
+
+// normalizeCountry upper-cases and falls back to FR when empty/unset.
+func normalizeCountry(country string) string {
+	c := strings.ToUpper(strings.TrimSpace(country))
+	if c == "" {
+		return "FR"
+	}
+	return c
+}
+
 // ============================================================================
 // CHARGE TYPE DETECTION (FOYER vs INDIVIDUEL)
 // ============================================================================
@@ -100,16 +132,19 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 	chargeDescription string,
 ) (*models.MarketSuggestion, error) {
 	merchantName = strings.TrimSpace(merchantName)
+	country = normalizeCountry(country)
+	currency = normalizeCurrency(currency)
+	bucketedHH := bucketHouseholdSize(householdSize)
 	effectiveAmount, chargeType := getEffectiveAmount(category, currentAmount, householdSize)
 
-	log.Printf("[MarketAnalyzer] Analyzing: %s (Merchant: %s), %.2f %s effective, country=%s, household=%d, desc='%s'",
-		category, merchantName, effectiveAmount, currency, country, householdSize, chargeDescription)
+	log.Printf("[MarketAnalyzer] Analyzing: %s (Merchant: %s), %.2f %s effective, country=%s, household=%d (bucket=%d), desc='%s'",
+		category, merchantName, effectiveAmount, currency, country, householdSize, bucketedHH, chargeDescription)
 
-	// 1. CACHE STRATEGY : Segmenté par Pays
-	cached, err := s.getCachedSuggestion(ctx, category, country, merchantName)
+	// 1. CACHE STRATEGY : segmenté par (pays, devise, taille foyer, marchand)
+	cached, err := s.getCachedSuggestion(ctx, category, country, currency, bucketedHH, merchantName)
 	if err == nil && cached != nil {
-		log.Printf("[MarketAnalyzer] ✅ Cache HIT for %s (%s)", category, country)
-		
+		log.Printf("[MarketAnalyzer] ✅ Cache HIT for %s (%s/%s, hh=%d)", category, country, currency, bucketedHH)
+
 		s.recalculateSavings(cached, effectiveAmount, householdSize, chargeType)
 		s.limitToMaxCompetitors(cached)
 		s.filterCurrentProvider(cached, merchantName)
@@ -117,7 +152,7 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 	}
 
 	// 2. CACHE MISS : Appel AI avec contexte géographique et monétaire
-	log.Printf("[MarketAnalyzer] ⚠️ Cache MISS. AI Prompting for %s in %s (%s)...", category, country, currency)
+	log.Printf("[MarketAnalyzer] ⚠️ Cache MISS. AI Prompting for %s in %s (%s, hh=%d)...", category, country, currency, bucketedHH)
 
 	competitors, err := s.searchCompetitors(ctx, category, merchantName, effectiveAmount, country, currency, householdSize, chargeType, chargeDescription)
 	if err != nil {
@@ -132,12 +167,14 @@ func (s *MarketAnalyzerService) AnalyzeCharge(
 	}
 
 	suggestion := &models.MarketSuggestion{
-		Category:     category,
-		Country:      country,
-		MerchantName: merchantName,
-		Competitors:  filteredCompetitors,
-		LastUpdated:  time.Now(),
-		ExpiresAt:    time.Now().Add(30 * 24 * time.Hour),
+		Category:      category,
+		Country:       country,
+		Currency:      currency,
+		HouseholdSize: bucketedHH,
+		MerchantName:  merchantName,
+		Competitors:   filteredCompetitors,
+		LastUpdated:   time.Now(),
+		ExpiresAt:     time.Now().Add(30 * 24 * time.Hour),
 	}
 
 	// 4. Save to cache
@@ -447,22 +484,30 @@ func parseCompetitorsFromResponse(content string) ([]models.Competitor, error) {
 // CACHE MANAGEMENT
 // ============================================================================
 
-func (s *MarketAnalyzerService) getCachedSuggestion(ctx context.Context, category, country, merchantName string) (*models.MarketSuggestion, error) {
+// GetCachedSuggestion exposes the cache lookup with the full key (country,
+// currency, bucketed household size, merchant). Callers must pre-normalize
+// country/currency/household via normalizeCountry/normalizeCurrency/
+// bucketHouseholdSize when they want to bypass the AnalyzeCharge entry point.
+func (s *MarketAnalyzerService) GetCachedSuggestion(ctx context.Context, category, country, currency string, householdSize int, merchantName string) (*models.MarketSuggestion, error) {
+	return s.getCachedSuggestion(ctx, category, country, currency, householdSize, merchantName)
+}
+
+func (s *MarketAnalyzerService) getCachedSuggestion(ctx context.Context, category, country, currency string, householdSize int, merchantName string) (*models.MarketSuggestion, error) {
 	var query string
 	var args []interface{}
 
 	if merchantName == "" {
-		query = `SELECT id, category, country, merchant_name, competitors, last_updated, expires_at 
-				 FROM market_suggestions 
-				 WHERE category=$1 AND country=$2 AND merchant_name IS NULL AND expires_at > $3 
+		query = `SELECT id, category, country, currency, household_size, merchant_name, competitors, last_updated, expires_at
+				 FROM market_suggestions
+				 WHERE category=$1 AND country=$2 AND currency=$3 AND household_size=$4 AND merchant_name IS NULL AND expires_at > $5
 				 ORDER BY last_updated DESC LIMIT 1`
-		args = []interface{}{category, country, time.Now()}
+		args = []interface{}{category, country, currency, householdSize, time.Now()}
 	} else {
-		query = `SELECT id, category, country, merchant_name, competitors, last_updated, expires_at 
-				 FROM market_suggestions 
-				 WHERE category=$1 AND country=$2 AND merchant_name=$3 AND expires_at > $4 
+		query = `SELECT id, category, country, currency, household_size, merchant_name, competitors, last_updated, expires_at
+				 FROM market_suggestions
+				 WHERE category=$1 AND country=$2 AND currency=$3 AND household_size=$4 AND merchant_name=$5 AND expires_at > $6
 				 ORDER BY last_updated DESC LIMIT 1`
-		args = []interface{}{category, country, merchantName, time.Now()}
+		args = []interface{}{category, country, currency, householdSize, merchantName, time.Now()}
 	}
 
 	var suggestion models.MarketSuggestion
@@ -471,6 +516,7 @@ func (s *MarketAnalyzerService) getCachedSuggestion(ctx context.Context, categor
 
 	err := s.DB.QueryRowContext(ctx, query, args...).Scan(
 		&suggestion.ID, &suggestion.Category, &suggestion.Country,
+		&suggestion.Currency, &suggestion.HouseholdSize,
 		&dbMerchantName, &competitorsJSON, &suggestion.LastUpdated, &suggestion.ExpiresAt,
 	)
 	if err != nil {
@@ -497,10 +543,11 @@ func (s *MarketAnalyzerService) saveSuggestionToCache(ctx context.Context, sugge
 	merchantName := sql.NullString{String: suggestion.MerchantName, Valid: suggestion.MerchantName != ""}
 
 	_, err = s.DB.ExecContext(ctx, `
-		INSERT INTO market_suggestions (category, country, merchant_name, competitors, last_updated, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO market_suggestions (category, country, currency, household_size, merchant_name, competitors, last_updated, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT DO NOTHING`,
-		suggestion.Category, suggestion.Country, merchantName, competitorsJSON, suggestion.LastUpdated, suggestion.ExpiresAt,
+		suggestion.Category, suggestion.Country, suggestion.Currency, suggestion.HouseholdSize,
+		merchantName, competitorsJSON, suggestion.LastUpdated, suggestion.ExpiresAt,
 	)
 	return err
 }

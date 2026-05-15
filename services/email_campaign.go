@@ -27,3 +27,14 @@ func (s *EmailService) SendReengagementEmail(toEmail, userName, campaignID strin
 	}
 	return utils.SendCampaignEmail(toEmail, subject, html)
 }
+
+// SendMonthlyRecapEmail renders + sends the monthly recap for a single user.
+// `recap` is the *RecapData built by MonthlyRecapService; we pass it as
+// interface{} into utils.RenderMonthlyRecapEmail to avoid a circular import.
+func (s *EmailService) SendMonthlyRecapEmail(toEmail string, locale, monthLabel, budgetName string, recap interface{}) (string, error) {
+	subject, html, err := utils.RenderMonthlyRecapEmail(locale, monthLabel, budgetName, recap)
+	if err != nil {
+		return "", err
+	}
+	return utils.SendCampaignEmail(toEmail, subject, html)
+}

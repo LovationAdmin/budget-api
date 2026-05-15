@@ -25,13 +25,15 @@ type Competitor struct {
 
 // MarketSuggestion représente une suggestion de marché avec liste de concurrents
 type MarketSuggestion struct {
-	ID           string       `json:"id"`
-	Category     string       `json:"category"`
-	Country      string       `json:"country"`
-	MerchantName string       `json:"merchant_name,omitempty"`
-	Competitors  []Competitor `json:"competitors"`
-	LastUpdated  time.Time    `json:"last_updated"`
-	ExpiresAt    time.Time    `json:"expires_at"`
+	ID            string       `json:"id"`
+	Category      string       `json:"category"`
+	Country       string       `json:"country"`
+	Currency      string       `json:"currency,omitempty"`
+	HouseholdSize int          `json:"household_size,omitempty"`
+	MerchantName  string       `json:"merchant_name,omitempty"`
+	Competitors   []Competitor `json:"competitors"`
+	LastUpdated   time.Time    `json:"last_updated"`
+	ExpiresAt     time.Time    `json:"expires_at"`
 }
 
 // ChargeSuggestion associe une charge avec sa suggestion de marché

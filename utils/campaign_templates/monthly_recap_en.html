@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="x-apple-disable-message-reformatting">
+<title>Monthly recap — {{ .BudgetName }}</title>
+</head>
+<body style="margin:0; padding:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif; background-color:#f3f4f6; color:#1f2937;">
+  <table role="presentation" style="width:100%; border-collapse:collapse;">
+    <tr>
+      <td style="padding:0; text-align:center; background:linear-gradient(135deg, #10b981 0%, #059669 60%, #047857 100%);">
+        <table role="presentation" style="width:100%; max-width:640px; margin:0 auto;">
+          <tr>
+            <td style="padding:40px 24px; text-align:left;">
+              <div style="color:#a7f3d0; font-size:12px; letter-spacing:2px; font-weight:600; text-transform:uppercase; margin-bottom:8px;">
+                Monthly recap
+              </div>
+              <h1 style="margin:0; color:#ffffff; font-size:30px; font-weight:bold; line-height:1.2;">
+                {{ .CurrentMonth.Label }}
+              </h1>
+              <p style="margin:12px 0 0 0; color:#d1fae5; font-size:15px; line-height:1.5;">
+                {{ .BudgetName }} · {{ .Currency }}
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr>
+      <td style="padding:32px 16px;">
+        <table role="presentation" style="width:100%; max-width:640px; margin:0 auto; background-color:#ffffff; border-radius:14px; box-shadow:0 4px 14px rgba(0,0,0,0.08); overflow:hidden;">
+
+          <!-- Greeting -->
+          <tr>
+            <td style="padding:32px 32px 8px 32px;">
+              <h2 style="margin:0 0 8px 0; color:#1f2937; font-size:22px; font-weight:700;">
+                Hi {{ .UserName }} 👋
+              </h2>
+              <p style="margin:0; color:#4b5563; font-size:15px; line-height:1.6;">
+                Here's a quick look at your budget. We'll cover what happened in
+                <strong>{{ .PreviousMonth.Label }}</strong>, where things stand for <strong>{{ .CurrentMonth.ShortLabel }}</strong>,
+                and what's coming in <strong>{{ .NextMonth.ShortLabel }}</strong>.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Yearly headline -->
+          <tr>
+            <td style="padding:24px 32px 8px 32px;">
+              <table role="presentation" style="width:100%; border-collapse:separate; border-spacing:8px 0;">
+                <tr>
+                  <td style="background:#ecfdf5; border-radius:10px; padding:14px; width:33%;">
+                    <div style="font-size:11px; color:#047857; font-weight:600; letter-spacing:1px; text-transform:uppercase;">Income {{ .Year }}</div>
+                    <div style="font-size:18px; color:#065f46; font-weight:700; margin-top:4px;">{{ formatMoney .YearIncome .CurrencySymbol }}</div>
+                  </td>
+                  <td style="background:#fef2f2; border-radius:10px; padding:14px; width:33%;">
+                    <div style="font-size:11px; color:#991b1b; font-weight:600; letter-spacing:1px; text-transform:uppercase;">Expenses {{ .Year }}</div>
+                    <div style="font-size:18px; color:#7f1d1d; font-weight:700; margin-top:4px;">{{ formatMoney .YearExpenses .CurrencySymbol }}</div>
+                  </td>
+                  <td style="background:{{ if gt .YearSavings 0.0 }}#eff6ff{{ else }}#fff7ed{{ end }}; border-radius:10px; padding:14px; width:33%;">
+                    <div style="font-size:11px; color:{{ if gt .YearSavings 0.0 }}#1e40af{{ else }}#9a3412{{ end }}; font-weight:600; letter-spacing:1px; text-transform:uppercase;">Savings {{ .Year }}</div>
+                    <div style="font-size:18px; color:{{ if gt .YearSavings 0.0 }}#1e3a8a{{ else }}#7c2d12{{ end }}; font-weight:700; margin-top:4px;">{{ formatMoney .YearSavings .CurrencySymbol }}</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Previous month -->
+          <tr>
+            <td style="padding:24px 32px 0 32px;">
+              <h3 style="margin:0 0 12px 0; color:#1f2937; font-size:16px; font-weight:600;">
+                ← {{ .PreviousMonth.Label }} <span style="color:#9ca3af; font-weight:500;">— last month wrapped up</span>
+              </h3>
+              <table role="presentation" style="width:100%; border-collapse:collapse; background:#f9fafb; border-radius:10px; padding:0; overflow:hidden;">
+                <tr>
+                  <td style="padding:14px 16px; border-bottom:1px solid #e5e7eb;">
+                    <span style="color:#4b5563; font-size:14px;">Income received</span>
+                    <span style="float:right; color:#059669; font-weight:600; font-size:14px;">{{ formatMoney .PreviousMonth.TotalIncome .CurrencySymbol }}</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:14px 16px; border-bottom:1px solid #e5e7eb;">
+                    <span style="color:#4b5563; font-size:14px;">Recurring charges</span>
+                    <span style="float:right; color:#dc2626; font-weight:600; font-size:14px;">−{{ formatMoney .PreviousMonth.RecurringCharges .CurrencySymbol }}</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:14px 16px; border-bottom:1px solid #e5e7eb;">
+                    <span style="color:#4b5563; font-size:14px;">Project spend</span>
+                    <span style="float:right; color:#dc2626; font-weight:600; font-size:14px;">−{{ formatMoney .PreviousMonth.ProjectsSpent .CurrencySymbol }}</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:14px 16px; background:#ffffff;">
+                    <span style="color:#1f2937; font-size:14px; font-weight:600;">Net</span>
+                    <span style="float:right; color:{{ if ge .PreviousMonth.NetCashflow 0.0 }}#047857{{ else }}#b91c1c{{ end }}; font-weight:700; font-size:15px;">{{ formatMoney .PreviousMonth.NetCashflow .CurrencySymbol }}</span>
+                  </td>
+                </tr>
+              </table>
+              {{ if .PreviousMonth.Comment }}
+              <p style="margin:10px 4px 0 4px; color:#6b7280; font-size:13px; font-style:italic; line-height:1.5;">
+                "{{ .PreviousMonth.Comment }}"
+              </p>
+              {{ end }}
+            </td>
+          </tr>
+
+          <!-- Current month -->
+          <tr>
+            <td style="padding:24px 32px 0 32px;">
+              <h3 style="margin:0 0 12px 0; color:#1f2937; font-size:16px; font-weight:600;">
+                ● {{ .CurrentMonth.Label }} <span style="color:#10b981; font-weight:600;">— in progress</span>
+              </h3>
+              <table role="presentation" style="width:100%; border-collapse:collapse; background:linear-gradient(180deg, #ecfdf5 0%, #ffffff 100%); border:1px solid #d1fae5; border-radius:10px; overflow:hidden;">
+                <tr>
+                  <td style="padding:14px 16px; border-bottom:1px solid #d1fae5;">
+                    <span style="color:#4b5563; font-size:14px;">Planned income</span>
+                    <span style="float:right; color:#065f46; font-weight:600; font-size:14px;">{{ formatMoney .CurrentMonth.TotalIncome .CurrencySymbol }}</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:14px 16px; border-bottom:1px solid #d1fae5;">
+                    <span style="color:#4b5563; font-size:14px;">Charges</span>
+                    <span style="float:right; color:#991b1b; font-weight:600; font-size:14px;">−{{ formatMoney .CurrentMonth.RecurringCharges .CurrencySymbol }}</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:14px 16px; border-bottom:1px solid #d1fae5;">
+                    <span style="color:#4b5563; font-size:14px;">Allocated to projects</span>
+                    <span style="float:right; color:#1e40af; font-weight:600; font-size:14px;">{{ formatMoney .CurrentMonth.ProjectsAllocated .CurrencySymbol }}</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:14px 16px; background:#ffffff;">
+                    <span style="color:#1f2937; font-size:14px; font-weight:600;">Left to save</span>
+                    <span style="float:right; color:{{ if ge .CurrentMonth.NetSavings 0.0 }}#047857{{ else }}#b91c1c{{ end }}; font-weight:700; font-size:15px;">{{ formatMoney .CurrentMonth.NetSavings .CurrencySymbol }}</span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Next month -->
+          <tr>
+            <td style="padding:24px 32px 0 32px;">
+              <h3 style="margin:0 0 12px 0; color:#1f2937; font-size:16px; font-weight:600;">
+                → {{ .NextMonth.Label }} <span style="color:#9ca3af; font-weight:500;">— what's coming</span>
+              </h3>
+              <table role="presentation" style="width:100%; border-collapse:collapse; background:#f9fafb; border:1px dashed #e5e7eb; border-radius:10px;">
+                <tr>
+                  <td style="padding:14px 16px;">
+                    <span style="color:#4b5563; font-size:14px;">Planned income</span>
+                    <span style="float:right; color:#374151; font-weight:600; font-size:14px;">{{ formatMoney .NextMonth.TotalIncome .CurrencySymbol }}</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 16px 14px 16px;">
+                    <span style="color:#4b5563; font-size:14px;">Recurring charges</span>
+                    <span style="float:right; color:#374151; font-weight:600; font-size:14px;">−{{ formatMoney .NextMonth.RecurringCharges .CurrencySymbol }}</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 16px 14px 16px;">
+                    <span style="color:#4b5563; font-size:14px;">Allocated to projects</span>
+                    <span style="float:right; color:#374151; font-weight:600; font-size:14px;">{{ formatMoney .NextMonth.ProjectsAllocated .CurrencySymbol }}</span>
+                  </td>
+                </tr>
+              </table>
+              {{ if not .NextMonth.HasData }}
+              <p style="margin:10px 4px 0 4px; color:#9ca3af; font-size:13px; line-height:1.5;">
+                Nothing planned for next month yet — a good moment to set your allocations.
+              </p>
+              {{ end }}
+            </td>
+          </tr>
+
+          <!-- Projects -->
+          {{ if .Projects }}
+          <tr>
+            <td style="padding:28px 32px 0 32px;">
+              <h3 style="margin:0 0 14px 0; color:#1f2937; font-size:16px; font-weight:600;">
+                Project evolution
+              </h3>
+              <table role="presentation" style="width:100%; border-collapse:separate; border-spacing:0 8px;">
+                {{ range .Projects }}
+                <tr>
+                  <td style="background:#f9fafb; border-radius:10px; padding:14px 16px;">
+                    <div style="margin-bottom:8px;">
+                      <span style="color:#1f2937; font-weight:600; font-size:14px;">{{ .Name }}</span>
+                      {{ if .HasTarget }}
+                      <span style="float:right; color:#6b7280; font-size:13px;">{{ formatMoney .AllocatedYTD $.CurrencySymbol }} / {{ formatMoney .TargetAmount $.CurrencySymbol }}</span>
+                      {{ else }}
+                      <span style="float:right; color:#6b7280; font-size:13px;">{{ formatMoney .AllocatedYTD $.CurrencySymbol }} allocated</span>
+                      {{ end }}
+                    </div>
+                    {{ if .HasTarget }}
+                    <div style="height:8px; background:#e5e7eb; border-radius:999px; overflow:hidden;">
+                      <div style="height:8px; width:{{ printf "%.0f" .Progress }}%; background:{{ if eq .Status "ahead" }}#10b981{{ else if eq .Status "behind" }}#f59e0b{{ else }}#3b82f6{{ end }}; border-radius:999px;"></div>
+                    </div>
+                    <div style="margin-top:6px; font-size:12px; color:#6b7280;">
+                      {{ printf "%.0f" .Progress }}% of target
+                      {{ if eq .Status "ahead" }}— ahead{{ else if eq .Status "behind" }}— behind{{ else }}— on track{{ end }}
+                    </div>
+                    {{ end }}
+                  </td>
+                </tr>
+                {{ end }}
+              </table>
+            </td>
+          </tr>
+          {{ end }}
+
+          <!-- CTA -->
+          <tr>
+            <td style="padding:32px;">
+              <table role="presentation" style="margin:0 auto;">
+                <tr>
+                  <td style="border-radius:10px; background:linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                    <a href="{{ .AppURL }}?utm_source=email&utm_medium=monthly_recap&utm_campaign={{ .CampaignID }}"
+                       style="display:inline-block; padding:14px 28px; color:#ffffff; text-decoration:none; font-size:15px; font-weight:600;">
+                      Open my budget →
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              {{ if gt .OtherBudgetCount 0 }}
+              <p style="margin:18px 0 0 0; text-align:center; color:#6b7280; font-size:13px;">
+                You have {{ .OtherBudgetCount }} other budget{{ if gt .OtherBudgetCount 1 }}s{{ end }} — accessible from the app.
+              </p>
+              {{ end }}
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:0 32px 32px 32px;">
+              <p style="margin:0; color:#6b7280; font-size:13px; line-height:1.6;">
+                A question, a piece of feedback? Reply to this email — I read every one.
+              </p>
+              <p style="margin:14px 0 0 0; color:#1f2937; font-size:14px; line-height:1.5;">
+                — Libasse<br>
+                <span style="color:#9ca3af; font-size:12px;">Budget Famille</span>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr>
+      <td style="padding:0 16px 32px 16px; text-align:center;">
+        <p style="margin:0; color:#9ca3af; font-size:11px; line-height:1.6;">
+          You're receiving this recap because you verified your account on Budget Famille.<br>
+          To stop receiving it, reply "STOP RECAP" to this message.
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

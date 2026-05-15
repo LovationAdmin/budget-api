@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"regexp"
 	"time"
@@ -75,6 +76,9 @@ func main() {
 
 	// Démarrer le nettoyage automatique du cache
 	go scheduleCacheCleaning(db)
+
+	// Démarrer l'envoi automatique du récap mensuel (1er du mois, 09:00 Paris)
+	go scheduleMonthlyRecap(db)
 
 	// Initialiser le handler WebSocket
 	wsHandler := handlers.NewWSHandler()
@@ -353,6 +357,53 @@ func cleanExpiredCache(db *sql.DB) {
 	if rowsAffected > 0 {
 		utils.SafeInfo("Cleaned %d expired invitations", rowsAffected)
 	}
+}
+
+// scheduleMonthlyRecap déclenche l'envoi du récap mensuel le 1er de chaque
+// mois à 09:00 Europe/Paris. Idempotent grâce à email_campaign_sends
+// (campaign_id, user_id), on peut donc relancer le scheduler sans dupliquer.
+func scheduleMonthlyRecap(db *sql.DB) {
+	loc, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		utils.SafeWarn("monthly-recap: Europe/Paris timezone unavailable, falling back to UTC: %v", err)
+		loc = time.UTC
+	}
+
+	handler := routes.NewMonthlyRecapHandlerForScheduler(db)
+
+	for {
+		nextRun := nextMonthlyRecapTrigger(time.Now().In(loc), loc)
+		wait := time.Until(nextRun)
+		utils.SafeInfo("monthly-recap: next run scheduled at %s (in %s)", nextRun.Format(time.RFC3339), wait.Truncate(time.Minute))
+
+		timer := time.NewTimer(wait)
+		<-timer.C
+
+		now := time.Now().In(loc)
+		prev := now.AddDate(0, 0, -1)
+		campaignID := fmt.Sprintf("monthly_recap_%04d_%02d", prev.Year(), int(prev.Month()))
+
+		// 4-hour budget for the loop (Resend throttling + decryption).
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Hour)
+		result := handler.RunMonthlyRecap(ctx, handlers.MonthlyRecapRunOptions{
+			CampaignID: campaignID,
+			SkipSent:   true,
+			Anchor:     now,
+		})
+		cancel()
+		utils.SafeInfo("monthly-recap: campaign=%s total=%d sent=%d skipped=%d failed=%d duration_ms=%d",
+			result.CampaignID, result.Total, result.Sent, result.Skipped, result.Failed, result.DurationMs)
+	}
+}
+
+// nextMonthlyRecapTrigger returns the next 1st-of-month 09:00 in the given
+// location, strictly after `from`.
+func nextMonthlyRecapTrigger(from time.Time, loc *time.Location) time.Time {
+	candidate := time.Date(from.Year(), from.Month(), 1, 9, 0, 0, 0, loc)
+	if !candidate.After(from) {
+		candidate = time.Date(from.Year(), from.Month()+1, 1, 9, 0, 0, 0, loc)
+	}
+	return candidate
 }
 
 // scheduleRefreshTokenCleanup tourne toutes les 24h et purge les tokens
