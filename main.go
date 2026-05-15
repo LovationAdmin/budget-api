@@ -12,7 +12,6 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"regexp"
 	"time"
 
 	"github.com/LovationAdmin/budget-api/config"
@@ -32,12 +31,8 @@ const (
 	AppVersion = "2.4.1"
 )
 
-// ============================================================================
-// CORS — Vercel preview pattern
-// ============================================================================
-// Match "budget-ui.vercel.app", "budget-ui-two.vercel.app",
-// "budget-ui-git-feature-orgname.vercel.app", "budget-ui-abc123-orgname.vercel.app"
-var vercelPreviewPattern = regexp.MustCompile(`^https://budget-[a-z0-9\-]+\.vercel\.app$`)
+// CORS allowlist lives in utils.IsAllowedOrigin so the WebSocket upgrader can
+// share the same matcher — see handlers/ws.go.
 
 func main() {
 	// Charger les variables d'environnement
@@ -111,30 +106,16 @@ func main() {
 		frontendURL = "http://localhost:3000"
 	}
 
-	// Origines fixes (production + dev local)
-	fixedOrigins := map[string]bool{
-		frontendURL:                     true,
-		"https://budgetfamille.com":     true,
-		"https://www.budgetfamille.com": true,
-		"http://localhost:3000":         true,
-		"http://localhost:5173":         true,
-	}
-
-	utils.SafeInfo("CORS configured: %d fixed origins + Vercel preview pattern", len(fixedOrigins))
+	utils.SafeInfo("CORS configured via utils.IsAllowedOrigin (frontend=%s)", frontendURL)
 
 	corsConfig := cors.Config{
-		// AllowOriginFunc prend le pas sur AllowOrigins → décision dynamique
+		// AllowOriginFunc prend le pas sur AllowOrigins → décision dynamique.
+		// La même fonction gouverne le upgrade WebSocket (handlers/ws.go) pour
+		// éviter les divergences entre les deux couches.
 		AllowOriginFunc: func(origin string) bool {
-			// 1. Liste fixe (production + localhost)
-			if fixedOrigins[origin] {
+			if utils.IsAllowedOrigin(origin) {
 				return true
 			}
-			// 2. Vercel previews (regex)
-			if vercelPreviewPattern.MatchString(origin) {
-				return true
-			}
-			// 3. Logger les origines rejetées (utile pour debug)
-			//    Tu peux retirer ce log une fois la config stable
 			utils.SafeWarn("CORS rejected origin: %s", origin)
 			return false
 		},

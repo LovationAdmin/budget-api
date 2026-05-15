@@ -10,7 +10,6 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"os"
 	"sync"
 
 	"github.com/LovationAdmin/budget-api/utils"
@@ -25,28 +24,11 @@ import (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
+	// Defer the allowlist to utils.IsAllowedOrigin so the WS upgrader and the
+	// CORS layer in main.go stay in lockstep — previously this hardcoded a
+	// shorter list which rejected Vercel preview URLs that CORS accepted.
 	CheckOrigin: func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		frontendURL := os.Getenv("FRONTEND_URL")
-		if frontendURL == "" {
-			frontendURL = "http://localhost:3000"
-		}
-		allowedOrigins := []string{
-			frontendURL,
-			"https://budgetfamille.com",
-			"https://www.budgetfamille.com",
-			"https://budget-ui-two.vercel.app",
-			"http://localhost:3000",
-			"http://localhost:5173",
-			// Optionnel : preview branches Vercel
-			// "https://budget-ui-git-feat-xxx.vercel.app",
-		}
-		for _, allowed := range allowedOrigins {
-			if origin == allowed {
-				return true
-			}
-		}
-		return false
+		return utils.IsAllowedOrigin(r.Header.Get("Origin"))
 	},
 }
 
