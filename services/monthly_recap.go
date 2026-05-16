@@ -44,8 +44,16 @@ type RecapMonth struct {
 	NetSavings        float64 // available - allocated to projects
 	NetCashflow       float64 // income - charges - actual spent
 	Comment           string
+	ProjectNotes      []ProjectNote // per-project notes for the month
 	HasData           bool
 	IsLocked          bool
+}
+
+// ProjectNote is a single per-project note attached to a month, surfaced
+// from the budget's expenseComments map.
+type ProjectNote struct {
+	Name string
+	Note string
 }
 
 type RecapProject struct {
@@ -217,6 +225,10 @@ func (s *MonthlyRecapService) BuildRecap(
 	prev := aggregateMonth(payload, prevTime, locale, false)
 	curr := aggregateMonth(payload, currTime, locale, true)
 	next := aggregateMonth(payload, nextTime, locale, false)
+
+	prev.ProjectNotes = aggregateProjectNotes(payload, prevTime, locale)
+	curr.ProjectNotes = aggregateProjectNotes(payload, currTime, locale)
+	next.ProjectNotes = aggregateProjectNotes(payload, nextTime, locale)
 
 	projects := aggregateProjects(payload, currTime.Year(), locale)
 	yearIncome, yearExpenses := aggregateYearTotals(payload, currTime.Year())
@@ -540,6 +552,36 @@ func aggregateProjects(p *budgetPayload, year int, locale string) []RecapProject
 			Status:       status,
 			HasTarget:    hasTarget,
 		})
+	}
+	return out
+}
+
+// aggregateProjectNotes returns the per-project notes for the given month,
+// in the order projects are declared in the budget. Empty notes are skipped.
+func aggregateProjectNotes(p *budgetPayload, when time.Time, locale string) []ProjectNote {
+	year := when.Year()
+	monthIdx := int(when.Month()) - 1
+
+	yearData, ok := p.YearlyData[fmt.Sprintf("%d", year)]
+	if !ok || monthIdx >= len(yearData.ExpenseComments) {
+		return nil
+	}
+	commentMap := yearData.ExpenseComments[monthIdx]
+	if len(commentMap) == 0 {
+		return nil
+	}
+
+	out := make([]ProjectNote, 0, len(commentMap))
+	for _, proj := range p.Projects {
+		note := strings.TrimSpace(commentMap[proj.ID])
+		if note == "" {
+			continue
+		}
+		name := proj.Label
+		if name == "" {
+			name = defaultProjectName(locale)
+		}
+		out = append(out, ProjectNote{Name: name, Note: note})
 	}
 	return out
 }
