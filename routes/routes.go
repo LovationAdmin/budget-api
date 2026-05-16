@@ -105,6 +105,16 @@ func SetupAdminRoutes(rg *gin.RouterGroup, db *sql.DB) {
 		newMonthlyRecapService(db),
 	)
 	rg.POST("/admin/campaigns/monthly-recap", recapHandler.SendMonthlyRecap)
+
+	// One-shot maintenance: backfill the lockedMonths map in every budget so
+	// dormant accounts converge to the auto-lock state introduced by the
+	// 2026-05-15 persistence fix. BudgetService is wired with nil ws to keep
+	// the backfill quiet (no per-row WebSocket broadcast).
+	locksBackfillHandler := handlers.NewAdminLocksBackfillHandler(
+		db,
+		services.NewBudgetService(db, nil, nil),
+	)
+	rg.POST("/admin/maintenance/backfill-locks", locksBackfillHandler.BackfillLocks)
 }
 
 // newMonthlyRecapService wires the recap service against a BudgetService.

@@ -48,8 +48,14 @@ type recapMonth struct {
 	NetSavings        float64
 	NetCashflow       float64
 	Comment           string
+	ProjectNotes      []projectNote
 	HasData           bool
 	IsLocked          bool
+}
+
+type projectNote struct {
+	Name string
+	Note string
 }
 
 type recapProject struct {
@@ -80,6 +86,10 @@ func buildSampleRecap() minimalRecap {
 			RecurringCharges: 1240, ProjectsAllocated: 200, ProjectsSpent: 50,
 			Available: 4360, NetSavings: 4160, NetCashflow: 4310,
 			Comment: "Ski en famille", HasData: true,
+			ProjectNotes: []projectNote{
+				{Name: "Vacances", Note: "Acompte chalet versé"},
+				{Name: "Voiture", Note: "Révision faite"},
+			},
 		},
 		CurrentMonth: recapMonth{
 			Label: "Mai 2026", ShortLabel: "Mai", Year: 2026, MonthIdx: 4,
@@ -117,12 +127,15 @@ func TestRenderMonthlyRecapEmail_French(t *testing.T) {
 		t.Errorf("subject missing budget: %q", subject)
 	}
 	wants := []string{
-		"Avril 2026", "Mai 2026", "Juin 2026",
-		"Évolution des projets",
+		"Avril 2026", "Mai", "Juin",
+		"Tes projets avancent",
 		"Vacances",
 		"€",
 		"Bonjour Alice",
 		"monthly_recap_2026_04",
+		"Ski en famille",
+		"Acompte chalet versé",
+		"Tes notes par poste",
 	}
 	for _, w := range wants {
 		if !strings.Contains(html, w) {
@@ -149,9 +162,11 @@ func TestRenderMonthlyRecapEmail_English(t *testing.T) {
 		t.Errorf("subject missing month: %q", subject)
 	}
 	wants := []string{
-		"April 2026", "May 2026", "June 2026",
-		"Project evolution",
+		"April 2026", "May", "June",
+		"Your projects are progressing",
 		"Hi Alice",
+		"Acompte chalet versé",
+		"line-item notes",
 	}
 	for _, w := range wants {
 		if !strings.Contains(html, w) {
