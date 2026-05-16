@@ -198,6 +198,25 @@ func (s *BudgetService) Update(ctx context.Context, id, name, location, currency
 	return err
 }
 
+// BumpLastViewed marks the budget as recently consulted by updating the
+// last_viewed_at column. Throttled to once per hour per budget so rapid GETs
+// (polling, autosave round-trips) don't hammer the table.
+//
+// Fire-and-forget: callers run this in a goroutine and ignore errors — a
+// missed bump is harmless, and we never want this to slow down a read path.
+func (s *BudgetService) BumpLastViewed(ctx context.Context, budgetID string) error {
+	const q = `
+		UPDATE budgets
+		SET last_viewed_at = NOW()
+		WHERE id = $1
+		  AND (last_viewed_at IS NULL OR last_viewed_at < NOW() - INTERVAL '1 hour')
+	`
+	queryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_, err := s.db.ExecContext(queryCtx, q, budgetID)
+	return err
+}
+
 // Delete deletes a budget completely
 func (s *BudgetService) Delete(ctx context.Context, budgetID string) error {
 	return utils.WithTransaction(s.db, func(tx *sql.Tx) error {

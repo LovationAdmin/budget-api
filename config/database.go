@@ -297,6 +297,11 @@ func RunMigrations(db *sql.DB) error {
 
 		`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS location VARCHAR(2) DEFAULT 'FR'`,
 		`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS currency VARCHAR(3) DEFAULT 'EUR'`,
+		// Track the last time a member opened the budget. Bumped on GET via the
+		// handlers, throttled to once per hour per budget to avoid hammering the
+		// table on rapid polling. Used by the monthly recap to pick the
+		// "most-consulted" budget as primary; falls back to updated_at when null.
+		`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS last_viewed_at TIMESTAMP`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS has_seen_tutorial BOOLEAN DEFAULT FALSE`,
 
 		// ============================================================================

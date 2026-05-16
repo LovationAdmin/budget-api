@@ -4,8 +4,10 @@
 package handlers
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/LovationAdmin/budget-api/services"
 
@@ -160,6 +162,15 @@ func (h *Handler) GetBudgetData(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get budget data"})
 		return
 	}
+
+	// Fire-and-forget consultation bump. Throttled to once per hour per
+	// budget inside the service. Used by the monthly recap to pick the
+	// "most-consulted" budget as the email's primary.
+	bumpCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	go func() {
+		defer cancel()
+		_ = h.budgetService.BumpLastViewed(bumpCtx, budgetID)
+	}()
 
 	c.JSON(http.StatusOK, gin.H{"data": data})
 }
