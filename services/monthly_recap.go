@@ -87,8 +87,34 @@ type RecapData struct {
 
 	Projects []RecapProject
 
+	// OtherBudgets is a short summary of the user's other budgets (capped
+	// in the caller). Empty when the user has a single budget.
+	OtherBudgets []BudgetSummary
+
+	// OtherBudgetCount is the total number of secondary budgets the user
+	// owns (i.e. total minus the primary one), independent of how many we
+	// display in OtherBudgets.
 	OtherBudgetCount int
-	GeneratedAt      string
+
+	// HiddenBudgetCount is the number of secondary budgets the user owns
+	// beyond what's shown in OtherBudgets (e.g. user has 8 budgets, we show
+	// the primary + 3 others, HiddenBudgetCount = 4).
+	HiddenBudgetCount int
+
+	GeneratedAt string
+}
+
+// BudgetSummary is the compact per-budget block we surface at the end of the
+// recap email when the user owns more than one budget.
+type BudgetSummary struct {
+	ID             string
+	Name           string
+	Currency       string
+	CurrencySymbol string
+	YearIncome     float64
+	YearExpenses   float64
+	YearSavings    float64
+	URL            string
 }
 
 // ----------------------------------------------------------------------------
@@ -152,6 +178,50 @@ func (s *MonthlyRecapService) ListVerifiedUsers(ctx context.Context, limit int) 
 	return out, rows.Err()
 }
 
+// ListUserBudgets returns every budget the user is a member of, ordered by
+// most-recently updated. Pass limit > 0 to cap the returned slice (useful
+// for the recap which only needs the primary budget + a few others to
+// summarise). The returned totalCount is the user's full budget count,
+// independent of the limit, so callers can show "X more" hints.
+func (s *MonthlyRecapService) ListUserBudgets(ctx context.Context, userID string, limit int) (budgets []budgetSummary, totalCount int, err error) {
+	q := `
+		SELECT b.id::text,
+		       COALESCE(b.name, ''),
+		       COALESCE(b.location, 'FR'),
+		       COALESCE(b.currency, 'EUR'),
+		       b.updated_at,
+		       COUNT(*) OVER () AS total_count
+		FROM budgets b
+		JOIN budget_members bm ON bm.budget_id = b.id
+		WHERE bm.user_id = $1
+		ORDER BY b.updated_at DESC
+	`
+	args := []any{userID}
+	if limit > 0 {
+		q += " LIMIT $2"
+		args = append(args, limit)
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	rows, err := s.DB.QueryContext(queryCtx, q, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	out := []budgetSummary{}
+	total := 0
+	for rows.Next() {
+		var b budgetSummary
+		if err := rows.Scan(&b.ID, &b.Name, &b.Location, &b.Currency, &b.UpdatedAt, &total); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, b)
+	}
+	return out, total, rows.Err()
+}
+
 // PickRecapBudget returns the budget to recap for this user. We choose the
 // most recently updated budget the user is a member of (owner or invited).
 // Returns nil if the user has no budgets.
@@ -192,10 +262,15 @@ func (s *MonthlyRecapService) PickRecapBudget(ctx context.Context, userID string
 // the period (previousMonth, currentMonth, nextMonth) anchored on `now`.
 // The previous month is the one that just ended (e.g., running on May 1st
 // yields April / May / June).
+//
+// `others` contains the user's secondary budgets (already filtered by the
+// caller, e.g. top 3 by updated_at). Their year-to-date totals are read
+// here so we can surface them as compact cards at the end of the email.
 func (s *MonthlyRecapService) BuildRecap(
 	ctx context.Context,
 	user VerifiedUser,
 	bs *budgetSummary,
+	others []budgetSummary,
 	otherBudgetCount int,
 	now time.Time,
 	campaignID string,
@@ -247,6 +322,8 @@ func (s *MonthlyRecapService) BuildRecap(
 		budgetName = defaultBudgetName(locale)
 	}
 
+	otherSummaries := s.buildOtherBudgetSummaries(ctx, others, currTime.Year(), appURL)
+
 	return &RecapData{
 		UserName:         displayName,
 		BudgetName:       budgetName,
@@ -264,9 +341,71 @@ func (s *MonthlyRecapService) BuildRecap(
 		YearExpenses:     yearExpenses,
 		YearSavings:      yearIncome - yearExpenses,
 		Projects:         projects,
-		OtherBudgetCount: otherBudgetCount - 1,
-		GeneratedAt:      now.Format("2006-01-02"),
+		OtherBudgets:      otherSummaries,
+		OtherBudgetCount:  otherBudgetCount - 1,
+		HiddenBudgetCount: maxInt(0, (otherBudgetCount-1)-len(otherSummaries)),
+		GeneratedAt:       now.Format("2006-01-02"),
 	}, nil
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// buildOtherBudgetSummaries fetches each secondary budget's data and produces
+// a lightweight year-to-date summary. Failures are logged and skipped so a
+// single corrupt budget never breaks the whole email.
+func (s *MonthlyRecapService) buildOtherBudgetSummaries(
+	ctx context.Context,
+	others []budgetSummary,
+	year int,
+	appURL string,
+) []BudgetSummary {
+	if len(others) == 0 {
+		return nil
+	}
+	out := make([]BudgetSummary, 0, len(others))
+	for _, b := range others {
+		raw, err := s.Budget.GetData(ctx, b.ID)
+		if err != nil {
+			utils.SafeWarn("monthly-recap: skip other budget %s: get data: %v", b.ID, err)
+			continue
+		}
+		payload, err := decodeBudgetPayload(raw)
+		if err != nil {
+			utils.SafeWarn("monthly-recap: skip other budget %s: decode: %v", b.ID, err)
+			continue
+		}
+		income, expenses := aggregateYearTotals(payload, year)
+
+		name := b.Name
+		if name == "" {
+			name = payload.BudgetTitle
+		}
+		if name == "" {
+			name = defaultBudgetName(localeForLocation(b.Location))
+		}
+
+		currency := strings.ToUpper(strings.TrimSpace(b.Currency))
+		if currency == "" {
+			currency = "EUR"
+		}
+
+		out = append(out, BudgetSummary{
+			ID:             b.ID,
+			Name:           name,
+			Currency:       currency,
+			CurrencySymbol: currencySymbol(currency),
+			YearIncome:     income,
+			YearExpenses:   expenses,
+			YearSavings:    income - expenses,
+			URL:            strings.TrimRight(appURL, "/") + "/budget/" + b.ID,
+		})
+	}
+	return out
 }
 
 // ----------------------------------------------------------------------------

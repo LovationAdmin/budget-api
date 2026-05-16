@@ -154,19 +154,25 @@ func (h *AdminMonthlyRecapHandler) RunMonthlyRecap(ctx context.Context, opts Mon
 			}
 		}
 
-		bs, count, perr := h.RecapService.PickRecapBudget(ctx, u.ID)
-		if perr != nil {
+		// Pull up to 4 budgets per user: the most-recently updated one drives
+		// the detailed recap; the next 3 appear as compact summaries at the
+		// end of the email. totalCount is the user's full budget count so
+		// the email can hint at extra budgets not shown.
+		budgets, totalCount, berr := h.RecapService.ListUserBudgets(ctx, u.ID, 4)
+		if berr != nil {
 			out.Failed++
-			out.Failures = append(out.Failures, monthlyRecapFailure{UserID: u.ID, Reason: "pick budget: " + perr.Error()})
+			out.Failures = append(out.Failures, monthlyRecapFailure{UserID: u.ID, Reason: "list budgets: " + berr.Error()})
 			continue
 		}
-		if bs == nil {
+		if len(budgets) == 0 {
 			// No budget yet — nothing to recap.
 			out.Skipped++
 			continue
 		}
+		primary := budgets[0]
+		others := budgets[1:]
 
-		recap, rerr := h.RecapService.BuildRecap(ctx, u, bs, count, opts.Anchor, opts.CampaignID, appURL)
+		recap, rerr := h.RecapService.BuildRecap(ctx, u, &primary, others, totalCount, opts.Anchor, opts.CampaignID, appURL)
 		if rerr != nil {
 			out.Failed++
 			out.Failures = append(out.Failures, monthlyRecapFailure{UserID: u.ID, Reason: "build recap: " + rerr.Error()})

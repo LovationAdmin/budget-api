@@ -29,8 +29,22 @@ type minimalRecap struct {
 
 	Projects []recapProject
 
-	OtherBudgetCount int
-	GeneratedAt      string
+	OtherBudgets []budgetSummary
+
+	OtherBudgetCount  int
+	HiddenBudgetCount int
+	GeneratedAt       string
+}
+
+type budgetSummary struct {
+	ID             string
+	Name           string
+	Currency       string
+	CurrencySymbol string
+	YearIncome     float64
+	YearExpenses   float64
+	YearSavings    float64
+	URL            string
 }
 
 type recapMonth struct {
@@ -96,11 +110,19 @@ func buildSampleRecap() minimalRecap {
 			BaseIncome: 5500, TotalIncome: 5500, RecurringCharges: 1240,
 			ProjectsAllocated: 200, Available: 4260, NetSavings: 4060,
 			NetCashflow: 4260, HasData: true,
+			Comment: "Mois de la fête des mères",
+			ProjectNotes: []projectNote{
+				{Name: "Vacances", Note: "Réserver l'avion"},
+			},
 		},
 		NextMonth: recapMonth{
 			Label: "Juin 2026", ShortLabel: "Juin", Year: 2026, MonthIdx: 5,
 			BaseIncome: 5500, TotalIncome: 5500, RecurringCharges: 1240,
 			ProjectsAllocated: 200, Available: 4260, HasData: true,
+			Comment: "Anniversaire des jumeaux",
+			ProjectNotes: []projectNote{
+				{Name: "Voiture", Note: "Contrôle technique prévu"},
+			},
 		},
 		YearIncome:   28000,
 		YearExpenses: 6200,
@@ -109,8 +131,17 @@ func buildSampleRecap() minimalRecap {
 			{Name: "Vacances", TargetAmount: 2400, AllocatedYTD: 1000, Progress: 41.6, Status: "on_track", HasTarget: true},
 			{Name: "Épargne", AllocatedYTD: 500, HasTarget: false, Status: "no_target"},
 		},
-		OtherBudgetCount: 1,
-		GeneratedAt:      "2026-05-01",
+		OtherBudgets: []budgetSummary{
+			{
+				ID: "b2", Name: "Studio location",
+				Currency: "EUR", CurrencySymbol: "€",
+				YearIncome: 12000, YearExpenses: 8400, YearSavings: 3600,
+				URL: "https://app.budgetfamille.com/budget/b2",
+			},
+		},
+		OtherBudgetCount:  3,
+		HiddenBudgetCount: 2,
+		GeneratedAt:       "2026-05-01",
 	}
 }
 
@@ -136,6 +167,16 @@ func TestRenderMonthlyRecapEmail_French(t *testing.T) {
 		"Ski en famille",
 		"Acompte chalet versé",
 		"Tes notes par poste",
+		// CurrentMonth notes/comment
+		"Mois de la fête des mères",
+		"Réserver",
+		// NextMonth notes/comment
+		"Anniversaire des jumeaux",
+		"Contrôle technique prévu",
+		// Other budgets
+		"Tes autres budgets",
+		"Studio location",
+		"2 autres budgets",
 	}
 	for _, w := range wants {
 		if !strings.Contains(html, w) {
@@ -167,6 +208,11 @@ func TestRenderMonthlyRecapEmail_English(t *testing.T) {
 		"Hi Alice",
 		"Acompte chalet versé",
 		"line-item notes",
+		"Your intention for this month",
+		"What you're planning",
+		"Your other budgets",
+		"Studio location",
+		"2 other budgets",
 	}
 	for _, w := range wants {
 		if !strings.Contains(html, w) {

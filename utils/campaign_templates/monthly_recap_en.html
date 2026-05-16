@@ -190,6 +190,26 @@ table, td, div, h1, h2, h3, p { font-family: Arial, sans-serif !important; }
               What you've planned and what's left to set aside.
             </p>
 
+            {{ if .CurrentMonth.Comment }}
+            <div style="margin-bottom:14px; padding:14px 16px; background-color:#f3eefb; border-left:3px solid #1f9cd9; border-radius:10px;">
+              <div style="font-family:'DM Sans', Arial, sans-serif; font-size:11px; font-weight:600; color:#7a8699; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">📝 Your intention for this month</div>
+              <p style="margin:0; font-family:'DM Sans', Arial, sans-serif; font-size:14px; line-height:1.6; color:#3d2f5c; font-style:italic;">
+                "{{ .CurrentMonth.Comment }}"
+              </p>
+            </div>
+            {{ end }}
+
+            {{ if .CurrentMonth.ProjectNotes }}
+            <div style="margin-bottom:14px; padding:14px 16px; background-color:#fffaf0; border-left:3px solid #f59e0b; border-radius:10px;">
+              <div style="font-family:'DM Sans', Arial, sans-serif; font-size:11px; font-weight:600; color:#7a8699; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">🗒️ Your notes for this month</div>
+              {{ range .CurrentMonth.ProjectNotes }}
+              <div style="margin-bottom:6px; font-family:'DM Sans', Arial, sans-serif; font-size:13px; line-height:1.5; color:#3d2f5c;">
+                <strong style="color:#1a2433;">{{ .Name }}:</strong> <span style="font-style:italic;">{{ .Note }}</span>
+              </div>
+              {{ end }}
+            </div>
+            {{ end }}
+
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e9edf3; border-radius:14px;">
               <tr>
                 <td style="padding:16px 20px; border-bottom:1px solid #e9edf3;">
@@ -277,6 +297,26 @@ table, td, div, h1, h2, h3, p { font-family: Arial, sans-serif !important; }
               No data entered for next month yet — a great time to prepare your allocations.
             </p>
             {{ end }}
+
+            {{ if .NextMonth.Comment }}
+            <div style="margin-top:14px; padding:14px 16px; background-color:#f3eefb; border-left:3px solid #1f9cd9; border-radius:10px;">
+              <div style="font-family:'DM Sans', Arial, sans-serif; font-size:11px; font-weight:600; color:#7a8699; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">📝 What you're planning</div>
+              <p style="margin:0; font-family:'DM Sans', Arial, sans-serif; font-size:14px; line-height:1.6; color:#3d2f5c; font-style:italic;">
+                "{{ .NextMonth.Comment }}"
+              </p>
+            </div>
+            {{ end }}
+
+            {{ if .NextMonth.ProjectNotes }}
+            <div style="margin-top:14px; padding:14px 16px; background-color:#fffaf0; border-left:3px solid #f59e0b; border-radius:10px;">
+              <div style="font-family:'DM Sans', Arial, sans-serif; font-size:11px; font-weight:600; color:#7a8699; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">🗒️ Notes you've already pinned</div>
+              {{ range .NextMonth.ProjectNotes }}
+              <div style="margin-bottom:6px; font-family:'DM Sans', Arial, sans-serif; font-size:13px; line-height:1.5; color:#3d2f5c;">
+                <strong style="color:#1a2433;">{{ .Name }}:</strong> <span style="font-style:italic;">{{ .Note }}</span>
+              </div>
+              {{ end }}
+            </div>
+            {{ end }}
           </td>
         </tr>
 
@@ -324,13 +364,61 @@ table, td, div, h1, h2, h3, p { font-family: Arial, sans-serif !important; }
             <p style="margin:16px 0 0 0; font-family:'DM Sans', Arial, sans-serif; font-size:13px; color:#7a8699;">
               Keep the momentum going — every small step counts.
             </p>
-            {{ if gt .OtherBudgetCount 0 }}
-            <p style="margin:10px 0 0 0; font-family:'DM Sans', Arial, sans-serif; font-size:12px; color:#9aa4b5;">
-              You have {{ .OtherBudgetCount }} other budget{{ if gt .OtherBudgetCount 1 }}s{{ end }} — accessible from the app.
+          </td>
+        </tr>
+
+        <!-- Other budgets (conditional) -->
+        {{ if .OtherBudgets }}
+        <tr>
+          <td style="padding:8px 32px 16px 32px;">
+            <h2 style="margin:0 0 6px 0; font-family:'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif; font-size:20px; font-weight:700; color:#1a2433; letter-spacing:-0.3px;">
+              📂 Your other budgets
+            </h2>
+            <p style="margin:0 0 16px 0; font-family:'DM Sans', Arial, sans-serif; font-size:14px; line-height:1.5; color:#7a8699;">
+              Quick snapshot since January 1st, {{ .Year }}.
+            </p>
+            {{ range .OtherBudgets }}
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:10px; border:1px solid #e9edf3; border-radius:12px;">
+              <tr>
+                <td style="padding:14px 16px;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:8px;">
+                    <tr>
+                      <td align="left" style="font-family:'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif; font-size:15px; font-weight:700; color:#1a2433;">
+                        {{ .Name }}
+                      </td>
+                      <td align="right" style="font-family:'DM Sans', Arial, sans-serif; font-size:12px;">
+                        <a href="{{ .URL }}?utm_source=email&utm_medium=monthly_recap&utm_campaign={{ $.CampaignID }}" style="color:#1f9cd9; text-decoration:none; font-weight:600;">Open →</a>
+                      </td>
+                    </tr>
+                  </table>
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+                      <td align="left" style="font-family:'DM Sans', Arial, sans-serif; font-size:12px; color:#5a6577;">Income</td>
+                      <td align="right" style="font-family:'DM Sans', Arial, sans-serif; font-size:13px; font-weight:600; color:#1a2433;">{{ formatMoney .YearIncome .CurrencySymbol }}</td>
+                    </tr>
+                    <tr><td colspan="2" style="height:4px; line-height:4px; font-size:0;">&nbsp;</td></tr>
+                    <tr>
+                      <td align="left" style="font-family:'DM Sans', Arial, sans-serif; font-size:12px; color:#5a6577;">Expenses</td>
+                      <td align="right" style="font-family:'DM Sans', Arial, sans-serif; font-size:13px; font-weight:600; color:#1a2433;">{{ formatMoney .YearExpenses .CurrencySymbol }}</td>
+                    </tr>
+                    <tr><td colspan="2" style="height:4px; line-height:4px; font-size:0;">&nbsp;</td></tr>
+                    <tr>
+                      <td align="left" style="font-family:'DM Sans', Arial, sans-serif; font-size:12px; color:#5a6577;">Savings</td>
+                      <td align="right" style="font-family:'DM Sans', Arial, sans-serif; font-size:13px; font-weight:600; color:{{ if ge .YearSavings 0.0 }}#2eb277{{ else }}#e04b4b{{ end }};">{{ formatMoney .YearSavings .CurrencySymbol }}</td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+            {{ end }}
+            {{ if gt .HiddenBudgetCount 0 }}
+            <p style="margin:6px 0 0 0; font-family:'DM Sans', Arial, sans-serif; font-size:12px; color:#9aa4b5; font-style:italic;">
+              And {{ .HiddenBudgetCount }} other budget{{ if gt .HiddenBudgetCount 1 }}s{{ end }} accessible from the app.
             </p>
             {{ end }}
           </td>
         </tr>
+        {{ end }}
 
         <!-- Signature -->
         <tr>
