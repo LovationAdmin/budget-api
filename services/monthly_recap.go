@@ -179,10 +179,11 @@ func (s *MonthlyRecapService) ListVerifiedUsers(ctx context.Context, limit int) 
 }
 
 // ListUserBudgets returns every budget the user is a member of, ordered by
-// most-recently updated. Pass limit > 0 to cap the returned slice (useful
-// for the recap which only needs the primary budget + a few others to
-// summarise). The returned totalCount is the user's full budget count,
-// independent of the limit, so callers can show "X more" hints.
+// most-recently consulted (falling back to most-recently updated when the
+// last_viewed_at column has never been bumped). Pass limit > 0 to cap the
+// returned slice (useful for the recap which only needs the primary budget +
+// a few others to summarise). The returned totalCount is the user's full
+// budget count, independent of the limit, so callers can show "X more" hints.
 func (s *MonthlyRecapService) ListUserBudgets(ctx context.Context, userID string, limit int) (budgets []budgetSummary, totalCount int, err error) {
 	q := `
 		SELECT b.id::text,
@@ -194,7 +195,7 @@ func (s *MonthlyRecapService) ListUserBudgets(ctx context.Context, userID string
 		FROM budgets b
 		JOIN budget_members bm ON bm.budget_id = b.id
 		WHERE bm.user_id = $1
-		ORDER BY b.updated_at DESC
+		ORDER BY COALESCE(b.last_viewed_at, b.updated_at) DESC
 	`
 	args := []any{userID}
 	if limit > 0 {
