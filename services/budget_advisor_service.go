@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
+	"time"
 )
 
 // ============================================================================
@@ -146,11 +148,14 @@ type BudgetAdvisorService struct {
 }
 
 func NewBudgetAdvisorService(ai *ClaudeAIService) *BudgetAdvisorService {
-	if ai == nil {
-		ai = NewClaudeAIService()
-	}
+	// Use a dedicated Claude client with a longer HTTP timeout: a full
+	// BudgetProposal (system prompt + few-shot + up to 4000 output tokens) can
+	// take well over the shared client's 60s cap, which otherwise surfaces as a
+	// failed generation. A dedicated client avoids affecting other features.
+	svc := NewClaudeAIService()
+	svc.httpClient = &http.Client{Timeout: 150 * time.Second}
 	return &BudgetAdvisorService{
-		ai:        ai,
+		ai:        svc,
 		model:     "claude-sonnet-4-20250514",
 		maxTokens: 4000,
 	}

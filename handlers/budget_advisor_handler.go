@@ -46,7 +46,7 @@ func (h *BudgetAdvisorHandler) GenerateProposal(c *gin.Context) {
 	// Non-sensitive metadata only (never freeText or amounts).
 	c.Set("advisor_household_type", input.HouseholdType)
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 160*time.Second)
 	defer cancel()
 
 	proposal, err := h.advisor.GenerateProposal(ctx, input)
