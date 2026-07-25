@@ -43,6 +43,10 @@ func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *handlers.WSHa
 	emailService := services.NewEmailService()
 	h := handlers.NewHandler(budgetService, emailService)
 
+	// AI budget advisor (« Budget proposé par IA »)
+	advisorService := services.NewBudgetAdvisorService(aiService)
+	advisorHandler := handlers.NewBudgetAdvisorHandler(advisorService)
+
 	rg.GET("/budgets", h.GetBudgets)
 	rg.POST("/budgets", h.CreateBudget)
 	rg.GET("/budgets/:id", h.GetBudget)
@@ -52,6 +56,9 @@ func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *handlers.WSHa
 	rg.PUT("/budgets/:id/data", h.UpdateBudgetData)
 	rg.POST("/budgets/:id/invite", h.InviteMember)
 	rg.POST("/invitations/accept", h.AcceptInvitation)
+
+	// Stateless generation, usable both at creation and on an existing budget.
+	rg.POST("/budgets/ai-proposal", advisorHandler.GenerateProposal)
 }
 
 func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB, rt *services.RefreshTokenService) {

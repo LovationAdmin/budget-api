@@ -37,10 +37,10 @@ type ClaudeMessage struct {
 }
 
 type ClaudeResponse struct {
-	ID         string `json:"id"`
-	Type       string `json:"type"`
-	Role       string `json:"role"`
-	Content    []struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Role    string `json:"role"`
+	Content []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
@@ -55,7 +55,7 @@ type ClaudeResponse struct {
 func NewClaudeAIService() *ClaudeAIService {
 	// Fallback to a valid model if env var is missing or incorrect
 	model := "claude-sonnet-4-20250514"
-	
+
 	return &ClaudeAIService{
 		apiKey:     os.Getenv("ANTHROPIC_API_KEY"),
 		model:      model,
@@ -114,7 +114,7 @@ func (s *ClaudeAIService) CategorizeLabel(ctx context.Context, label string) (st
 
 	requestBody := ClaudeRequest{
 		Model:     "claude-3-haiku-20240307", // Use Haiku for speed & low cost
-		MaxTokens: 20,                       // Very short response needed
+		MaxTokens: 20,                        // Very short response needed
 		System:    systemPrompt,
 		Messages: []ClaudeMessage{
 			{
@@ -132,8 +132,35 @@ func (s *ClaudeAIService) CategorizeLabel(ctx context.Context, label string) (st
 	// Clean up response (remove whitespace, potential dots)
 	cleanCat := strings.ToUpper(strings.TrimSpace(category))
 	cleanCat = strings.Trim(cleanCat, ".")
-	
+
 	return cleanCat, nil
+}
+
+// ============================================================================
+// 3. APPEL MULTI-MESSAGES (SYSTEM + FEW-SHOT)
+// Utilisé par le conseiller budgétaire IA : prompt système + exemple few-shot
+// + situation réelle du foyer, avec choix du modèle et du budget de tokens.
+// ============================================================================
+
+func (s *ClaudeAIService) CallMessages(ctx context.Context, system string, messages []ClaudeMessage, model string, maxTokens int) (string, error) {
+	if s.apiKey == "" {
+		return "", fmt.Errorf("ANTHROPIC_API_KEY not set")
+	}
+	if model == "" {
+		model = s.model
+	}
+	if maxTokens <= 0 {
+		maxTokens = s.maxTokens
+	}
+
+	requestBody := ClaudeRequest{
+		Model:     model,
+		MaxTokens: maxTokens,
+		System:    system,
+		Messages:  messages,
+	}
+
+	return s.executeRequest(ctx, requestBody)
 }
 
 // ============================================================================

@@ -433,6 +433,13 @@ type budgetProject struct {
 	ID           string  `json:"id"`
 	Label        string  `json:"label"`
 	TargetAmount float64 `json:"targetAmount,omitempty"`
+	// "Épargne particulière": fixed monthly amount auto-filled into the
+	// calendar over an optional start/end window. Allocations are persisted in
+	// YearlyData by the client, so aggregation still reads them from there;
+	// these fields carry the definition for forward-compatible server logic.
+	MonthlyAmount float64 `json:"monthlyAmount,omitempty"`
+	StartDate     string  `json:"startDate,omitempty"`
+	EndDate       string  `json:"endDate,omitempty"`
 }
 
 type budgetYear struct {
