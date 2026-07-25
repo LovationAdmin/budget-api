@@ -326,22 +326,22 @@ func (s *MonthlyRecapService) BuildRecap(
 	otherSummaries := s.buildOtherBudgetSummaries(ctx, others, currTime.Year(), appURL)
 
 	return &RecapData{
-		UserName:         displayName,
-		BudgetName:       budgetName,
-		Currency:         currency,
-		CurrencySymbol:   currencySymbol(currency),
-		Locale:           locale,
-		Year:             currTime.Year(),
-		AppURL:           appURL,
-		LoginURL:         loginURL,
-		CampaignID:       campaignID,
-		PreviousMonth:    prev,
-		CurrentMonth:     curr,
-		NextMonth:        next,
-		YearIncome:       yearIncome,
-		YearExpenses:     yearExpenses,
-		YearSavings:      yearIncome - yearExpenses,
-		Projects:         projects,
+		UserName:          displayName,
+		BudgetName:        budgetName,
+		Currency:          currency,
+		CurrencySymbol:    currencySymbol(currency),
+		Locale:            locale,
+		Year:              currTime.Year(),
+		AppURL:            appURL,
+		LoginURL:          loginURL,
+		CampaignID:        campaignID,
+		PreviousMonth:     prev,
+		CurrentMonth:      curr,
+		NextMonth:         next,
+		YearIncome:        yearIncome,
+		YearExpenses:      yearExpenses,
+		YearSavings:       yearIncome - yearExpenses,
+		Projects:          projects,
 		OtherBudgets:      otherSummaries,
 		OtherBudgetCount:  otherBudgetCount - 1,
 		HiddenBudgetCount: maxInt(0, (otherBudgetCount-1)-len(otherSummaries)),
@@ -447,6 +447,10 @@ type budgetYear struct {
 	Expenses        []map[string]float64 `json:"expenses"`
 	MonthComments   []string             `json:"monthComments"`
 	ExpenseComments []map[string]string  `json:"expenseComments"`
+	// Per-year lock map (month name -> bool). Newer clients store locks here so
+	// a lock in one year no longer bleeds into another; older payloads only
+	// carry the top-level LockedMonths, used as a fallback.
+	LockedMonths map[string]bool `json:"lockedMonths"`
 }
 
 type budgetOneTime struct {
@@ -455,14 +459,14 @@ type budgetOneTime struct {
 }
 
 type budgetPayload struct {
-	BudgetTitle    string                       `json:"budgetTitle"`
-	CurrentYear    int                          `json:"currentYear"`
-	People         []budgetPerson               `json:"people"`
-	Charges        []budgetCharge               `json:"charges"`
-	Projects       []budgetProject              `json:"projects"`
-	YearlyData     map[string]budgetYear        `json:"yearlyData"`
-	OneTimeIncomes map[string][]budgetOneTime   `json:"oneTimeIncomes"`
-	LockedMonths   map[string]bool              `json:"lockedMonths"`
+	BudgetTitle    string                     `json:"budgetTitle"`
+	CurrentYear    int                        `json:"currentYear"`
+	People         []budgetPerson             `json:"people"`
+	Charges        []budgetCharge             `json:"charges"`
+	Projects       []budgetProject            `json:"projects"`
+	YearlyData     map[string]budgetYear      `json:"yearlyData"`
+	OneTimeIncomes map[string][]budgetOneTime `json:"oneTimeIncomes"`
+	LockedMonths   map[string]bool            `json:"lockedMonths"`
 }
 
 func decodeBudgetPayload(raw interface{}) (*budgetPayload, error) {
@@ -622,7 +626,13 @@ func aggregateMonth(p *budgetPayload, when time.Time, locale string, isCurrent b
 	netCashflow := totalIncome - charges - spent
 
 	canonical := frMonthsCanonical[monthIdx]
+	// Prefer the year's own lock map; fall back to the legacy top-level one.
 	isLocked := p.LockedMonths[canonical]
+	if hasYear && yearData.LockedMonths != nil {
+		if v, ok := yearData.LockedMonths[canonical]; ok {
+			isLocked = v
+		}
+	}
 
 	return RecapMonth{
 		Label:             fmt.Sprintf("%s %d", monthLabel(monthIdx, locale), year),
