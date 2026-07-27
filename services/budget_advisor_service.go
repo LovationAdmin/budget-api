@@ -158,9 +158,11 @@ func NewBudgetAdvisorService(ai *ClaudeAIService) *BudgetAdvisorService {
 
 	// Model is overridable via ADVISOR_MODEL so it can be switched to whatever
 	// the deployed ANTHROPIC_API_KEY has access to, without a code change.
+	// Default to Claude 3.5 Sonnet (v2), which is broadly available; the prod
+	// key returned 404 for claude-sonnet-4-*, so that is not a safe default.
 	model := os.Getenv("ADVISOR_MODEL")
 	if model == "" {
-		model = "claude-sonnet-4-20250514"
+		model = "claude-3-5-sonnet-20241022"
 	}
 	return &BudgetAdvisorService{
 		ai:        svc,
