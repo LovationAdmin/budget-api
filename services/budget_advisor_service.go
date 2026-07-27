@@ -228,8 +228,12 @@ func (s *BudgetAdvisorService) GenerateProposal(ctx context.Context, input House
 		}
 		proposal, perr := parseProposal(raw)
 		if perr != nil {
+			prefix := strings.TrimSpace(raw)
+			if len(prefix) > 200 {
+				prefix = prefix[:200]
+			}
 			lastErr = fmt.Errorf("advisor returned invalid JSON: %w", perr)
-			log.Printf("[AI advisor] attempt %d: %v", attempt+1, lastErr)
+			log.Printf("[AI advisor] attempt %d: %v | response starts: %q", attempt+1, lastErr, prefix)
 			continue
 		}
 		sanitizeProposal(proposal)
