@@ -16,6 +16,21 @@ func sampleInput() HouseholdInput {
 	}
 }
 
+func TestBuildAdvisorMessages_EndsWithUser(t *testing.T) {
+	// The Claude 5 family rejects assistant-message prefill: the conversation
+	// must end with a user message. Guards against reintroducing the prefill.
+	msgs, err := buildAdvisorMessages(sampleInput())
+	if err != nil {
+		t.Fatalf("buildAdvisorMessages returned error: %v", err)
+	}
+	if len(msgs) == 0 {
+		t.Fatal("expected messages, got none")
+	}
+	if last := msgs[len(msgs)-1]; last.Role != "user" {
+		t.Fatalf("last message role = %q, want \"user\"", last.Role)
+	}
+}
+
 func TestParseProposal_StripsMarkdownFences(t *testing.T) {
 	raw := "Voici la proposition :\n```json\n" + advisorFewShotOutput + "\n```\n"
 	p, err := parseProposal(raw)
