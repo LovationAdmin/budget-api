@@ -14,6 +14,7 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"time"
 
@@ -51,6 +52,11 @@ func (h *BudgetAdvisorHandler) GenerateProposal(c *gin.Context) {
 
 	proposal, err := h.advisor.GenerateProposal(ctx, input)
 	if err != nil {
+		// The error carries the upstream provider status/message (no user
+		// financial data) — log it so failures are diagnosable in the server
+		// logs while the client only sees a generic message.
+		log.Printf("[AI advisor] generation failed (household=%s, members=%d): %v",
+			input.HouseholdType, len(input.Members), err)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "La génération du budget par l'IA a échoué. Réessayez dans un instant."})
 		return
 	}
