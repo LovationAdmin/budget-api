@@ -219,7 +219,25 @@ func (s *ClaudeAIService) executeRequest(ctx context.Context, requestBody Claude
 		s.EstimateCost(claudeResp.Usage.InputTokens, claudeResp.Usage.OutputTokens),
 	)
 
-	return claudeResp.Content[0].Text, nil
+	// Concatenate every "text" block, not just the first. The Claude 5 family
+	// can return a leading reasoning ("thinking") block whose Text is empty, so
+	// reading Content[0] alone would drop the actual answer.
+	var out strings.Builder
+	for _, block := range claudeResp.Content {
+		if block.Text != "" {
+			out.WriteString(block.Text)
+		}
+	}
+	text := out.String()
+	if strings.TrimSpace(text) == "" {
+		types := make([]string, 0, len(claudeResp.Content))
+		for _, b := range claudeResp.Content {
+			types = append(types, b.Type)
+		}
+		return "", fmt.Errorf("no text block in response (blocks: %v)", types)
+	}
+
+	return text, nil
 }
 
 // ============================================================================
