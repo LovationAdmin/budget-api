@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -154,9 +155,16 @@ func NewBudgetAdvisorService(ai *ClaudeAIService) *BudgetAdvisorService {
 	// failed generation. A dedicated client avoids affecting other features.
 	svc := NewClaudeAIService()
 	svc.httpClient = &http.Client{Timeout: 150 * time.Second}
+
+	// Model is overridable via ADVISOR_MODEL so it can be switched to whatever
+	// the deployed ANTHROPIC_API_KEY has access to, without a code change.
+	model := os.Getenv("ADVISOR_MODEL")
+	if model == "" {
+		model = "claude-sonnet-4-20250514"
+	}
 	return &BudgetAdvisorService{
 		ai:        svc,
-		model:     "claude-sonnet-4-20250514",
+		model:     model,
 		maxTokens: 4000,
 	}
 }
