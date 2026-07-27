@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -164,15 +165,28 @@ func NewBudgetAdvisorService(ai *ClaudeAIService) *BudgetAdvisorService {
 	if model == "" {
 		model = "claude-sonnet-5"
 	}
+
+	// A full BudgetProposal (all arrays + French prose) exceeds 4000 output
+	// tokens and was being truncated at the cap, producing invalid JSON.
+	// Give it real headroom; overridable via ADVISOR_MAX_TOKENS.
+	maxTokens := 12000
+	if v := os.Getenv("ADVISOR_MAX_TOKENS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxTokens = n
+		}
+	}
+
 	return &BudgetAdvisorService{
 		ai:        svc,
 		model:     model,
-		maxTokens: 4000,
+		maxTokens: maxTokens,
 	}
 }
 
 // GenerateProposal calls Claude with the section-5 system prompt + few-shot and
-// returns a validated BudgetProposal. It retries once on parse failure.
+// returns a validated BudgetProposal. The assistant turn is prefilled with "{"
+// so the model emits pure JSON immediately (no preamble to consume the token
+// budget), and the response is parsed as "{" + reply. Retries once.
 func (s *BudgetAdvisorService) GenerateProposal(ctx context.Context, input HouseholdInput) (*BudgetProposal, error) {
 	if len(input.Members) == 0 {
 		return nil, fmt.Errorf("household must have at least one member")
@@ -189,35 +203,31 @@ func (s *BudgetAdvisorService) GenerateProposal(ctx context.Context, input House
 		{Role: "user", Content: advisorFewShotInput},
 		{Role: "assistant", Content: advisorFewShotOutput},
 		{Role: "user", Content: userContent},
+		// Prefill: forces the reply to begin right after "{", i.e. valid JSON
+		// with no prose preamble. We prepend "{" back before parsing.
+		{Role: "assistant", Content: "{"},
 	}
 
-	raw, err := s.ai.CallMessages(ctx, budgetAdvisorSystemPrompt, messages, s.model, s.maxTokens)
-	if err != nil {
-		return nil, fmt.Errorf("advisor LLM call failed: %w", err)
-	}
-
-	proposal, parseErr := parseProposal(raw)
-	if parseErr != nil {
-		// One retry with an explicit correction message appended.
-		retryMessages := append(messages,
-			ClaudeMessage{Role: "assistant", Content: raw},
-			ClaudeMessage{Role: "user", Content: "Ta réponse n'était pas un JSON valide. Renvoie uniquement l'objet BudgetProposal, sans texte hors JSON ni balises Markdown."},
-		)
-		raw, err = s.ai.CallMessages(ctx, budgetAdvisorSystemPrompt, retryMessages, s.model, s.maxTokens)
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		raw, err := s.ai.CallMessages(ctx, budgetAdvisorSystemPrompt, messages, s.model, s.maxTokens)
 		if err != nil {
-			return nil, fmt.Errorf("advisor LLM retry failed: %w", err)
+			lastErr = fmt.Errorf("advisor LLM call failed: %w", err)
+			continue
 		}
-		proposal, parseErr = parseProposal(raw)
-		if parseErr != nil {
-			return nil, fmt.Errorf("advisor returned invalid JSON after retry: %w", parseErr)
+		proposal, perr := parseProposal("{" + raw)
+		if perr != nil {
+			lastErr = fmt.Errorf("advisor returned invalid JSON: %w", perr)
+			continue
 		}
+		if verr := validateProposal(proposal, input); verr != nil {
+			lastErr = fmt.Errorf("advisor proposal failed validation: %w", verr)
+			continue
+		}
+		return proposal, nil
 	}
 
-	if err := validateProposal(proposal, input); err != nil {
-		return nil, fmt.Errorf("advisor proposal failed validation: %w", err)
-	}
-
-	return proposal, nil
+	return nil, lastErr
 }
 
 // parseProposal extracts the JSON object from a raw LLM response (tolerating any
