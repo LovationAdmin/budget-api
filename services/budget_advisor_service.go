@@ -183,29 +183,33 @@ func NewBudgetAdvisorService(ai *ClaudeAIService) *BudgetAdvisorService {
 	}
 }
 
+// buildAdvisorMessages assembles the few-shot + real-input conversation. It MUST
+// end with a user message: the Claude 5 family rejects assistant-message prefill
+// ("the conversation must end with a user message").
+func buildAdvisorMessages(input HouseholdInput) ([]ClaudeMessage, error) {
+	inputJSON, err := json.Marshal(input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize household input: %w", err)
+	}
+	userContent := string(inputJSON) +
+		"\n\nRenvoie un objet BudgetProposal conforme au schéma, en JSON uniquement — commence directement par { et termine par }, sans texte ni balises Markdown autour."
+	return []ClaudeMessage{
+		{Role: "user", Content: advisorFewShotInput},
+		{Role: "assistant", Content: advisorFewShotOutput},
+		{Role: "user", Content: userContent},
+	}, nil
+}
+
 // GenerateProposal calls Claude with the section-5 system prompt + few-shot and
-// returns a validated BudgetProposal. The assistant turn is prefilled with "{"
-// so the model emits pure JSON immediately (no preamble to consume the token
-// budget), and the response is parsed as "{" + reply. Retries once.
+// returns a validated BudgetProposal. Retries once on failure.
 func (s *BudgetAdvisorService) GenerateProposal(ctx context.Context, input HouseholdInput) (*BudgetProposal, error) {
 	if len(input.Members) == 0 {
 		return nil, fmt.Errorf("household must have at least one member")
 	}
 
-	inputJSON, err := json.Marshal(input)
+	messages, err := buildAdvisorMessages(input)
 	if err != nil {
-		return nil, fmt.Errorf("failed to serialize household input: %w", err)
-	}
-
-	userContent := string(inputJSON) + "\n\nRenvoie un objet BudgetProposal conforme au schéma, en JSON uniquement."
-
-	messages := []ClaudeMessage{
-		{Role: "user", Content: advisorFewShotInput},
-		{Role: "assistant", Content: advisorFewShotOutput},
-		{Role: "user", Content: userContent},
-		// Prefill: forces the reply to begin right after "{", i.e. valid JSON
-		// with no prose preamble. We prepend "{" back before parsing.
-		{Role: "assistant", Content: "{"},
+		return nil, err
 	}
 
 	var lastErr error
@@ -215,7 +219,7 @@ func (s *BudgetAdvisorService) GenerateProposal(ctx context.Context, input House
 			lastErr = fmt.Errorf("advisor LLM call failed: %w", err)
 			continue
 		}
-		proposal, perr := parseProposal("{" + raw)
+		proposal, perr := parseProposal(raw)
 		if perr != nil {
 			lastErr = fmt.Errorf("advisor returned invalid JSON: %w", perr)
 			continue
