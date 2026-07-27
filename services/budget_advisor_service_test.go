@@ -55,28 +55,39 @@ func TestValidateProposal_AcceptsFewShotOutput(t *testing.T) {
 	}
 }
 
-func TestValidateProposal_RejectsBadMethod(t *testing.T) {
+func TestValidateProposal_RejectsEmptyAllocation(t *testing.T) {
 	p, _ := parseProposal(advisorFewShotOutput)
-	p.MethodChosen = "not_a_method"
+	p.MonthlyAllocation = nil
 	if err := validateProposal(p, sampleInput()); err == nil {
-		t.Fatalf("expected validation to reject invalid methodChosen")
+		t.Fatalf("expected validation to reject empty monthlyAllocation")
 	}
 }
 
-func TestValidateProposal_RejectsFundedByMismatch(t *testing.T) {
+func TestValidateProposal_RejectsEmptySummary(t *testing.T) {
 	p, _ := parseProposal(advisorFewShotOutput)
-	// Break the first line's fundedBy sum.
-	p.MonthlyAllocation[0].FundedBy = []FundedBy{{MemberID: "A", Amount: 1}}
+	p.Summary = ""
 	if err := validateProposal(p, sampleInput()); err == nil {
-		t.Fatalf("expected validation to reject fundedBy sum mismatch")
+		t.Fatalf("expected validation to reject empty summary")
 	}
 }
 
-func TestValidateProposal_RejectsMemberCountMismatch(t *testing.T) {
+func TestSanitizeProposal_CoercesBadFeasibilityAndDisclaimer(t *testing.T) {
 	p, _ := parseProposal(advisorFewShotOutput)
-	in := sampleInput()
-	in.Members = in.Members[:1] // only one member, proposal has two
-	if err := validateProposal(p, in); err == nil {
-		t.Fatalf("expected validation to reject perMember count mismatch")
+	p.Feasibility.Status = "weird"
+	p.PerMember[0].Feasibility = "nope"
+	p.Disclaimer = ""
+	sanitizeProposal(p)
+	if p.Feasibility.Status != "tight" {
+		t.Fatalf("feasibility.status = %q, want tight", p.Feasibility.Status)
+	}
+	if p.PerMember[0].Feasibility != "tight" {
+		t.Fatalf("perMember feasibility = %q, want tight", p.PerMember[0].Feasibility)
+	}
+	if p.Disclaimer == "" {
+		t.Fatalf("disclaimer should have been filled with a default")
+	}
+	// A sanitized proposal must pass validation.
+	if err := validateProposal(p, sampleInput()); err != nil {
+		t.Fatalf("sanitized proposal failed validation: %v", err)
 	}
 }
