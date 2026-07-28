@@ -68,6 +68,7 @@ Si l'apport est inégal, la propriété doit refléter les apports réels (indiv
 - Respecte les contraintes et préférences explicites du foyer AVANT tes défauts.
 - Info critique manquante → fais une hypothèse raisonnable ET liste-la dans assumptionsMade, ou pose la question dans openQuestions.
 - Champs textuels toujours en français.
+- monthlyAllocation, charges : produis UNE ligne de type common_charge PAR poste de charge (loyer, nourriture, transport, énergie, télécom, crédits...), JAMAIS une seule ligne agrégée « Charges communes ». Si le montant exact d'un poste est inconnu, estime-le de façon réaliste pour que la somme de ces lignes corresponde au total des charges du foyer.
 - fundedBy de chaque ligne : la somme doit égaler amount. La somme des contributions d'un membre sur toutes les lines doit égaler son apport réel (salaire si all_common).
 - Renvoie UNIQUEMENT le JSON conforme à BudgetProposal, sans texte hors JSON, sans balises Markdown.`
 
@@ -111,7 +112,14 @@ const advisorFewShotOutput = `{
   "accountStructure": "all_common_equal_pocket",
   "accountRationale": "Un compte joint reçoit les deux salaires et paie tout ; chacun retire le même argent de poche. Le virement d'A vers B est automatique (noyé dans le fait qu'A verse plus). Rien à suivre, et le foyer est prêt pour le mariage et l'enfant.",
   "monthlyAllocation": [
-    { "category": "logement+food+transport+energy+telecom+sport", "label": "Charges communes", "amount": 2239, "type": "common_charge", "fundedBy": [{ "memberId": "A", "amount": 1464 }, { "memberId": "B", "amount": 775 }] },
+    { "category": "logement", "label": "Loyer", "amount": 1160, "type": "common_charge", "fundedBy": [{ "memberId": "A", "amount": 758 }, { "memberId": "B", "amount": 402 }] },
+    { "category": "food", "label": "Nourriture", "amount": 400, "type": "common_charge", "fundedBy": [{ "memberId": "A", "amount": 262 }, { "memberId": "B", "amount": 138 }] },
+    { "category": "transport", "label": "Navigo", "amount": 178, "type": "common_charge", "fundedBy": [{ "memberId": "A", "amount": 116 }, { "memberId": "B", "amount": 62 }] },
+    { "category": "sport", "label": "Sport", "amount": 75, "type": "common_charge", "fundedBy": [{ "memberId": "A", "amount": 49 }, { "memberId": "B", "amount": 26 }] },
+    { "category": "energy", "label": "Électricité", "amount": 50, "type": "common_charge", "fundedBy": [{ "memberId": "A", "amount": 33 }, { "memberId": "B", "amount": 17 }] },
+    { "category": "telecom", "label": "Mobiles", "amount": 30, "type": "common_charge", "fundedBy": [{ "memberId": "A", "amount": 20 }, { "memberId": "B", "amount": 10 }] },
+    { "category": "telecom", "label": "Internet", "amount": 26, "type": "common_charge", "fundedBy": [{ "memberId": "A", "amount": 17 }, { "memberId": "B", "amount": 9 }] },
+    { "category": "transport", "label": "Crédit voiture", "amount": 320, "type": "common_charge", "fundedBy": [{ "memberId": "A", "amount": 209 }, { "memberId": "B", "amount": 111 }] },
     { "category": "epargne", "label": "Épargne commune (sécurité puis mariage puis apport)", "amount": 1000, "type": "savings_projects", "fundedBy": [{ "memberId": "A", "amount": 654 }, { "memberId": "B", "amount": 346 }] },
     { "category": "vacances", "label": "Pot vacances (roulant)", "amount": 500, "type": "vacations", "fundedBy": [{ "memberId": "A", "amount": 327 }, { "memberId": "B", "amount": 173 }], "notes": "Rythme d'épargne, pas dépense fixe. Les mois creux financent le voyage d'été (>=3000€). Sépare voyages (ici) des sorties (argent de poche)." },
     { "category": "poche", "label": "Argent de poche A", "amount": 955, "type": "pocket_money", "fundedBy": [{ "memberId": "A", "amount": 955 }] },
