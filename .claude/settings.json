@@ -1,0 +1,15 @@
+{
+  "extraKnownMarketplaces": {
+    "ponytail": {
+      "source": { "source": "github", "repo": "DietrichGebert/ponytail" }
+    },
+    "supabase-agent-skills": {
+      "source": { "source": "github", "repo": "supabase/agent-skills" }
+    }
+  },
+  "enabledPlugins": {
+    "ponytail@ponytail": true,
+    "supabase@supabase-agent-skills": true,
+    "postgres-best-practices@supabase-agent-skills": true
+  }
+}
