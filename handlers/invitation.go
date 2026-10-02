@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/LovationAdmin/budget-api/middleware"
 	"github.com/LovationAdmin/budget-api/models"
 	"github.com/LovationAdmin/budget-api/utils"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type InvitationHandler struct {
@@ -367,6 +367,11 @@ func (h *InvitationHandler) RemoveMember(c *gin.Context) {
 	if rowsAffected == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Member not found"})
 		return
+	}
+
+	// A former member's private items in this budget are useless to anyone: drop them.
+	if _, err := h.DB.Exec(`DELETE FROM private_items WHERE budget_id = $1 AND user_id = $2`, budgetID, memberID); err != nil {
+		utils.SafeWarn("[RemoveMember] private items cleanup failed: %v", err)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Member removed successfully"})
