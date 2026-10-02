@@ -72,7 +72,7 @@ func (s *AICategorizer) PredictCategory(label string) (string, error) {
     Réponds UNIQUEMENT par le mot clé. Pas de phrase.`, label)
 
 	reqBody := anthropicRequest{
-		Model:     "claude-3-haiku-20240307", // Modèle rapide et économique
+		Model:     FastClaudeModel(), // Modèle rapide et économique
 		MaxTokens: 10,
 		Messages: []anthropicMessage{
 			{Role: "user", Content: prompt},

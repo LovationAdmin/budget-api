@@ -52,14 +52,30 @@ type ClaudeResponse struct {
 	} `json:"usage"`
 }
 
+// FastClaudeModel is the small model used for one-word classifications.
+// Overridable via CLAUDE_FAST_MODEL (claude-3-haiku-20240307 was retired).
+func FastClaudeModel() string {
+	if m := os.Getenv("CLAUDE_FAST_MODEL"); m != "" {
+		return m
+	}
+	return "claude-haiku-4-5"
+}
+
 func NewClaudeAIService() *ClaudeAIService {
-	// Fallback to a valid model if env var is missing or incorrect
-	model := "claude-sonnet-4-20250514"
+	// Overridable via CLAUDE_MODEL so a model retirement can be handled
+	// without a deploy (claude-sonnet-4-20250514 was retired and returned 404,
+	// which silently disabled every market analysis).
+	model := os.Getenv("CLAUDE_MODEL")
+	if model == "" {
+		model = "claude-sonnet-5-5"
+	}
 
 	return &ClaudeAIService{
 		apiKey:     os.Getenv("ANTHROPIC_API_KEY"),
 		model:      model,
-		maxTokens:  2000,
+		// Claude 5 models think before answering (adaptive thinking is on by
+		// default); leave headroom so the JSON answer is never truncated.
+		maxTokens:  8000,
 		httpClient: &http.Client{Timeout: 60 * time.Second},
 	}
 }
@@ -113,8 +129,8 @@ func (s *ClaudeAIService) CategorizeLabel(ctx context.Context, label string) (st
 	IMPORTANT: Return ONLY the category name (uppercase). No other text.`
 
 	requestBody := ClaudeRequest{
-		Model:     "claude-3-haiku-20240307", // Use Haiku for speed & low cost
-		MaxTokens: 20,                        // Very short response needed
+		Model:     FastClaudeModel(), // Haiku for speed & low cost
+		MaxTokens: 20,                // Very short response needed
 		System:    systemPrompt,
 		Messages: []ClaudeMessage{
 			{
@@ -244,10 +260,10 @@ func (s *ClaudeAIService) executeRequest(ctx context.Context, requestBody Claude
 // ESTIMATION DES COÛTS
 // ============================================================================
 
-// Pricing (approximate for Claude 3.5 Sonnet)
+// Pricing of the default model (logging estimate only)
 const (
-	InputTokenPrice  = 0.000003 // $3 per million
-	OutputTokenPrice = 0.000015 // $15 per million
+	InputTokenPrice  = 0.000002 // $2 per million (Claude Sonnet 5.5)
+	OutputTokenPrice = 0.000010 // $10 per million (Claude Sonnet 5.5)
 )
 
 func (s *ClaudeAIService) EstimateCost(inputTokens int, outputTokens int) float64 {
