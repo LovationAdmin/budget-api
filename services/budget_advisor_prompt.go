@@ -32,6 +32,7 @@ Respecte preferredMethod si fourni. Adapte au householdType :
 3. Objectifs long terme (ex. apport immobilier — souvent le plus gros).
 4. Renouvelables (ex. vacances).
 Chaque enveloppe : montant cible, horizon, contribution mensuelle. L'épargne perso est optionnelle (0 si non souhaitée).
+Objectif avec échéance (horizonMonths) : sa contribution mensuelle est AU MOINS (targetAmount − alreadySaved) / horizonMonths, arrondie à l'euro supérieur ; l'échéance est ferme, elle passe avant les objectifs sans échéance (après le matelas de sécurité si celui-ci est déjà en place). Si le budget ne permet pas ce rythme, dis-le dans feasibility (montant manquant par mois) et propose des leviers chiffrés : hausse des contributions, charge à réduire, report de l'échéance, objectif revu.
 
 # REVENUS VARIABLES (primes, participation, intéressement, part variable)
 Ils vont à l'épargne, JAMAIS au train de vie. Calcule le budget de base sur le salaire STABLE ; les variables accélèrent les objectifs. Décris cette règle dans variableIncomePolicy.
