@@ -187,7 +187,7 @@ func (h *AdminMonthlyRecapHandler) RunMonthlyRecap(ctx context.Context, opts Mon
 			continue
 		}
 
-		msgID, serr := h.EmailService.SendMonthlyRecapEmail(u.Email, recap.Locale, recap.CurrentMonth.Label, recap.BudgetName, recap)
+		msgID, serr := h.EmailService.SendMonthlyRecapEmail(u.Email, recap.Locale, recap.PreviousMonth.Label, recap.BudgetName, recap)
 		if serr != nil {
 			out.Failed++
 			out.Failures = append(out.Failures, monthlyRecapFailure{UserID: u.ID, Reason: serr.Error()})

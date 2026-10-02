@@ -89,8 +89,16 @@ func (o *budgetOneTime) UnmarshalJSON(b []byte) error {
 
 type snapshotPerson struct {
 	ID           string  `json:"id"`
+	Name         string  `json:"name"`
 	Salary       float64 `json:"salary"`
 	Contribution float64 `json:"contribution"`
+}
+
+// snapshotPersonal is a member's personal charge frozen with a closed month.
+// Only the owner and the amount are read: labels never leave the app.
+type snapshotPersonal struct {
+	OwnerID string  `json:"ownerId"`
+	Amount  float64 `json:"amount"`
 }
 
 type snapshotCharge struct {
@@ -105,11 +113,12 @@ type snapshotProject struct {
 
 // monthSnapshot is the frozen state of a closed month.
 type monthSnapshot struct {
-	V        int               `json:"v"`
-	People   []snapshotPerson  `json:"people"`
-	Charges  []snapshotCharge  `json:"charges"`
-	Projects []snapshotProject `json:"projects"`
-	OneOffs  []oneOffItem      `json:"oneOffs"`
+	V        int                `json:"v"`
+	People   []snapshotPerson   `json:"people"`
+	Charges  []snapshotCharge   `json:"charges"`
+	Projects []snapshotProject  `json:"projects"`
+	OneOffs  []oneOffItem       `json:"oneOffs"`
+	Personal []snapshotPersonal `json:"personal,omitempty"`
 }
 
 func (s *monthSnapshot) valid() bool {
@@ -405,6 +414,66 @@ func (v monthValues) rounded() monthValues {
 	v.Charges = roundCents(v.Charges)
 	v.Savings = roundCents(v.Savings)
 	return v
+}
+
+// RecapMember is one member's month: salary, what they put in the household
+// pot, and their pocket money (salary − contribution), which includes their
+// personal charges.
+type RecapMember struct {
+	Name            string
+	Salary          float64
+	Contribution    float64
+	PocketMoney     float64
+	PersonalCharges float64
+}
+
+// resolveMembers returns each active member's month like the app's Foyer tab
+// (frozen snapshot for closed months, rules otherwise).
+func resolveMembers(p *budgetPayload, year, monthIdx int) []RecapMember {
+	names := make(map[string]string, len(p.People))
+	for _, person := range p.People {
+		names[person.ID] = person.Name
+	}
+	out := []RecapMember{}
+	if snap := snapshotFor(p, year, monthIdx); snap != nil {
+		personal := map[string]float64{}
+		for _, c := range snap.Personal {
+			personal[c.OwnerID] += c.Amount
+		}
+		for _, x := range snap.People {
+			name := x.Name
+			if name == "" {
+				name = names[x.ID]
+			}
+			out = append(out, newRecapMember(name, x.Salary, x.Contribution, personal[x.ID]))
+		}
+		return out
+	}
+	ym := makeYM(year, monthIdx)
+	for _, person := range p.People {
+		salary, contribution, ok := personValues(person, ym)
+		if !ok {
+			continue
+		}
+		own := 0.0
+		for _, c := range p.PersonalCharges {
+			if c.OwnerID == person.ID {
+				own += chargeAmount(c, ym)
+			}
+		}
+		out = append(out, newRecapMember(person.Name, salary, contribution, own))
+	}
+	return out
+}
+
+func newRecapMember(name string, salary, contribution, personal float64) RecapMember {
+	return RecapMember{
+		Name:            name,
+		Salary:          roundCents(salary),
+		Contribution:    roundCents(contribution),
+		PocketMoney:     roundCents(salary - contribution),
+		PersonalCharges: roundCents(personal),
+	}
 }
 
 // usesContributions reports whether at least one member puts less (or more)

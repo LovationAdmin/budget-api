@@ -1,0 +1,165 @@
+{
+ "schemaVersion": 3,
+ "budgetTitle": "Famille Martin",
+ "people": [
+  {
+   "id": "c",
+   "name": "Camille",
+   "salary": 2800,
+   "startDate": "2026-01-01",
+   "contributions": [
+    {
+     "from": "2026-01",
+     "mode": "fixed",
+     "value": 1700
+    }
+   ]
+  },
+  {
+   "id": "m",
+   "name": "Mehdi",
+   "salary": 2100,
+   "startDate": "2026-01-01",
+   "contributions": [
+    {
+     "from": "2026-01",
+     "mode": "fixed",
+     "value": 1150
+    }
+   ]
+  }
+ ],
+ "charges": [
+  {
+   "id": "loyer",
+   "label": "Loyer",
+   "amount": 1150,
+   "startDate": "2026-01-01",
+   "category": "housing"
+  },
+  {
+   "id": "courses",
+   "label": "Courses",
+   "amount": 480,
+   "startDate": "2026-01-01",
+   "category": "food"
+  },
+  {
+   "id": "auto",
+   "label": "Crédit auto",
+   "amount": 290,
+   "startDate": "2026-01-01",
+   "endDate": "2027-03-31",
+   "category": "transport"
+  },
+  {
+   "id": "cantine",
+   "label": "Cantine",
+   "amount": 95,
+   "startDate": "2026-01-01",
+   "frequency": "custom",
+   "months": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    9,
+    10,
+    11,
+    12
+   ],
+   "category": "education"
+  },
+  {
+   "id": "elec",
+   "label": "Électricité",
+   "amount": 85,
+   "startDate": "2026-01-01",
+   "category": "energy"
+  },
+  {
+   "id": "assu",
+   "label": "Assurance habitation",
+   "amount": 24,
+   "startDate": "2026-01-01",
+   "category": "insurance"
+  },
+  {
+   "id": "internet",
+   "label": "Internet",
+   "amount": 30,
+   "startDate": "2026-01-01",
+   "category": "internet"
+  },
+  {
+   "id": "mobile",
+   "label": "Forfaits mobiles",
+   "amount": 25,
+   "startDate": "2026-01-01",
+   "category": "mobile"
+  },
+  {
+   "id": "netflix",
+   "label": "Netflix",
+   "amount": 13.49,
+   "startDate": "2026-01-01",
+   "category": "subscriptions"
+  },
+  {
+   "id": "fonciere",
+   "label": "Taxe foncière",
+   "amount": 980,
+   "startDate": "2026-11-01",
+   "frequency": "yearly",
+   "category": "taxes"
+  }
+ ],
+ "personalCharges": [
+  {
+   "id": "impot",
+   "label": "Charge privée",
+   "amount": 120,
+   "ownerId": "m",
+   "private": true,
+   "createdBy": "u2",
+   "startDate": "2026-01-01"
+  },
+  {
+   "id": "envoi",
+   "label": "Envoi famille",
+   "amount": 150,
+   "ownerId": "c",
+   "startDate": "2026-01-01",
+   "category": "family"
+  },
+  {
+   "id": "sport",
+   "label": "Salle de sport",
+   "amount": 35,
+   "ownerId": "c",
+   "startDate": "2026-01-01",
+   "category": "leisure"
+  }
+ ],
+ "projects": [
+  {
+   "id": "vacances",
+   "label": "Vacances été 2027",
+   "targetAmount": 3000,
+   "monthlyAmount": 250,
+   "startDate": "2026-09-01",
+   "endDate": "2027-06-30"
+  },
+  {
+   "id": "urgence",
+   "label": "Fonds d'urgence",
+   "targetAmount": 5000,
+   "monthlyAmount": 150,
+   "startDate": "2026-01-01"
+  }
+ ],
+ "yearlyData": {},
+ "oneTimeIncomes": {}
+}

@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"math"
 	"net/http"
 	"os"
 	"strings"
@@ -37,6 +38,8 @@ const (
 	CampaignReengagementUnverified CampaignVariant = "reengagement_unverified"
 	CampaignMonthlyRecapFR         CampaignVariant = "monthly_recap_fr"
 	CampaignMonthlyRecapEN         CampaignVariant = "monthly_recap_en"
+	// What's new + apology after the 2026 outage (one-off announcement).
+	CampaignWhatsNew202610 CampaignVariant = "whatsnew_2026_10"
 )
 
 var campaignTemplateFiles = map[CampaignVariant]string{
@@ -44,21 +47,23 @@ var campaignTemplateFiles = map[CampaignVariant]string{
 	CampaignReengagementUnverified: "campaign_templates/reengagement_unverified.html",
 	CampaignMonthlyRecapFR:         "campaign_templates/monthly_recap_fr.html",
 	CampaignMonthlyRecapEN:         "campaign_templates/monthly_recap_en.html",
+	CampaignWhatsNew202610:         "campaign_templates/whatsnew_2026_10.html",
 }
 
 var campaignSubjects = map[CampaignVariant]string{
 	CampaignReengagementVerified:   "Budget Famille : navigation repensée 👋",
 	CampaignReengagementUnverified: "Votre compte Budget Famille est encore en attente",
+	CampaignWhatsNew202610:         "On vous doit des excuses (et quelques belles surprises)",
 }
 
-// monthlyRecapSubject returns a subject line tailored to the locale and
-// reporting month — kept dynamic so the inbox shows the right month rather
-// than a generic "Monthly recap" string.
+// monthlyRecapSubject returns a subject line tailored to the locale and the
+// month being reviewed (the month that just ended), so the inbox shows the
+// right month rather than a generic "Monthly recap" string.
 func monthlyRecapSubject(locale, monthLabel, budgetName string) string {
 	if locale == "fr" {
-		return fmt.Sprintf("Récap %s — %s", monthLabel, budgetName)
+		return fmt.Sprintf("Votre bilan %s · %s", deMonth(monthLabel), budgetName)
 	}
-	return fmt.Sprintf("Recap for %s — %s", monthLabel, budgetName)
+	return fmt.Sprintf("Your %s review · %s", monthLabel, budgetName)
 }
 
 // ============================================================================
@@ -149,7 +154,43 @@ func groupedThousands(n int64) string {
 func monthlyRecapFuncs() template.FuncMap {
 	return template.FuncMap{
 		"formatMoney": formatMoney,
+		"lower":       strings.ToLower,
+		"deMonth":     deMonth,
+		"abs":         math.Abs,
+		"add":         func(a, b float64) float64 { return a + b },
+		"pctOf":       pctOf,
 	}
+}
+
+// deMonth returns "de septembre 2026" / "d’avril 2026" (French elision
+// before a vowel), lower-cased as French month names are.
+func deMonth(label string) string {
+	l := strings.ToLower(strings.TrimSpace(label))
+	if l == "" {
+		return l
+	}
+	switch []rune(l)[0] {
+	case 'a', 'e', 'i', 'o', 'u', 'é', 'è', 'h':
+		return "d’" + l
+	}
+	return "de " + l
+}
+
+// pctOf returns part as a whole percentage (0..100) of the larger of the two
+// totals — used to draw the month bar (charges, savings, rest) in the recap.
+func pctOf(part, totalA, totalB float64) int {
+	total := totalA
+	if totalB > total {
+		total = totalB
+	}
+	if total <= 0 || part <= 0 {
+		return 0
+	}
+	v := int(part/total*100 + 0.5)
+	if v > 100 {
+		return 100
+	}
+	return v
 }
 
 // RenderMonthlyRecapEmail renders the locale-appropriate monthly recap
@@ -197,6 +238,9 @@ type campaignEmailRequest struct {
 	HTML    string   `json:"html"`
 	Text    string   `json:"text,omitempty"`
 	ReplyTo string   `json:"reply_to,omitempty"`
+	// List-Unsubscribe lets mail clients show a one-tap unsubscribe and
+	// improves deliverability of campaign emails.
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 type campaignEmailResponse struct {
@@ -232,6 +276,7 @@ func SendCampaignEmail(toEmail, subject, htmlBody string) (msgID string, err err
 		HTML:    htmlBody,
 		Text:    htmlToPlainText(htmlBody),
 		ReplyTo: replyTo,
+		Headers: map[string]string{"List-Unsubscribe": "<mailto:" + mailboxAddress(replyTo) + "?subject=STOP>"},
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal: %w", err)
@@ -259,6 +304,16 @@ func SendCampaignEmail(toEmail, subject, htmlBody string) (msgID string, err err
 	var parsed campaignEmailResponse
 	_ = json.NewDecoder(resp.Body).Decode(&parsed)
 	return parsed.ID, nil
+}
+
+// mailboxAddress extracts "a@b.c" from "Name <a@b.c>" (or returns it as is).
+func mailboxAddress(s string) string {
+	if i := strings.LastIndex(s, "<"); i >= 0 {
+		if j := strings.LastIndex(s, ">"); j > i {
+			return strings.TrimSpace(s[i+1 : j])
+		}
+	}
+	return strings.TrimSpace(s)
 }
 
 // ============================================================================
