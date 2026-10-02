@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/LovationAdmin/budget-api/utils"
+	"github.com/pkg/errors"
 )
 
 // ----------------------------------------------------------------------------
@@ -84,6 +85,11 @@ type RecapData struct {
 	YearIncome   float64
 	YearExpenses float64 // recurring charges + project spend
 	YearSavings  float64 // YearIncome - YearExpenses
+
+	// UsesContributions is true when members put only part of their salary
+	// in the household pot: income figures are then pot inflows, labelled
+	// accordingly in the templates.
+	UsesContributions bool
 
 	Projects []RecapProject
 
@@ -279,13 +285,13 @@ func (s *MonthlyRecapService) BuildRecap(
 ) (*RecapData, error) {
 	raw, err := s.Budget.GetData(ctx, bs.ID)
 	if err != nil {
-		return nil, fmt.Errorf("get budget data: %w", err)
+		return nil, errors.Wrap(err, "get budget data")
 	}
 
 	// raw is interface{} — re-marshal/unmarshal into our typed payload.
 	payload, err := decodeBudgetPayload(raw)
 	if err != nil {
-		return nil, fmt.Errorf("decode budget payload: %w", err)
+		return nil, errors.Wrap(err, "decode budget payload")
 	}
 
 	locale := localeForLocation(bs.Location)
@@ -340,7 +346,8 @@ func (s *MonthlyRecapService) BuildRecap(
 		NextMonth:         next,
 		YearIncome:        yearIncome,
 		YearExpenses:      yearExpenses,
-		YearSavings:       yearIncome - yearExpenses,
+		YearSavings:       roundCents(yearIncome - yearExpenses),
+		UsesContributions: usesContributions(payload),
 		Projects:          projects,
 		OtherBudgets:      otherSummaries,
 		OtherBudgetCount:  otherBudgetCount - 1,
@@ -402,7 +409,7 @@ func (s *MonthlyRecapService) buildOtherBudgetSummaries(
 			CurrencySymbol: currencySymbol(currency),
 			YearIncome:     income,
 			YearExpenses:   expenses,
-			YearSavings:    income - expenses,
+			YearSavings:    roundCents(income - expenses),
 			URL:            strings.TrimRight(appURL, "/") + "/budget/" + b.ID,
 		})
 	}
@@ -419,6 +426,12 @@ type budgetPerson struct {
 	Salary    float64 `json:"salary"`
 	StartDate string  `json:"startDate,omitempty"`
 	EndDate   string  `json:"endDate,omitempty"`
+	// v3: effective-dated salary, month-only salary, and what the member
+	// actually puts in the household pot (absent = the whole salary).
+	SalaryHistory         []amountStep       `json:"salaryHistory,omitempty"`
+	SalaryOverrides       ymAmounts          `json:"salaryOverrides,omitempty"`
+	Contributions         []contributionStep `json:"contributions,omitempty"`
+	ContributionOverrides ymAmounts          `json:"contributionOverrides,omitempty"`
 }
 
 type budgetCharge struct {
@@ -427,19 +440,29 @@ type budgetCharge struct {
 	Amount    float64 `json:"amount"`
 	StartDate string  `json:"startDate,omitempty"`
 	EndDate   string  `json:"endDate,omitempty"`
+	// v3: frequency (absent = monthly), due months for "custom", yearly
+	// smoothing, effective-dated amounts and month-only overrides.
+	Frequency     string       `json:"frequency,omitempty"`
+	Months        []int        `json:"months,omitempty"`
+	Smooth        bool         `json:"smooth,omitempty"`
+	AmountHistory []amountStep `json:"amountHistory,omitempty"`
+	Overrides     ymAmounts    `json:"overrides,omitempty"`
 }
 
 type budgetProject struct {
 	ID           string  `json:"id"`
 	Label        string  `json:"label"`
 	TargetAmount float64 `json:"targetAmount,omitempty"`
-	// "Épargne particulière": fixed monthly amount auto-filled into the
-	// calendar over an optional start/end window. Allocations are persisted in
-	// YearlyData by the client, so aggregation still reads them from there;
-	// these fields carry the definition for forward-compatible server logic.
-	MonthlyAmount float64 `json:"monthlyAmount,omitempty"`
-	StartDate     string  `json:"startDate,omitempty"`
-	EndDate       string  `json:"endDate,omitempty"`
+	// "Épargne particulière": fixed monthly amount over an optional
+	// start/end window, resolved from the rule like the UI engine does.
+	// nil = free saving (amount chosen month by month); set = recurring,
+	// even when 0 (the UI tests the presence of the number).
+	MonthlyAmount *float64 `json:"monthlyAmount,omitempty"`
+	StartDate     string   `json:"startDate,omitempty"`
+	EndDate       string   `json:"endDate,omitempty"`
+	// v3 (allocations are still mirrored into YearlyData by the client).
+	AmountHistory []amountStep `json:"amountHistory,omitempty"`
+	Overrides     ymAmounts    `json:"overrides,omitempty"`
 }
 
 type budgetYear struct {
@@ -451,11 +474,15 @@ type budgetYear struct {
 	// a lock in one year no longer bleeds into another; older payloads only
 	// carry the top-level LockedMonths, used as a fallback.
 	LockedMonths map[string]bool `json:"lockedMonths"`
+	// v3: frozen values of closed months (index = month, null = none).
+	Snapshots []*monthSnapshot `json:"snapshots,omitempty"`
 }
 
 type budgetOneTime struct {
 	Amount      float64 `json:"amount"`
 	Description string  `json:"description,omitempty"`
+	// v3: the individual one-off incomes; Amount stays their sum.
+	Items []oneOffItem `json:"items,omitempty"`
 }
 
 type budgetPayload struct {
@@ -467,6 +494,7 @@ type budgetPayload struct {
 	YearlyData     map[string]budgetYear      `json:"yearlyData"`
 	OneTimeIncomes map[string][]budgetOneTime `json:"oneTimeIncomes"`
 	LockedMonths   map[string]bool            `json:"lockedMonths"`
+	SchemaVersion  int                        `json:"schemaVersion,omitempty"`
 }
 
 func decodeBudgetPayload(raw interface{}) (*budgetPayload, error) {
@@ -574,39 +602,21 @@ func aggregateMonth(p *budgetPayload, when time.Time, locale string, isCurrent b
 
 	yearData, hasYear := p.YearlyData[fmt.Sprintf("%d", year)]
 
-	// People income (recurring) for this month.
-	baseIncome := 0.0
-	for _, person := range p.People {
-		if isPersonActive(person, year, monthIdx) {
-			baseIncome += person.Salary
-		}
-	}
+	// Contributions, one-off incomes, charges and savings exactly as the app
+	// computes them (frozen snapshot for closed months, rules otherwise).
+	v := resolveMonthValues(p, year, monthIdx)
+	baseIncome := v.Contributions
+	charges := v.Charges
+	oneTime := v.OneOff
+	allocated := v.Savings
 
-	// Recurring charges for this month.
-	charges := 0.0
-	for _, c := range p.Charges {
-		if isChargeActive(c, year, monthIdx) {
-			charges += c.Amount
-		}
-	}
-
-	// One-time income for this month.
-	oneTime := 0.0
-	if list, ok := p.OneTimeIncomes[fmt.Sprintf("%d", year)]; ok && monthIdx < len(list) {
-		oneTime = list[monthIdx].Amount
-	}
-
-	allocated := 0.0
 	spent := 0.0
 	comment := ""
 	hasData := false
+	if allocated > 0 {
+		hasData = true
+	}
 	if hasYear {
-		if monthIdx < len(yearData.Months) {
-			allocated = sumMap(yearData.Months[monthIdx])
-			if allocated > 0 {
-				hasData = true
-			}
-		}
 		if monthIdx < len(yearData.Expenses) {
 			spent = sumMap(yearData.Expenses[monthIdx])
 			if spent > 0 {
@@ -621,9 +631,9 @@ func aggregateMonth(p *budgetPayload, when time.Time, locale string, isCurrent b
 		hasData = true
 	}
 
-	totalIncome := baseIncome + oneTime
-	available := totalIncome - charges
-	netCashflow := totalIncome - charges - spent
+	totalIncome := roundCents(baseIncome + oneTime)
+	available := roundCents(totalIncome - charges)
+	netCashflow := roundCents(totalIncome - charges - spent)
 
 	canonical := frMonthsCanonical[monthIdx]
 	// Prefer the year's own lock map; fall back to the legacy top-level one.
@@ -646,7 +656,7 @@ func aggregateMonth(p *budgetPayload, when time.Time, locale string, isCurrent b
 		ProjectsAllocated: allocated,
 		ProjectsSpent:     spent,
 		Available:         available,
-		NetSavings:        available - allocated,
+		NetSavings:        roundCents(available - allocated),
 		NetCashflow:       netCashflow,
 		Comment:           comment,
 		HasData:           hasData,
@@ -745,28 +755,16 @@ func aggregateProjectNotes(p *budgetPayload, when time.Time, locale string) []Pr
 
 func aggregateYearTotals(p *budgetPayload, year int) (income, expenses float64) {
 	for i := 0; i < 12; i++ {
-		for _, person := range p.People {
-			if isPersonActive(person, year, i) {
-				income += person.Salary
-			}
-		}
-		for _, c := range p.Charges {
-			if isChargeActive(c, year, i) {
-				expenses += c.Amount
-			}
-		}
-	}
-	if list, ok := p.OneTimeIncomes[fmt.Sprintf("%d", year)]; ok {
-		for _, item := range list {
-			income += item.Amount
-		}
+		v := resolveMonthValues(p, year, i)
+		income += v.Contributions + v.OneOff
+		expenses += v.Charges
 	}
 	if yearData, ok := p.YearlyData[fmt.Sprintf("%d", year)]; ok {
 		for _, m := range yearData.Expenses {
 			expenses += sumMap(m)
 		}
 	}
-	return
+	return roundCents(income), roundCents(expenses)
 }
 
 // ----------------------------------------------------------------------------

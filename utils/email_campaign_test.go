@@ -23,9 +23,10 @@ type minimalRecap struct {
 	CurrentMonth  recapMonth
 	NextMonth     recapMonth
 
-	YearIncome   float64
-	YearExpenses float64
-	YearSavings  float64
+	YearIncome        float64
+	YearExpenses      float64
+	YearSavings       float64
+	UsesContributions bool
 
 	Projects []recapProject
 
