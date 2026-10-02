@@ -337,3 +337,22 @@ func (h *AdminCampaignsHandler) throttle(ctx context.Context) error {
 		return nil
 	}
 }
+
+// CampaignRunResult summarises a campaign run started outside an HTTP request.
+type CampaignRunResult struct {
+	Total, Sent, Skipped, Failed int
+	DurationMs                   int64
+}
+
+// RunCampaign sends one campaign variant to one segment, skipping users who
+// already received it (email_campaign_sends). Used by one-off announcements
+// triggered at startup.
+func (h *AdminCampaignsHandler) RunCampaign(ctx context.Context, campaignID string, variant utils.CampaignVariant, segment string) CampaignRunResult {
+	res := h.runSegment(ctx, segmentInput{
+		CampaignID: campaignID,
+		Variant:    variant,
+		Segment:    segment,
+		SkipSent:   true,
+	})
+	return CampaignRunResult{Total: res.Total, Sent: res.Sent, Skipped: res.Skipped, Failed: res.Failed, DurationMs: res.DurationMs}
+}

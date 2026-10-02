@@ -1,464 +1,370 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="x-apple-disable-message-reformatting">
-<title>Your {{ .PreviousMonth.Label }} recap — Budget Famille</title>
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<title>Your {{ .PreviousMonth.Label }} review — Budget Famille</title>
 <!--[if mso]>
-<style type="text/css">
-table, td, div, h1, h2, h3, p { font-family: Arial, sans-serif !important; }
-</style>
+<style type="text/css">table, td, div, h1, h2, h3, p, a { font-family: Arial, sans-serif !important; }</style>
 <![endif]-->
+<style>
+  a { text-decoration: none; }
+  @media only screen and (max-width: 620px) {
+    .px { padding-left: 20px !important; padding-right: 20px !important; }
+    .h1 { font-size: 28px !important; }
+    .big { font-size: 40px !important; }
+    .col { display: block !important; width: 100% !important; }
+    .kpi { border-left: 0 !important; border-right: 0 !important; border-top: 1px solid #e4eef5 !important; }
+    .kpi-first { border-top: 0 !important; }
+  }
+</style>
 </head>
-<body style="margin:0; padding:0; background-color:#f4f6fa; font-family:'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color:#1a2433; -webkit-font-smoothing:antialiased;">
+<body style="margin:0; padding:0; background-color:#f4f1ec; -webkit-font-smoothing:antialiased; -webkit-text-size-adjust:100%;">
 
-<div style="display:none; max-height:0; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:#f4f6fa;">
-  Your {{ .PreviousMonth.Label }} recap is here — a quick look at your budget and projects.
+{{ $sym := .CurrencySymbol }}
+{{ $p := .PreviousMonth }}
+<div style="display:none; max-height:0; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:#f4f1ec;">
+  {{ if ge $p.NetSavings 0.0 }}{{ formatMoney $p.NetSavings $sym }} left in the pot in {{ $p.ShortLabel }}.{{ else }}{{ $p.ShortLabel }} came up {{ formatMoney (abs $p.NetSavings) $sym }} short: let’s look at it together.{{ end }} Your review, your savings pots and what’s coming.
+  &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847;
 </div>
 
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f6fa;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f1ec;">
+<tr><td align="center" style="padding:28px 12px 40px 12px;">
+
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px;">
+
+  <!-- Brand -->
   <tr>
-    <td align="center" style="padding:24px 12px;">
-
-      <table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" style="max-width:640px; width:100%; background-color:#ffffff; border-radius:16px; overflow:hidden; box-shadow:0 1px 3px rgba(31,156,217,0.06);">
-
-        <!-- Brand header -->
+    <td class="px" style="padding:0 8px 18px 8px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
-          <td style="padding:24px 32px 8px 32px;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-              <tr>
-                <td align="left" style="font-family:'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif; font-size:18px; font-weight:700; color:#1f9cd9; letter-spacing:-0.2px;">
-                  💰 Budget Famille
-                </td>
-                <td align="right" style="font-family:'DM Sans', Arial, sans-serif; font-size:13px; color:#7a8699;">
-                  {{ .PreviousMonth.Label }} recap
-                </td>
-              </tr>
-            </table>
+          <td style="font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:17px; font-weight:800; color:#14202e;">
+            <span style="display:inline-block; width:28px; height:28px; line-height:28px; text-align:center; border-radius:9px; background-color:#1f9cd9; color:#ffffff; font-size:15px; font-weight:800; vertical-align:middle;">B</span>
+            <span translate="no" style="vertical-align:middle; padding-left:8px;">Budget Famille</span>
           </td>
+          <td align="right" style="font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:13px; color:#5f6878;">{{ $p.Label }} review</td>
         </tr>
-
-        <!-- Greeting -->
-        <tr>
-          <td style="padding:24px 32px 8px 32px;">
-            <p style="margin:0 0 12px 0; font-family:'DM Sans', Arial, sans-serif; font-size:16px; line-height:1.5; color:#1a2433;">
-              Hi {{ .UserName }} 👋
-            </p>
-            <h1 style="margin:0 0 8px 0; font-family:'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif; font-size:32px; line-height:1.15; font-weight:700; color:#1a2433; letter-spacing:-0.5px;">
-              Your {{ .PreviousMonth.ShortLabel }}<br>at a glance
-            </h1>
-            <p style="margin:8px 0 0 0; font-family:'DM Sans', Arial, sans-serif; font-size:15px; line-height:1.6; color:#5a6577;">
-              Here's a clear summary of <strong style="color:#1a2433;">{{ .BudgetName }}</strong> — take a minute, you've earned it.
-            </p>
-          </td>
-        </tr>
-
-        <!-- HERO : 3 key numbers -->
-        <tr>
-          <td style="padding:24px 32px 8px 32px;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f0f7fc; border-radius:14px;">
-              <tr>
-                <td style="padding:24px 16px;">
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                    <tr>
-                      <td align="center" valign="top" width="33%" style="padding:8px;">
-                        <div style="font-size:22px; line-height:1; margin-bottom:8px;">💸</div>
-                        <div style="font-family:'DM Sans', Arial, sans-serif; font-size:12px; font-weight:500; color:#7a8699; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">{{ if .UsesContributions }}Inflows{{ else }}Income{{ end }}</div>
-                        <div style="font-family:'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif; font-size:20px; font-weight:700; color:#1a2433; letter-spacing:-0.3px;">
-                          {{ formatMoney .PreviousMonth.TotalIncome .CurrencySymbol }}
-                        </div>
-                      </td>
-                      <td align="center" valign="top" width="33%" style="padding:8px; border-left:1px solid #dceaf3; border-right:1px solid #dceaf3;">
-                        <div style="font-size:22px; line-height:1; margin-bottom:8px;">🧾</div>
-                        <div style="font-family:'DM Sans', Arial, sans-serif; font-size:12px; font-weight:500; color:#7a8699; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">Expenses</div>
-                        <div style="font-family:'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif; font-size:20px; font-weight:700; color:#1a2433; letter-spacing:-0.3px;">
-                          {{ formatMoney .PreviousMonth.RecurringCharges .CurrencySymbol }}
-                        </div>
-                      </td>
-                      <td align="center" valign="top" width="33%" style="padding:8px;">
-                        <div style="font-size:22px; line-height:1; margin-bottom:8px;">🌱</div>
-                        <div style="font-family:'DM Sans', Arial, sans-serif; font-size:12px; font-weight:500; color:#7a8699; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">Net</div>
-                        <div style="font-family:'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif; font-size:20px; font-weight:700; color:{{ if ge .PreviousMonth.NetCashflow 0.0 }}#2eb277{{ else }}#e04b4b{{ end }}; letter-spacing:-0.3px;">
-                          {{ formatMoney .PreviousMonth.NetCashflow .CurrencySymbol }}
-                        </div>
-                      </td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-
-        <!-- Month note (conditional) -->
-        {{ if .PreviousMonth.Comment }}
-        <tr>
-          <td style="padding:16px 32px 8px 32px;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f3eefb; border-radius:12px;">
-              <tr>
-                <td style="padding:16px 18px; border-left:3px solid #1f9cd9; border-radius:12px;">
-                  <div style="font-family:'DM Sans', Arial, sans-serif; font-size:11px; font-weight:600; color:#7a8699; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">📝 Your note for the month</div>
-                  <p style="margin:0; font-family:'DM Sans', Arial, sans-serif; font-size:14px; line-height:1.6; color:#3d2f5c; font-style:italic;">
-                    "{{ .PreviousMonth.Comment }}"
-                  </p>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-        {{ end }}
-
-        <!-- Per-project notes (conditional) -->
-        {{ if .PreviousMonth.ProjectNotes }}
-        <tr>
-          <td style="padding:16px 32px 8px 32px;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#fffaf0; border-radius:12px;">
-              <tr>
-                <td style="padding:16px 18px; border-left:3px solid #f59e0b; border-radius:12px;">
-                  <div style="font-family:'DM Sans', Arial, sans-serif; font-size:11px; font-weight:600; color:#7a8699; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px;">🗒️ Your line-item notes</div>
-                  {{ range .PreviousMonth.ProjectNotes }}
-                  <div style="margin-bottom:8px; font-family:'DM Sans', Arial, sans-serif; font-size:13px; line-height:1.5; color:#3d2f5c;">
-                    <strong style="color:#1a2433;">{{ .Name }}:</strong> <span style="font-style:italic;">{{ .Note }}</span>
-                  </div>
-                  {{ end }}
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-        {{ end }}
-
-        <!-- Savings projects -->
-        {{ if .Projects }}
-        <tr>
-          <td style="padding:32px 32px 8px 32px;">
-            <h2 style="margin:0 0 6px 0; font-family:'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif; font-size:20px; font-weight:700; color:#1a2433; letter-spacing:-0.3px;">
-              🎯 Your projects are progressing
-            </h2>
-            <p style="margin:0 0 16px 0; font-family:'DM Sans', Arial, sans-serif; font-size:14px; line-height:1.5; color:#7a8699;">
-              Cumulative progress since the start of the year.
-            </p>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:0 32px 8px 32px;">
-            {{ range .Projects }}
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:14px;">
-              <tr>
-                <td>
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:6px;">
-                    <tr>
-                      <td align="left" style="font-family:'DM Sans', Arial, sans-serif; font-size:14px; font-weight:600; color:#1a2433;">
-                        {{ .Name }}
-                      </td>
-                      <td align="right" style="font-family:'DM Sans', Arial, sans-serif; font-size:13px; font-weight:500; color:#5a6577;">
-                        {{ if .HasTarget }}{{ formatMoney .AllocatedYTD $.CurrencySymbol }} / {{ formatMoney .TargetAmount $.CurrencySymbol }}{{ else }}{{ formatMoney .AllocatedYTD $.CurrencySymbol }} allocated{{ end }}
-                      </td>
-                    </tr>
-                  </table>
-                  {{ if .HasTarget }}
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#e9edf3; border-radius:999px; height:10px; line-height:10px;">
-                    <tr>
-                      <td style="height:10px; line-height:10px; font-size:0; border-radius:999px;">
-                        <table role="presentation" width="{{ printf "%.0f" .Progress }}%" cellpadding="0" cellspacing="0" border="0" style="background-color:{{ if eq .Status "ahead" }}#2eb277{{ else if eq .Status "behind" }}#f59e0b{{ else }}#40bfbf{{ end }}; border-radius:999px; height:10px; line-height:10px; min-width:1%;">
-                          <tr><td style="height:10px; line-height:10px; font-size:0;">&nbsp;</td></tr>
-                        </table>
-                      </td>
-                    </tr>
-                  </table>
-                  <div style="margin-top:6px; font-family:'DM Sans', Arial, sans-serif; font-size:12px; color:#7a8699;">
-                    {{ printf "%.0f" .Progress }}% of target{{ if eq .Status "ahead" }} — ahead{{ else if eq .Status "behind" }} — behind{{ else }} — on track{{ end }}
-                  </div>
-                  {{ end }}
-                </td>
-              </tr>
-            </table>
-            {{ end }}
-          </td>
-        </tr>
-        {{ end }}
-
-        <!-- Current month -->
-        <tr>
-          <td style="padding:32px 32px 8px 32px;">
-            <h2 style="margin:0 0 6px 0; font-family:'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif; font-size:20px; font-weight:700; color:#1a2433; letter-spacing:-0.3px;">
-              📅 A look at {{ .CurrentMonth.ShortLabel }}
-            </h2>
-            <p style="margin:0 0 16px 0; font-family:'DM Sans', Arial, sans-serif; font-size:14px; line-height:1.5; color:#7a8699;">
-              What you've planned and what's left to set aside.
-            </p>
-
-            {{ if .CurrentMonth.Comment }}
-            <div style="margin-bottom:14px; padding:14px 16px; background-color:#f3eefb; border-left:3px solid #1f9cd9; border-radius:10px;">
-              <div style="font-family:'DM Sans', Arial, sans-serif; font-size:11px; font-weight:600; color:#7a8699; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">📝 Your intention for this month</div>
-              <p style="margin:0; font-family:'DM Sans', Arial, sans-serif; font-size:14px; line-height:1.6; color:#3d2f5c; font-style:italic;">
-                "{{ .CurrentMonth.Comment }}"
-              </p>
-            </div>
-            {{ end }}
-
-            {{ if .CurrentMonth.ProjectNotes }}
-            <div style="margin-bottom:14px; padding:14px 16px; background-color:#fffaf0; border-left:3px solid #f59e0b; border-radius:10px;">
-              <div style="font-family:'DM Sans', Arial, sans-serif; font-size:11px; font-weight:600; color:#7a8699; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">🗒️ Your notes for this month</div>
-              {{ range .CurrentMonth.ProjectNotes }}
-              <div style="margin-bottom:6px; font-family:'DM Sans', Arial, sans-serif; font-size:13px; line-height:1.5; color:#3d2f5c;">
-                <strong style="color:#1a2433;">{{ .Name }}:</strong> <span style="font-style:italic;">{{ .Note }}</span>
-              </div>
-              {{ end }}
-            </div>
-            {{ end }}
-
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e9edf3; border-radius:14px;">
-              <tr>
-                <td style="padding:16px 20px; border-bottom:1px solid #e9edf3;">
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                    <tr>
-                      <td align="left" style="font-family:'DM Sans', Arial, sans-serif; font-size:14px; color:#5a6577;">{{ if .UsesContributions }}Planned shared-pot inflows{{ else }}Planned income{{ end }}</td>
-                      <td align="right" style="font-family:'DM Sans', Arial, sans-serif; font-size:14px; font-weight:600; color:#1a2433;">{{ formatMoney .CurrentMonth.TotalIncome .CurrencySymbol }}</td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>
-              <tr>
-                <td style="padding:16px 20px; border-bottom:1px solid #e9edf3;">
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                    <tr>
-                      <td align="left" style="font-family:'DM Sans', Arial, sans-serif; font-size:14px; color:#5a6577;">Planned charges</td>
-                      <td align="right" style="font-family:'DM Sans', Arial, sans-serif; font-size:14px; font-weight:600; color:#1a2433;">{{ formatMoney .CurrentMonth.RecurringCharges .CurrencySymbol }}</td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>
-              <tr>
-                <td style="padding:16px 20px; border-bottom:1px solid #e9edf3;">
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                    <tr>
-                      <td align="left" style="font-family:'DM Sans', Arial, sans-serif; font-size:14px; color:#5a6577;">Allocated to projects</td>
-                      <td align="right" style="font-family:'DM Sans', Arial, sans-serif; font-size:14px; font-weight:600; color:#1a2433;">{{ formatMoney .CurrentMonth.ProjectsAllocated .CurrencySymbol }}</td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>
-              <tr>
-                <td style="padding:16px 20px; background-color:#f0fbf6; border-radius:0 0 14px 14px;">
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                    <tr>
-                      <td align="left" style="font-family:'DM Sans', Arial, sans-serif; font-size:14px; font-weight:600; color:#1a2433;">Left to save</td>
-                      <td align="right" style="font-family:'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif; font-size:16px; font-weight:700; color:{{ if ge .CurrentMonth.NetSavings 0.0 }}#2eb277{{ else }}#e04b4b{{ end }};">{{ formatMoney .CurrentMonth.NetSavings .CurrencySymbol }}</td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-
-        <!-- Next month -->
-        <tr>
-          <td style="padding:32px 32px 8px 32px;">
-            <h2 style="margin:0 0 6px 0; font-family:'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif; font-size:20px; font-weight:700; color:#1a2433; letter-spacing:-0.3px;">
-              🔮 Coming up in {{ .NextMonth.ShortLabel }}
-            </h2>
-            <p style="margin:0 0 16px 0; font-family:'DM Sans', Arial, sans-serif; font-size:14px; line-height:1.5; color:#7a8699;">
-              Plan ahead with peace of mind.
-            </p>
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-              <tr>
-                <td width="33%" valign="top" style="padding-right:6px;">
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f0f7fc; border-radius:12px;">
-                    <tr><td style="padding:14px 14px;">
-                      <div style="font-family:'DM Sans', Arial, sans-serif; font-size:11px; font-weight:500; color:#7a8699; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:6px;">{{ if .UsesContributions }}Inflows{{ else }}Income{{ end }}</div>
-                      <div style="font-family:'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif; font-size:16px; font-weight:700; color:#1a2433;">{{ formatMoney .NextMonth.TotalIncome .CurrencySymbol }}</div>
-                    </td></tr>
-                  </table>
-                </td>
-                <td width="33%" valign="top" style="padding:0 3px;">
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f0f7fc; border-radius:12px;">
-                    <tr><td style="padding:14px 14px;">
-                      <div style="font-family:'DM Sans', Arial, sans-serif; font-size:11px; font-weight:500; color:#7a8699; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:6px;">Charges</div>
-                      <div style="font-family:'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif; font-size:16px; font-weight:700; color:#1a2433;">{{ formatMoney .NextMonth.RecurringCharges .CurrencySymbol }}</div>
-                    </td></tr>
-                  </table>
-                </td>
-                <td width="33%" valign="top" style="padding-left:6px;">
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f0f7fc; border-radius:12px;">
-                    <tr><td style="padding:14px 14px;">
-                      <div style="font-family:'DM Sans', Arial, sans-serif; font-size:11px; font-weight:500; color:#7a8699; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:6px;">Projects</div>
-                      <div style="font-family:'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif; font-size:16px; font-weight:700; color:#1a2433;">{{ formatMoney .NextMonth.ProjectsAllocated .CurrencySymbol }}</div>
-                    </td></tr>
-                  </table>
-                </td>
-              </tr>
-            </table>
-            {{ if not .NextMonth.HasData }}
-            <p style="margin:12px 0 0 0; font-family:'DM Sans', Arial, sans-serif; font-size:13px; color:#9aa4b5; font-style:italic;">
-              No data entered for next month yet — a great time to prepare your allocations.
-            </p>
-            {{ end }}
-
-            {{ if .NextMonth.Comment }}
-            <div style="margin-top:14px; padding:14px 16px; background-color:#f3eefb; border-left:3px solid #1f9cd9; border-radius:10px;">
-              <div style="font-family:'DM Sans', Arial, sans-serif; font-size:11px; font-weight:600; color:#7a8699; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">📝 What you're planning</div>
-              <p style="margin:0; font-family:'DM Sans', Arial, sans-serif; font-size:14px; line-height:1.6; color:#3d2f5c; font-style:italic;">
-                "{{ .NextMonth.Comment }}"
-              </p>
-            </div>
-            {{ end }}
-
-            {{ if .NextMonth.ProjectNotes }}
-            <div style="margin-top:14px; padding:14px 16px; background-color:#fffaf0; border-left:3px solid #f59e0b; border-radius:10px;">
-              <div style="font-family:'DM Sans', Arial, sans-serif; font-size:11px; font-weight:600; color:#7a8699; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">🗒️ Notes you've already pinned</div>
-              {{ range .NextMonth.ProjectNotes }}
-              <div style="margin-bottom:6px; font-family:'DM Sans', Arial, sans-serif; font-size:13px; line-height:1.5; color:#3d2f5c;">
-                <strong style="color:#1a2433;">{{ .Name }}:</strong> <span style="font-style:italic;">{{ .Note }}</span>
-              </div>
-              {{ end }}
-            </div>
-            {{ end }}
-          </td>
-        </tr>
-
-        <!-- Year-to-date -->
-        <tr>
-          <td style="padding:32px 32px 8px 32px;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f6fa; border-radius:12px;">
-              <tr>
-                <td style="padding:16px 20px;">
-                  <div style="font-family:'DM Sans', Arial, sans-serif; font-size:12px; font-weight:500; color:#7a8699; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px;">Since January 1st, {{ .Year }}</div>
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                    <tr>
-                      <td align="left" style="font-family:'DM Sans', Arial, sans-serif; font-size:13px; color:#5a6577;">{{ if .UsesContributions }}Shared-pot inflows{{ else }}Income{{ end }}</td>
-                      <td align="right" style="font-family:'DM Sans', Arial, sans-serif; font-size:13px; font-weight:600; color:#1a2433;">{{ formatMoney .YearIncome .CurrencySymbol }}</td>
-                    </tr>
-                    <tr><td colspan="2" style="height:6px; line-height:6px; font-size:0;">&nbsp;</td></tr>
-                    <tr>
-                      <td align="left" style="font-family:'DM Sans', Arial, sans-serif; font-size:13px; color:#5a6577;">Expenses</td>
-                      <td align="right" style="font-family:'DM Sans', Arial, sans-serif; font-size:13px; font-weight:600; color:#1a2433;">{{ formatMoney .YearExpenses .CurrencySymbol }}</td>
-                    </tr>
-                    <tr><td colspan="2" style="height:6px; line-height:6px; font-size:0;">&nbsp;</td></tr>
-                    <tr>
-                      <td align="left" style="font-family:'DM Sans', Arial, sans-serif; font-size:13px; color:#5a6577;">Savings</td>
-                      <td align="right" style="font-family:'DM Sans', Arial, sans-serif; font-size:13px; font-weight:600; color:{{ if ge .YearSavings 0.0 }}#2eb277{{ else }}#e04b4b{{ end }};">{{ formatMoney .YearSavings .CurrencySymbol }}</td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-
-        <!-- CTA -->
-        <tr>
-          <td align="center" style="padding:32px 32px 16px 32px;">
-            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
-              <tr>
-                <td align="center" bgcolor="#1f9cd9" style="border-radius:999px; background-color:#1f9cd9;">
-                  <a href="{{ .AppURL }}?utm_source=email&utm_medium=monthly_recap&utm_campaign={{ .CampaignID }}" target="_blank" style="display:inline-block; padding:16px 36px; font-family:'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif; font-size:15px; font-weight:700; color:#ffffff; text-decoration:none; border-radius:999px; letter-spacing:0.2px;">
-                    Open my Budget Famille →
-                  </a>
-                </td>
-              </tr>
-            </table>
-            <p style="margin:16px 0 0 0; font-family:'DM Sans', Arial, sans-serif; font-size:13px; color:#7a8699;">
-              Keep the momentum going — every small step counts.
-            </p>
-          </td>
-        </tr>
-
-        <!-- Other budgets (conditional) -->
-        {{ if .OtherBudgets }}
-        <tr>
-          <td style="padding:8px 32px 16px 32px;">
-            <h2 style="margin:0 0 6px 0; font-family:'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif; font-size:20px; font-weight:700; color:#1a2433; letter-spacing:-0.3px;">
-              📂 Your other budgets
-            </h2>
-            <p style="margin:0 0 16px 0; font-family:'DM Sans', Arial, sans-serif; font-size:14px; line-height:1.5; color:#7a8699;">
-              Quick snapshot since January 1st, {{ .Year }}.
-            </p>
-            {{ range .OtherBudgets }}
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:10px; border:1px solid #e9edf3; border-radius:12px;">
-              <tr>
-                <td style="padding:14px 16px;">
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:8px;">
-                    <tr>
-                      <td align="left" style="font-family:'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif; font-size:15px; font-weight:700; color:#1a2433;">
-                        {{ .Name }}
-                      </td>
-                      <td align="right" style="font-family:'DM Sans', Arial, sans-serif; font-size:12px;">
-                        <a href="{{ .URL }}?utm_source=email&utm_medium=monthly_recap&utm_campaign={{ $.CampaignID }}" style="color:#1f9cd9; text-decoration:none; font-weight:600;">Open →</a>
-                      </td>
-                    </tr>
-                  </table>
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                    <tr>
-                      <td align="left" style="font-family:'DM Sans', Arial, sans-serif; font-size:12px; color:#5a6577;">Income</td>
-                      <td align="right" style="font-family:'DM Sans', Arial, sans-serif; font-size:13px; font-weight:600; color:#1a2433;">{{ formatMoney .YearIncome .CurrencySymbol }}</td>
-                    </tr>
-                    <tr><td colspan="2" style="height:4px; line-height:4px; font-size:0;">&nbsp;</td></tr>
-                    <tr>
-                      <td align="left" style="font-family:'DM Sans', Arial, sans-serif; font-size:12px; color:#5a6577;">Expenses</td>
-                      <td align="right" style="font-family:'DM Sans', Arial, sans-serif; font-size:13px; font-weight:600; color:#1a2433;">{{ formatMoney .YearExpenses .CurrencySymbol }}</td>
-                    </tr>
-                    <tr><td colspan="2" style="height:4px; line-height:4px; font-size:0;">&nbsp;</td></tr>
-                    <tr>
-                      <td align="left" style="font-family:'DM Sans', Arial, sans-serif; font-size:12px; color:#5a6577;">Savings</td>
-                      <td align="right" style="font-family:'DM Sans', Arial, sans-serif; font-size:13px; font-weight:600; color:{{ if ge .YearSavings 0.0 }}#2eb277{{ else }}#e04b4b{{ end }};">{{ formatMoney .YearSavings .CurrencySymbol }}</td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>
-            </table>
-            {{ end }}
-            {{ if gt .HiddenBudgetCount 0 }}
-            <p style="margin:6px 0 0 0; font-family:'DM Sans', Arial, sans-serif; font-size:12px; color:#9aa4b5; font-style:italic;">
-              And {{ .HiddenBudgetCount }} other budget{{ if gt .HiddenBudgetCount 1 }}s{{ end }} accessible from the app.
-            </p>
-            {{ end }}
-          </td>
-        </tr>
-        {{ end }}
-
-        <!-- Signature -->
-        <tr>
-          <td style="padding:24px 32px 8px 32px;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-              <tr><td style="border-top:1px solid #e9edf3; height:1px; line-height:1px; font-size:0;">&nbsp;</td></tr>
-            </table>
-            <p style="margin:20px 0 4px 0; font-family:'DM Sans', Arial, sans-serif; font-size:14px; line-height:1.6; color:#5a6577;">
-              A question, some feedback? Just reply to this email — I read every one.
-            </p>
-            <p style="margin:14px 0 0 0; font-family:'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif; font-size:18px; font-weight:700; color:#1f9cd9; font-style:italic;">
-              — Libasse
-            </p>
-            <p style="margin:4px 0 0 0; font-family:'DM Sans', Arial, sans-serif; font-size:12px; color:#7a8699;">
-              Founder of Budget Famille
-            </p>
-          </td>
-        </tr>
-
-        <!-- Footer -->
-        <tr>
-          <td style="padding:24px 32px 32px 32px;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-              <tr>
-                <td align="center" style="font-family:'DM Sans', Arial, sans-serif; font-size:12px; line-height:1.6; color:#9aa4b5;">
-                  You're receiving this recap because you use Budget Famille.<br>
-                  To stop receiving it, reply "STOP RECAP" to this message.
-                  <br><br>
-                  © {{ .Year }} Budget Famille
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-
       </table>
-
     </td>
   </tr>
-</table>
 
+  <!-- Card -->
+  <tr><td style="background-color:#ffffff; border-radius:22px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+
+    <!-- Greeting -->
+    <tr>
+      <td class="px" style="padding:34px 40px 0 40px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+        <p style="margin:0 0 10px 0; font-size:16px; line-height:1.5; color:#3b4656;">Hi {{ .UserName }} 👋</p>
+        <h1 class="h1" style="margin:0; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:32px; line-height:1.15; font-weight:800; color:#14202e; letter-spacing:-0.6px;">Your {{ $p.ShortLabel }}<br>at a glance</h1>
+        <p style="margin:10px 0 0 0; font-size:15px; line-height:1.6; color:#5b6575;">The review of <strong style="color:#14202e;">{{ .BudgetName }}</strong>, exactly as the app computes it.</p>
+      </td>
+    </tr>
+
+    <!-- Hero: rest of the pot -->
+    <tr>
+      <td class="px" style="padding:24px 40px 0 40px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:{{ if ge $p.NetSavings 0.0 }}#eefaf4{{ else }}#fdf1f1{{ end }}; border-radius:20px;">
+          <tr>
+            <td style="padding:24px 24px 22px 24px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+              <div style="font-size:12px; font-weight:800; letter-spacing:1.2px; text-transform:uppercase; color:#5b6575;">{{ if .UsesContributions }}Shared pot{{ else }}Budget{{ end }} · {{ $p.ShortLabel }}</div>
+              <div class="big" style="margin:8px 0 2px 0; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:46px; line-height:1.05; font-weight:800; letter-spacing:-1.2px; color:{{ if ge $p.NetSavings 0.0 }}#0f7a4f{{ else }}#c23a3a{{ end }};">{{ formatMoney $p.NetSavings $sym }}</div>
+              <p style="margin:0 0 16px 0; font-size:15px; line-height:1.5; color:#3b4656;">
+                {{ if ge $p.NetSavings 0.0 }}left in the pot after charges and savings: it goes to your general savings. 👏{{ else }}short of covering the planned charges and savings. Worth a look at the split.{{ end }}
+              </p>
+              {{ $tot := add $p.RecurringCharges $p.ProjectsAllocated }}
+              {{ $c := pctOf $p.RecurringCharges $p.TotalIncome $tot }}
+              {{ $s := pctOf $p.ProjectsAllocated $p.TotalIncome $tot }}
+              {{ $r := pctOf $p.NetSavings $p.TotalIncome $tot }}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:999px; background-color:#e6e2dc;">
+                <tr>
+                  {{ if gt $c 0 }}<td width="{{ $c }}%" style="height:10px; line-height:10px; font-size:0; background-color:#f97316; border-radius:999px 0 0 999px;">&nbsp;</td>{{ end }}
+                  {{ if gt $s 0 }}<td width="{{ $s }}%" style="height:10px; line-height:10px; font-size:0; background-color:#6366f1;">&nbsp;</td>{{ end }}
+                  {{ if gt $r 0 }}<td width="{{ $r }}%" style="height:10px; line-height:10px; font-size:0; background-color:#10b981; border-radius:0 999px 999px 0;">&nbsp;</td>{{ end }}
+                  <td style="height:10px; line-height:10px; font-size:0;">&nbsp;</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- KPIs -->
+    <tr>
+      <td class="px" style="padding:14px 40px 0 40px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e4eef5; border-radius:16px;">
+          <tr>
+            <td class="col kpi kpi-first" width="33%" valign="top" style="padding:14px 14px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+              <div style="font-size:12px; color:#5f6878;"><span style="color:#0f7a4f;">●</span> {{ if .UsesContributions }}Shared-pot inflows{{ else }}Income{{ end }}</div>
+              <div style="margin-top:4px; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:18px; font-weight:800; color:#14202e;">{{ formatMoney $p.TotalIncome $sym }}</div>
+            </td>
+            <td class="col kpi" width="33%" valign="top" style="padding:14px 14px; border-left:1px solid #e4eef5; border-right:1px solid #e4eef5; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+              <div style="font-size:12px; color:#5f6878;"><span style="color:#f97316;">●</span> Charges</div>
+              <div style="margin-top:4px; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:18px; font-weight:800; color:#14202e;">{{ formatMoney $p.RecurringCharges $sym }}</div>
+            </td>
+            <td class="col kpi" width="33%" valign="top" style="padding:14px 14px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+              <div style="font-size:12px; color:#5f6878;"><span style="color:#6366f1;">●</span> Savings</div>
+              <div style="margin-top:4px; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:18px; font-weight:800; color:#14202e;">{{ formatMoney $p.ProjectsAllocated $sym }}</div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    {{ if $p.Comment }}
+    <tr>
+      <td class="px" style="padding:16px 40px 0 40px;">
+        <div style="padding:14px 16px; background-color:#f3f0fb; border-left:3px solid #6366f1; border-radius:12px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+          <div style="font-size:11px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:#5f6878; margin-bottom:4px;">📝 Your note for the month</div>
+          <p style="margin:0; font-size:14px; line-height:1.6; color:#3b4656; font-style:italic;">« {{ $p.Comment }} »</p>
+        </div>
+      </td>
+    </tr>
+    {{ end }}
+    {{ if $p.ProjectNotes }}
+    <tr>
+      <td class="px" style="padding:12px 40px 0 40px;">
+        <div style="padding:14px 16px; background-color:#fff7eb; border-left:3px solid #f59e0b; border-radius:12px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+          <div style="font-size:11px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:#5f6878; margin-bottom:8px;">🗒️ Your line-item notes</div>
+          {{ range $p.ProjectNotes }}<div style="margin-bottom:6px; font-size:13px; line-height:1.5; color:#3b4656;"><strong style="color:#14202e;">{{ .Name }} :</strong> <span style="font-style:italic;">{{ .Note }}</span></div>{{ end }}
+        </div>
+      </td>
+    </tr>
+    {{ end }}
+
+    <!-- Household: contributions & pocket money -->
+    {{ if and .UsesContributions $p.Members }}
+    <tr>
+      <td class="px" style="padding:32px 40px 0 40px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+        <h2 style="margin:0 0 4px 0; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:20px; font-weight:800; color:#14202e; letter-spacing:-0.3px;">⚖️ Your household</h2>
+        <p style="margin:0 0 14px 0; font-size:14px; line-height:1.5; color:#5f6878;">What each member put in the shared pot, and their spending money.</p>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #ece6dd; border-radius:16px;">
+          {{ range $i, $m := $p.Members }}
+          <tr>
+            <td style="padding:14px 16px; {{ if $i }}border-top:1px solid #ece6dd;{{ end }}">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td valign="top" style="font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+                    <div style="font-size:15px; font-weight:700; color:#14202e;">{{ $m.Name }}</div>
+                    <div style="margin-top:2px; font-size:13px; color:#5f6878;">put <strong style="color:#0f7a4f;">{{ formatMoney $m.Contribution $sym }}</strong> in the pot</div>
+                  </td>
+                  <td align="right" valign="top" style="font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+                    <div style="font-size:11px; font-weight:800; letter-spacing:0.8px; text-transform:uppercase; color:#5f6878;">Spending money</div>
+                    <div style="margin-top:2px; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:17px; font-weight:800; color:#14202e;">{{ formatMoney $m.PocketMoney $sym }}</div>
+                    {{ if gt $m.PersonalCharges 0.0 }}<div style="font-size:12px; color:#5f6878;">incl. {{ formatMoney $m.PersonalCharges $sym }} personal charges</div>{{ end }}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {{ end }}
+        </table>
+      </td>
+    </tr>
+    {{ end }}
+
+    <!-- Savings pots -->
+    {{ if .Projects }}
+    <tr>
+      <td class="px" style="padding:32px 40px 0 40px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+        <h2 style="margin:0 0 4px 0; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:20px; font-weight:800; color:#14202e; letter-spacing:-0.3px;">🎯 Your projects are progressing</h2>
+        <p style="margin:0 0 16px 0; font-size:14px; line-height:1.5; color:#5f6878;">Saved since January 1st.</p>
+        {{ range .Projects }}
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:16px;">
+          <tr>
+            <td style="font-size:14px; font-weight:700; color:#14202e; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">{{ .Name }}</td>
+            <td align="right" style="font-size:13px; color:#5b6575; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">{{ if .HasTarget }}{{ formatMoney .AllocatedYTD $sym }} / {{ formatMoney .TargetAmount $sym }}{{ else }}{{ formatMoney .AllocatedYTD $sym }} saved{{ end }}</td>
+          </tr>
+          {{ if .HasTarget }}
+          <tr>
+            <td colspan="2" style="padding-top:7px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ece8f8; border-radius:999px;">
+                <tr>
+                  <td width="{{ printf "%.0f" .Progress }}%" style="height:9px; line-height:9px; font-size:0; border-radius:999px; background-color:{{ if eq .Status "ahead" }}#10b981{{ else if eq .Status "behind" }}#f59e0b{{ else }}#6366f1{{ end }};">&nbsp;</td>
+                  <td style="height:9px; line-height:9px; font-size:0;">&nbsp;</td>
+                </tr>
+              </table>
+              <div style="margin-top:5px; font-size:12px; color:#5f6878; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">{{ printf "%.0f" .Progress }}% of the goal{{ if eq .Status "ahead" }} · ahead 🚀{{ else if eq .Status "behind" }} · a little behind{{ else }} · on track{{ end }}</div>
+            </td>
+          </tr>
+          {{ end }}
+        </table>
+        {{ end }}
+      </td>
+    </tr>
+    {{ end }}
+
+    <!-- Current month -->
+    {{ $cm := .CurrentMonth }}
+    <tr>
+      <td class="px" style="padding:24px 40px 0 40px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+        <h2 style="margin:0 0 4px 0; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:20px; font-weight:800; color:#14202e; letter-spacing:-0.3px;">📅 Now, {{ $cm.ShortLabel }}</h2>
+        <p style="margin:0 0 14px 0; font-size:14px; line-height:1.5; color:#5f6878;">What’s planned this month.</p>
+        {{ if $cm.Comment }}
+        <div style="margin-bottom:12px; padding:14px 16px; background-color:#f3f0fb; border-left:3px solid #6366f1; border-radius:12px;">
+          <div style="font-size:11px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:#5f6878; margin-bottom:4px;">📝 Your intention for this month</div>
+          <p style="margin:0; font-size:14px; line-height:1.6; color:#3b4656; font-style:italic;">« {{ $cm.Comment }} »</p>
+        </div>
+        {{ end }}
+        {{ if $cm.ProjectNotes }}
+        <div style="margin-bottom:12px; padding:14px 16px; background-color:#fff7eb; border-left:3px solid #f59e0b; border-radius:12px;">
+          <div style="font-size:11px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:#5f6878; margin-bottom:8px;">🗒️ Your notes for this month</div>
+          {{ range $cm.ProjectNotes }}<div style="margin-bottom:6px; font-size:13px; line-height:1.5; color:#3b4656;"><strong style="color:#14202e;">{{ .Name }} :</strong> <span style="font-style:italic;">{{ .Note }}</span></div>{{ end }}
+        </div>
+        {{ end }}
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #ece6dd; border-radius:16px;">
+          <tr><td style="padding:13px 18px; border-bottom:1px solid #ece6dd;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+            <td style="font-size:14px; color:#5b6575;">{{ if .UsesContributions }}Planned shared-pot inflows{{ else }}Planned income{{ end }}</td>
+            <td align="right" style="font-size:14px; font-weight:700; color:#14202e;">{{ formatMoney $cm.TotalIncome $sym }}</td></tr></table></td></tr>
+          <tr><td style="padding:13px 18px; border-bottom:1px solid #ece6dd;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+            <td style="font-size:14px; color:#5b6575;">Planned charges</td>
+            <td align="right" style="font-size:14px; font-weight:700; color:#14202e;">{{ formatMoney $cm.RecurringCharges $sym }}</td></tr></table></td></tr>
+          <tr><td style="padding:13px 18px; border-bottom:1px solid #ece6dd;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+            <td style="font-size:14px; color:#5b6575;">Planned savings</td>
+            <td align="right" style="font-size:14px; font-weight:700; color:#14202e;">{{ formatMoney $cm.ProjectsAllocated $sym }}</td></tr></table></td></tr>
+          <tr><td style="padding:14px 18px; background-color:{{ if ge $cm.NetSavings 0.0 }}#eefaf4{{ else }}#fdf1f1{{ end }}; border-radius:0 0 16px 16px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+            <td style="font-size:14px; font-weight:700; color:#14202e;">Planned rest</td>
+            <td align="right" style="font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:16px; font-weight:800; color:{{ if ge $cm.NetSavings 0.0 }}#0f7a4f{{ else }}#c23a3a{{ end }};">{{ formatMoney $cm.NetSavings $sym }}</td></tr></table></td></tr>
+        </table>
+        {{ if lt $cm.NetSavings 0.0 }}<p style="margin:10px 0 0 0; font-size:13px; line-height:1.5; color:#8a3030;">{{ formatMoney (abs $cm.NetSavings) $sym }} short this month: in Household, the split assistant recalculates everyone’s share in one tap.</p>{{ end }}
+        {{ if $cm.URL }}<p style="margin:10px 0 0 0; font-size:14px;"><a href="{{ $cm.URL }}&amp;utm_source=email&amp;utm_medium=monthly_recap&amp;utm_campaign={{ .CampaignID }}" style="color:#1f7fb4; font-weight:700;">See {{ $cm.ShortLabel }} in the app →</a></p>{{ end }}
+      </td>
+    </tr>
+
+    <!-- Next month -->
+    {{ $nm := .NextMonth }}
+    <tr>
+      <td class="px" style="padding:28px 40px 0 40px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+        <h2 style="margin:0 0 12px 0; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:18px; font-weight:800; color:#14202e;">🔮 Coming up in {{ $nm.ShortLabel }}</h2>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#eef7fc; border-radius:16px;">
+          <tr>
+            <td width="33%" valign="top" style="padding:14px 14px;">
+              <div style="font-size:11px; color:#5b6575;">{{ if .UsesContributions }}Inflows{{ else }}Income{{ end }}</div>
+              <div style="margin-top:3px; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:15px; font-weight:800; color:#14202e;">{{ formatMoney $nm.TotalIncome $sym }}</div>
+            </td>
+            <td width="33%" valign="top" style="padding:14px 14px;">
+              <div style="font-size:11px; color:#5b6575;">Charges</div>
+              <div style="margin-top:3px; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:15px; font-weight:800; color:#14202e;">{{ formatMoney $nm.RecurringCharges $sym }}</div>
+            </td>
+            <td width="33%" valign="top" style="padding:14px 14px;">
+              <div style="font-size:11px; color:#5b6575;">Savings</div>
+              <div style="margin-top:3px; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:15px; font-weight:800; color:#14202e;">{{ formatMoney $nm.ProjectsAllocated $sym }}</div>
+            </td>
+          </tr>
+        </table>
+        {{ if not $nm.HasData }}<p style="margin:10px 0 0 0; font-size:13px; color:#5f6878; font-style:italic;">Nothing planned yet: a good time to prepare the month.</p>{{ end }}
+        {{ if $nm.Comment }}
+        <div style="margin-top:12px; padding:14px 16px; background-color:#f3f0fb; border-left:3px solid #6366f1; border-radius:12px;">
+          <div style="font-size:11px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:#5f6878; margin-bottom:4px;">📝 What you’re planning</div>
+          <p style="margin:0; font-size:14px; line-height:1.6; color:#3b4656; font-style:italic;">« {{ $nm.Comment }} »</p>
+        </div>
+        {{ end }}
+        {{ if $nm.ProjectNotes }}
+        <div style="margin-top:12px; padding:14px 16px; background-color:#fff7eb; border-left:3px solid #f59e0b; border-radius:12px;">
+          <div style="font-size:11px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:#5f6878; margin-bottom:8px;">🗒️ Notes you already added</div>
+          {{ range $nm.ProjectNotes }}<div style="margin-bottom:6px; font-size:13px; line-height:1.5; color:#3b4656;"><strong style="color:#14202e;">{{ .Name }} :</strong> <span style="font-style:italic;">{{ .Note }}</span></div>{{ end }}
+        </div>
+        {{ end }}
+      </td>
+    </tr>
+
+    <!-- Tip -->
+    {{ if .Tip.Title }}
+    <tr>
+      <td class="px" style="padding:28px 40px 0 40px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#14202e" style="background-color:#14202e; background-image:linear-gradient(135deg,#14202e 0%,#1b3a57 60%,#1f9cd9 150%); border-radius:20px;">
+          <tr>
+            <td style="padding:22px 22px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+              <div style="font-size:11px; font-weight:800; letter-spacing:1.2px; text-transform:uppercase; color:#8fd3f5; margin-bottom:8px;">💡 Did you know?</div>
+              <div style="font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:18px; font-weight:800; color:#ffffff; margin-bottom:6px;">{{ .Tip.Emoji }} {{ .Tip.Title }}</div>
+              <p style="margin:0 0 14px 0; font-size:14px; line-height:1.6; color:#d5dde8;">{{ .Tip.Body }}</p>
+              <a href="{{ .Tip.URL }}?utm_source=email&amp;utm_medium=monthly_recap&amp;utm_campaign={{ .CampaignID }}&amp;utm_content=tip" style="font-size:14px; font-weight:800; color:#ffffff;">{{ .Tip.CTA }} →</a>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+    {{ end }}
+
+    <!-- Year -->
+    <tr>
+      <td class="px" style="padding:24px 40px 0 40px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f7f5f1; border-radius:16px;">
+          <tr><td style="padding:16px 18px;">
+            <div style="font-size:11px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:#5f6878; margin-bottom:10px;">Since January 1st, {{ .Year }}</div>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr><td style="font-size:13px; color:#5b6575; padding-bottom:6px;">{{ if .UsesContributions }}Shared-pot inflows{{ else }}Income{{ end }}</td><td align="right" style="font-size:13px; font-weight:700; color:#14202e; padding-bottom:6px;">{{ formatMoney .YearIncome $sym }}</td></tr>
+              <tr><td style="font-size:13px; color:#5b6575; padding-bottom:6px;">Expenses</td><td align="right" style="font-size:13px; font-weight:700; color:#14202e; padding-bottom:6px;">{{ formatMoney .YearExpenses $sym }}</td></tr>
+              <tr><td style="font-size:13px; color:#5b6575;">Balance</td><td align="right" style="font-size:13px; font-weight:800; color:{{ if ge .YearSavings 0.0 }}#0f7a4f{{ else }}#c23a3a{{ end }};">{{ formatMoney .YearSavings $sym }}</td></tr>
+            </table>
+          </td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- CTA -->
+    <tr>
+      <td align="center" class="px" style="padding:30px 40px 6px 40px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+          <tr><td align="center" bgcolor="#1f9cd9" style="border-radius:999px; background-color:#1f9cd9;">
+            <a href="{{ if .BudgetURL }}{{ .BudgetURL }}{{ else }}{{ .AppURL }}{{ end }}?utm_source=email&amp;utm_medium=monthly_recap&amp;utm_campaign={{ .CampaignID }}" target="_blank" style="display:inline-block; padding:16px 34px; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:15px; font-weight:800; color:#ffffff; border-radius:999px;">Open my budget →</a>
+          </td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- Other budgets -->
+    {{ if .OtherBudgets }}
+    <tr>
+      <td class="px" style="padding:28px 40px 0 40px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+        <h2 style="margin:0 0 4px 0; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:18px; font-weight:800; color:#14202e;">📂 Your other budgets</h2>
+        <p style="margin:0 0 12px 0; font-size:13px; color:#5f6878;">Since January 1st, {{ .Year }}.</p>
+        {{ range .OtherBudgets }}
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:10px; border:1px solid #ece6dd; border-radius:14px;">
+          <tr><td style="padding:14px 16px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="font-size:15px; font-weight:800; color:#14202e;">{{ .Name }}</td>
+                <td align="right" style="font-size:13px;"><a href="{{ .URL }}?utm_source=email&amp;utm_medium=monthly_recap&amp;utm_campaign={{ $.CampaignID }}" style="color:#1f7fb4; font-weight:700;">Open →</a></td>
+              </tr>
+              <tr><td colspan="2" style="padding-top:6px; font-size:13px; color:#5b6575;">Inflows {{ formatMoney .YearIncome .CurrencySymbol }} · Expenses {{ formatMoney .YearExpenses .CurrencySymbol }} · Balance <strong style="color:{{ if ge .YearSavings 0.0 }}#0f7a4f{{ else }}#c23a3a{{ end }};">{{ formatMoney .YearSavings .CurrencySymbol }}</strong></td></tr>
+            </table>
+          </td></tr>
+        </table>
+        {{ end }}
+        {{ if gt .HiddenBudgetCount 0 }}<p style="margin:4px 0 0 0; font-size:12px; color:#5f6878; font-style:italic;">And {{ .HiddenBudgetCount }} other budget{{ if gt .HiddenBudgetCount 1 }}s{{ end }} in the app.</p>{{ end }}
+      </td>
+    </tr>
+    {{ end }}
+
+    <!-- Signature -->
+    <tr>
+      <td class="px" style="padding:28px 40px 32px 40px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+        <div style="height:1px; line-height:1px; background-color:#efe9e1; margin-bottom:20px;">&nbsp;</div>
+        <p style="margin:0 0 12px 0; font-size:14px; line-height:1.6; color:#5b6575;">A question, an idea? Just reply to this email: I read everything personally.</p>
+        <p style="margin:0; font-size:15px; line-height:1.5; color:#14202e;"><strong>Libasse</strong><br><span style="font-size:13px; color:#5f6878;">Founder of Budget Famille</span></p>
+      </td>
+    </tr>
+
+  </table>
+  </td></tr>
+
+  <!-- Footer -->
+  <tr>
+    <td align="center" class="px" style="padding:22px 24px 0 24px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:12px; line-height:1.6; color:#5f6878;">
+      You’re receiving this review because you use Budget Famille.<br>
+      To stop receiving it, reply "STOP RECAP" to this message.<br>
+      © {{ .Year }} Budget Famille
+    </td>
+  </tr>
+
+</table>
+</td></tr>
+</table>
 </body>
 </html>

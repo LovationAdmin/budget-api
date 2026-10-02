@@ -75,6 +75,9 @@ func main() {
 	// Démarrer l'envoi automatique du récap mensuel (1er du mois, 09:00 Paris)
 	go scheduleMonthlyRecap(db)
 
+	// Annonce « nouveautés + excuses » : envoi unique après le déploiement.
+	go runWhatsNewAnnouncement(db)
+
 	// Initialiser le handler WebSocket
 	wsHandler := handlers.NewWSHandler()
 
@@ -375,6 +378,51 @@ func scheduleMonthlyRecap(db *sql.DB) {
 		utils.SafeInfo("monthly-recap: campaign=%s total=%d sent=%d skipped=%d failed=%d duration_ms=%d",
 			result.CampaignID, result.Total, result.Sent, result.Skipped, result.Failed, result.DurationMs)
 	}
+}
+
+// whatsNewCampaign is the one-off "what's new + apology" announcement sent to
+// every verified user once, right after the deploy that ships it.
+const (
+	whatsNewCampaignID = "whatsnew_2026_10"
+	whatsNewLockKey    = 202610 // pg advisory lock: one sender across instances
+)
+
+// whatsNewDeadline stops the announcement from going out on later restarts
+// (e.g. to users who sign up next month).
+var whatsNewDeadline = time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC)
+
+// runWhatsNewAnnouncement sends the announcement once. Safe on every boot:
+//   - email_campaign_sends skips users who already received it;
+//   - a Postgres advisory lock keeps a single sender when two instances
+//     overlap during a deploy;
+//   - nothing is sent after whatsNewDeadline or when WHATSNEW_DISABLED=1.
+func runWhatsNewAnnouncement(db *sql.DB) {
+	if os.Getenv("WHATSNEW_DISABLED") == "1" || time.Now().After(whatsNewDeadline) {
+		return
+	}
+	// Let the deploy settle (health checks, the previous instance draining).
+	time.Sleep(3 * time.Minute)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		utils.SafeWarn("whatsnew: no db connection: %v", err)
+		return
+	}
+	defer conn.Close()
+	var locked bool
+	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", whatsNewLockKey).Scan(&locked); err != nil || !locked {
+		utils.SafeInfo("whatsnew: another instance is sending (locked=%v err=%v)", locked, err)
+		return
+	}
+	defer conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", whatsNewLockKey) //nolint:errcheck
+
+	handler := handlers.NewAdminCampaignsHandler(db, services.NewEmailService())
+	res := handler.RunCampaign(ctx, whatsNewCampaignID, utils.CampaignWhatsNew202610, "verified")
+	utils.SafeInfo("whatsnew: campaign=%s total=%d sent=%d skipped=%d failed=%d duration_ms=%d",
+		whatsNewCampaignID, res.Total, res.Sent, res.Skipped, res.Failed, res.DurationMs)
 }
 
 // nextMonthlyRecapTrigger returns the next 1st-of-month 09:00 in the given

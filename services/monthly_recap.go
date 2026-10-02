@@ -48,6 +48,12 @@ type RecapMonth struct {
 	ProjectNotes      []ProjectNote // per-project notes for the month
 	HasData           bool
 	IsLocked          bool
+	// Members' month (Foyer): contribution and pocket money, personal
+	// charges included. Amounts only — personal charge labels stay private.
+	Members         []RecapMember
+	PersonalCharges float64
+	// Deep link to this month in the app.
+	URL string
 }
 
 // ProjectNote is a single per-project note attached to a month, surfaced
@@ -91,6 +97,11 @@ type RecapData struct {
 	// accordingly in the templates.
 	UsesContributions bool
 
+	// BudgetURL opens the budget in the app (current month).
+	BudgetURL string
+	// Tip is a short "did you know" about a feature, rotating every month.
+	Tip RecapTip
+
 	Projects []RecapProject
 
 	// OtherBudgets is a short summary of the user's other budgets (capped
@@ -112,6 +123,15 @@ type RecapData struct {
 
 // BudgetSummary is the compact per-budget block we surface at the end of the
 // recap email when the user owns more than one budget.
+// RecapTip is the "did you know" card of the recap.
+type RecapTip struct {
+	Emoji string
+	Title string
+	Body  string
+	CTA   string
+	URL   string
+}
+
 type BudgetSummary struct {
 	ID             string
 	Name           string
@@ -312,6 +332,16 @@ func (s *MonthlyRecapService) BuildRecap(
 	curr.ProjectNotes = aggregateProjectNotes(payload, currTime, locale)
 	next.ProjectNotes = aggregateProjectNotes(payload, nextTime, locale)
 
+	budgetURL := strings.TrimRight(appURL, "/") + "/budget/" + bs.ID + "/complete/month"
+	for _, m := range []*RecapMonth{&prev, &curr, &next} {
+		m.Members = resolveMembers(payload, m.Year, m.MonthIdx)
+		for _, x := range m.Members {
+			m.PersonalCharges += x.PersonalCharges
+		}
+		m.PersonalCharges = roundCents(m.PersonalCharges)
+		m.URL = budgetURL + "?m=" + makeYM(m.Year, m.MonthIdx)
+	}
+
 	projects := aggregateProjects(payload, currTime.Year(), locale)
 	yearIncome, yearExpenses := aggregateYearTotals(payload, currTime.Year())
 
@@ -348,6 +378,8 @@ func (s *MonthlyRecapService) BuildRecap(
 		YearExpenses:      yearExpenses,
 		YearSavings:       roundCents(yearIncome - yearExpenses),
 		UsesContributions: usesContributions(payload),
+		BudgetURL:         budgetURL,
+		Tip:               recapTip(locale, currTime, strings.TrimRight(appURL, "/")),
 		Projects:          projects,
 		OtherBudgets:      otherSummaries,
 		OtherBudgetCount:  otherBudgetCount - 1,
@@ -435,7 +467,10 @@ type budgetPerson struct {
 }
 
 type budgetCharge struct {
-	ID        string  `json:"id"`
+	ID string `json:"id"`
+	// Set on personal charges (stored under `personalCharges`): the member
+	// whose pocket money pays it.
+	OwnerID   string  `json:"ownerId,omitempty"`
 	Label     string  `json:"label"`
 	Amount    float64 `json:"amount"`
 	StartDate string  `json:"startDate,omitempty"`
@@ -486,15 +521,17 @@ type budgetOneTime struct {
 }
 
 type budgetPayload struct {
-	BudgetTitle    string                     `json:"budgetTitle"`
-	CurrentYear    int                        `json:"currentYear"`
-	People         []budgetPerson             `json:"people"`
-	Charges        []budgetCharge             `json:"charges"`
-	Projects       []budgetProject            `json:"projects"`
-	YearlyData     map[string]budgetYear      `json:"yearlyData"`
-	OneTimeIncomes map[string][]budgetOneTime `json:"oneTimeIncomes"`
-	LockedMonths   map[string]bool            `json:"lockedMonths"`
-	SchemaVersion  int                        `json:"schemaVersion,omitempty"`
+	BudgetTitle string         `json:"budgetTitle"`
+	CurrentYear int            `json:"currentYear"`
+	People      []budgetPerson `json:"people"`
+	Charges     []budgetCharge `json:"charges"`
+	// Members' personal charges: out of their pocket money, never in the pot.
+	PersonalCharges []budgetCharge             `json:"personalCharges"`
+	Projects        []budgetProject            `json:"projects"`
+	YearlyData      map[string]budgetYear      `json:"yearlyData"`
+	OneTimeIncomes  map[string][]budgetOneTime `json:"oneTimeIncomes"`
+	LockedMonths    map[string]bool            `json:"lockedMonths"`
+	SchemaVersion   int                        `json:"schemaVersion,omitempty"`
 }
 
 func decodeBudgetPayload(raw interface{}) (*budgetPayload, error) {
