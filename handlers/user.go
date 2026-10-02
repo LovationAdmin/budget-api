@@ -452,6 +452,11 @@ func (h *UserHandler) ExportUserData(c *gin.Context) {
 		},
 	}
 
+	// Private items (names of private personal charges…) belong to this user only.
+	if items, err := services.NewPrivateItemService(h.DB).ExportForUser(c.Request.Context(), userID); err == nil && len(items) > 0 {
+		exportData["private_items_by_budget"] = items
+	}
+
 	log.Printf("✅ [GDPR Export] Successfully generated export for user %s", userID)
 
 	c.JSON(http.StatusOK, exportData)

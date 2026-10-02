@@ -435,6 +435,17 @@ func RunMigrations(db *sql.DB) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_affiliate_link
 			ON affiliate_links (category, country, provider_name)`,
 
+		// Private items: per user and budget, encrypted, never in the shared blob
+		// (names / categories of private personal charges…).
+		`CREATE TABLE IF NOT EXISTS private_items (
+			budget_id UUID NOT NULL REFERENCES budgets(id) ON DELETE CASCADE,
+			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			item_id VARCHAR(100) NOT NULL,
+			payload TEXT NOT NULL,
+			updated_at TIMESTAMP DEFAULT NOW(),
+			PRIMARY KEY (budget_id, user_id, item_id)
+		)`,
+
 		// ============================================================================
 		// ✅ MIGRATION DES DONNÉES EXISTANTES
 		// ============================================================================
