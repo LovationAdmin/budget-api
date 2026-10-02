@@ -294,7 +294,7 @@ func TestRenderWhatsNew202610(t *testing.T) {
 		"argent de poche",
 		"Budget IA",
 		"mode sombre",
-		"https://budgetfamille.com/email/2026-10/month-light.jpg",
+		"https://www.budgetfamille.com/email/2026-10/month-light.jpg",
 		"https://budgetfamille.com/dashboard?utm_source=email&amp;utm_medium=campaign&amp;utm_campaign=whatsnew_2026_10",
 		"répondez «&nbsp;STOP&nbsp;»",
 	} {
