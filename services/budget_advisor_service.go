@@ -55,7 +55,10 @@ type AdvisorObjective struct {
 	Label         string   `json:"label"`
 	TargetAmount  *float64 `json:"targetAmount,omitempty"`
 	HorizonMonths *int     `json:"horizonMonths,omitempty"`
-	Priority      string   `json:"priority"`
+	// AlreadySaved is what the pot already holds for this objective, so the
+	// monthly pace only covers what is left to gather.
+	AlreadySaved *float64 `json:"alreadySaved,omitempty"`
+	Priority     string   `json:"priority"`
 }
 
 type HouseholdInput struct {
