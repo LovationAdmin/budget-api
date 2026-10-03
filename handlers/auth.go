@@ -62,14 +62,15 @@ func cleanToken(token string) string {
 
 type SignupRequest struct {
 	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required,min=10,max=72"`
+	Password string `json:"password" binding:"required,max=72"`
 	Name     string `json:"name" binding:"required,min=2,max=100"`
 }
 
 func (h *AuthHandler) Signup(c *gin.Context) {
 	var req SignupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		code, msg := signupBindErrorFR(err)
+		c.JSON(http.StatusBadRequest, authError(code, msg))
 		return
 	}
 
@@ -78,7 +79,8 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 	// Validation forte du mot de passe (au-delà de la longueur min)
 	if err := utils.ValidatePassword(req.Password, req.Email, req.Name); err != nil {
 		utils.LogAuthAction("Signup", req.Email, false)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		code, msg := passwordErrorFR(err)
+		c.JSON(http.StatusBadRequest, authError(code, msg))
 		return
 	}
 
@@ -86,14 +88,14 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 	err := h.DB.QueryRow("SELECT id FROM users WHERE email = $1", req.Email).Scan(&existingID)
 	if err == nil {
 		utils.LogAuthAction("Signup", req.Email, false)
-		c.JSON(http.StatusConflict, gin.H{"error": "Email already registered"})
+		c.JSON(http.StatusConflict, authError("email_taken", "Un compte existe déjà avec cette adresse e-mail."))
 		return
 	}
 
 	hashedPassword, err := utils.HashPassword(req.Password)
 	if err != nil {
 		utils.SafeError("Failed to hash password: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create account"})
+		c.JSON(http.StatusInternalServerError, authError("server_error", "La création du compte a échoué. Réessayez dans un instant."))
 		return
 	}
 
@@ -105,7 +107,7 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 
 	if err != nil {
 		utils.SafeError("Failed to insert user: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create account"})
+		c.JSON(http.StatusInternalServerError, authError("server_error", "La création du compte a échoué. Réessayez dans un instant."))
 		return
 	}
 
@@ -173,26 +175,27 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	if err == sql.ErrNoRows {
 		utils.LogAuthAction("Login", req.Email, false)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
+		c.JSON(http.StatusUnauthorized, authError("invalid_credentials", "E-mail ou mot de passe incorrect."))
 		return
 	}
 
 	if err != nil {
 		utils.SafeError("Database error during login: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Login failed"})
+		c.JSON(http.StatusInternalServerError, authError("server_error", "La connexion a échoué. Réessayez dans un instant."))
 		return
 	}
 
 	if !utils.CheckPassword(req.Password, passwordHash) {
 		utils.LogAuthAction("Login", req.Email, false)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
+		c.JSON(http.StatusUnauthorized, authError("invalid_credentials", "E-mail ou mot de passe incorrect."))
 		return
 	}
 
 	if !user.EmailVerified {
 		utils.LogAuthAction("Login-Unverified", req.Email, false)
 		c.JSON(http.StatusForbidden, gin.H{
-			"error":              "Email not verified",
+			"error":              "Votre adresse e-mail n'est pas encore vérifiée. Cliquez sur le lien reçu par e-mail.",
+			"code":               "email_not_verified",
 			"email_not_verified": true,
 		})
 		return
@@ -201,7 +204,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	if user.TOTPEnabled && totpSecret.Valid {
 		if req.TOTPCode == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"error":        "2FA code required",
+				"error":        "Saisissez le code de votre application d'authentification.",
 				"requires_2fa": true,
 			})
 			return
@@ -210,7 +213,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		valid, err := utils.VerifyTOTP(totpSecret.String, req.TOTPCode)
 		if err != nil || !valid {
 			utils.LogAuthAction("Login-2FA", req.Email, false)
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid 2FA code"})
+			c.JSON(http.StatusUnauthorized, authError("invalid_2fa", "Code de vérification incorrect."))
 			return
 		}
 	}
@@ -218,7 +221,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	token, err := utils.GenerateAccessToken(user.ID, user.Email)
 	if err != nil {
 		utils.SafeError("Failed to generate token: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Login failed"})
+		c.JSON(http.StatusInternalServerError, authError("server_error", "La connexion a échoué. Réessayez dans un instant."))
 		return
 	}
 
@@ -320,10 +323,19 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 
 	utils.SafeInfo("Email verified successfully for user: %s", userID)
 
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"message": "Email vérifié avec succès !",
 		"success": true,
-	})
+	}
+	// The link proves access to the mailbox: open the session right away so
+	// the new user lands in the app instead of retyping their password.
+	// Accounts protected by 2FA still go through the login form.
+	if session := h.sessionAfterVerification(c, userID); session != nil {
+		for k, v := range session {
+			resp[k] = v
+		}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // ============================================================================
@@ -441,7 +453,7 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 
 	if err != nil {
 		utils.SafeError("Failed to create reset token: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process request"})
+		c.JSON(http.StatusInternalServerError, authError("server_error", "La demande a échoué. Réessayez dans un instant."))
 		return
 	}
 
@@ -466,13 +478,13 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 
 type ResetPasswordRequest struct {
 	Token       string `json:"token" binding:"required"`
-	NewPassword string `json:"new_password" binding:"required,min=10,max=72"`
+	NewPassword string `json:"new_password" binding:"required,max=72"`
 }
 
 func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	var req ResetPasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, authError("invalid_request", "Le lien ou le mot de passe est incomplet."))
 		return
 	}
 
@@ -492,32 +504,33 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	`, cleanReqToken).Scan(&userID, &userEmail, &userName, &expiresAt)
 
 	if err == sql.ErrNoRows {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid or expired reset token"})
+		c.JSON(http.StatusBadRequest, authError("reset_invalid", "Ce lien de réinitialisation est invalide ou a déjà servi. Demandez-en un nouveau."))
 		return
 	}
 
 	if err != nil {
 		utils.SafeError("Database error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process request"})
+		c.JSON(http.StatusInternalServerError, authError("server_error", "La demande a échoué. Réessayez dans un instant."))
 		return
 	}
 
 	if time.Now().After(expiresAt) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Reset token has expired"})
+		c.JSON(http.StatusBadRequest, authError("reset_expired", "Ce lien de réinitialisation a expiré. Demandez-en un nouveau."))
 		return
 	}
 
 	// Validation forte du nouveau mot de passe (avec email+nom pour empêcher
 	// l'utilisateur de réutiliser un mot de passe trivialement lié à son compte)
 	if err := utils.ValidatePassword(req.NewPassword, userEmail, userName); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		code, msg := passwordErrorFR(err)
+		c.JSON(http.StatusBadRequest, authError(code, msg))
 		return
 	}
 
 	hashedPassword, err := utils.HashPassword(req.NewPassword)
 	if err != nil {
 		utils.SafeError("Failed to hash password: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reset password"})
+		c.JSON(http.StatusInternalServerError, authError("server_error", "La réinitialisation a échoué. Réessayez dans un instant."))
 		return
 	}
 
@@ -525,7 +538,7 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 
 	if err != nil {
 		utils.SafeError("Failed to update password: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reset password"})
+		c.JSON(http.StatusInternalServerError, authError("server_error", "La réinitialisation a échoué. Réessayez dans un instant."))
 		return
 	}
 
@@ -534,4 +547,36 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	utils.SafeInfo("Password reset completed successfully")
 
 	c.JSON(http.StatusOK, gin.H{"message": "Password reset successfully"})
+}
+
+// sessionAfterVerification issues an access token (and the refresh cookie)
+// for a user who just confirmed their email, like a successful login. It
+// returns nil when the session cannot or must not be opened here (2FA).
+func (h *AuthHandler) sessionAfterVerification(c *gin.Context, userID string) gin.H {
+	var u models.User
+	err := h.DB.QueryRow(`
+		SELECT id, email, name, COALESCE(avatar, ''), totp_enabled
+		FROM users WHERE id = $1
+	`, userID).Scan(&u.ID, &u.Email, &u.Name, &u.Avatar, &u.TOTPEnabled)
+	if err != nil || u.TOTPEnabled {
+		return nil
+	}
+	token, err := utils.GenerateAccessToken(u.ID, u.Email)
+	if err != nil {
+		utils.SafeWarn("verify-email: no session issued: %v", err)
+		return nil
+	}
+	h.IssueRefreshAndSetCookie(c, u.ID)
+	utils.LogAuthAction("Login-AfterVerification", u.Email, true)
+	return gin.H{
+		"token":      token,
+		"expires_in": 15 * 60,
+		"user": gin.H{
+			"id":           u.ID,
+			"email":        u.Email,
+			"name":         u.Name,
+			"avatar":       u.Avatar,
+			"totp_enabled": u.TOTPEnabled,
+		},
+	}
 }

@@ -72,6 +72,7 @@ type StatsResponse struct {
 	Budgets       BudgetStats `json:"budgets"`
 	Sessions      SessionStats `json:"sessions"`
 	Suggestions   CacheStats  `json:"suggestions_cache"`
+	Growth        *GrowthStats `json:"growth,omitempty"`
 }
 
 type UserStats struct {
@@ -171,6 +172,8 @@ func (h *AdminStatsHandler) GetStats(c *gin.Context) {
 	`).Scan(&resp.Suggestions.Total, &resp.Suggestions.NotExpired); err != nil {
 		utils.SafeWarn("admin/stats: suggestions stats failed: %v", err)
 	}
+
+	h.attachGrowth(ctx, &resp)
 
 	c.JSON(http.StatusOK, resp)
 }
