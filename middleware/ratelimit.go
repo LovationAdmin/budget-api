@@ -223,8 +223,8 @@ func NewLimiter(cfg LimiterConfig) gin.HandlerFunc {
 // KEY EXTRACTORS RÉUTILISABLES
 // ============================================================================
 
-// KeyByIP utilise l'adresse IP du client. Présuppose que les trusted proxies
-// sont configurés dans Gin (sinon retourne l'IP du proxy).
+// KeyByIP utilise l'adresse IP du visiteur, telle que configurée par
+// ConfigureClientIP (sinon c.ClientIP() renverrait l'IP du proxy).
 func KeyByIP(c *gin.Context) (string, bool) {
 	ip := c.ClientIP()
 	if ip == "" {

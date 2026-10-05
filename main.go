@@ -85,20 +85,15 @@ func main() {
 	router := gin.Default()
 
 	// ============================================================================
-	// TRUSTED PROXIES
+	// ADRESSE IP DU VISITEUR (limites par IP, sessions)
 	// ============================================================================
-	// En prod, on est derrière le proxy Render → c.ClientIP() retournerait
-	// l'IP du proxy si on ne configure pas la confiance. On accepte les headers
-	// X-Forwarded-For en prod ; un attaquant pourrait spoofer son IP, mais
-	// notre rate limiting est principalement par EMAIL (pas par IP) pour les
-	// endpoints sensibles, donc l'impact est limité.
-	if isProd := os.Getenv("ENVIRONMENT") == "production"; isProd {
-		// nil = trust all (X-Forwarded-For pris tel quel, comme c'est Render qui le set)
-		_ = router.SetTrustedProxies(nil)
-		utils.SafeInfo("Trusted proxies: ALL (production mode)")
-	} else {
-		// En dev, pas de proxy → trust uniquement loopback
-		_ = router.SetTrustedProxies([]string{"127.0.0.1", "::1"})
+	// X-Forwarded-For n'est jamais pris en compte : son entrée la plus à gauche
+	// est fournie par l'appelant (SetTrustedProxies(nil) = aucun proxy de
+	// confiance). Sur Render, l'IP réelle vient de CF-Connecting-IP, posé par
+	// Cloudflare — voir middleware/client_ip.go.
+	_ = router.SetTrustedProxies(nil)
+	if header := middleware.ConfigureClientIP(router); header != "" {
+		utils.SafeInfo("Client IP read from %s", header)
 	}
 
 	// ============================================================================
@@ -230,6 +225,9 @@ func main() {
 
 		// FIXED: SetupAdminSuggestionsRoutes ne prend que 2 arguments
 		routes.SetupAdminSuggestionsRoutes(v1, db)
+
+		// Simulateur d'économies public (page Outils IA + widget d'accueil)
+		routes.SetupPublicSuggestionsRoutes(v1, db)
 
 		// 2. Routes Protégées (Nécessitent une authentification)
 		// On crée un groupe protégé qui applique le middleware d'auth

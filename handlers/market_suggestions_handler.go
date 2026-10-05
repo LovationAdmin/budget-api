@@ -9,16 +9,24 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"math"
 	"net/http"
+	"os"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/LovationAdmin/budget-api/models"
 	"github.com/LovationAdmin/budget-api/services"
 	"github.com/LovationAdmin/budget-api/utils"
+	"github.com/gin-gonic/gin"
 )
 
 // clampHouseholdParam mirrors services.bucketHouseholdSize so the
@@ -42,6 +50,7 @@ type MarketSuggestionsHandler struct {
 	DB             *sql.DB
 	MarketAnalyzer *services.MarketAnalyzerService
 	WS             *WSHandler
+	bulk           *bulkRegistry
 }
 
 func NewMarketSuggestionsHandler(db *sql.DB, analyzer *services.MarketAnalyzerService, ws *WSHandler) *MarketSuggestionsHandler {
@@ -49,6 +58,7 @@ func NewMarketSuggestionsHandler(db *sql.DB, analyzer *services.MarketAnalyzerSe
 		DB:             db,
 		MarketAnalyzer: analyzer,
 		WS:             ws,
+		bulk:           &bulkRegistry{runs: map[string]*bulkRun{}},
 	}
 }
 
@@ -216,7 +226,8 @@ func (h *MarketSuggestionsHandler) getBudgetConfig(ctx context.Context, budgetID
 
 // ============================================================================
 // 1. ANALYZE SINGLE CHARGE
-// POST /api/v1/suggestions/analyze
+// POST /api/v1/suggestions/analyze          (connecté)
+// POST /api/v1/public/suggestions/analyze   (simulateur public, limité par IP)
 // ============================================================================
 
 type AnalyzeChargeRequest struct {
@@ -229,47 +240,98 @@ type AnalyzeChargeRequest struct {
 	Description   string  `json:"description"`
 }
 
+// singleAnalysisTimeout bounds one synchronous analysis (AI call + retries).
+const singleAnalysisTimeout = 75 * time.Second
+
+// isISOCode reports whether s is an n-letter code (country / currency).
+func isISOCode(s string, n int) bool {
+	if len(s) != n {
+		return false
+	}
+	for _, r := range s {
+		if r < 'A' || r > 'Z' {
+			return false
+		}
+	}
+	return true
+}
+
+// marketErrorResponse maps an analysis failure to a status, code and French
+// message (the provider's raw error never reaches the client).
+func marketErrorResponse(err error) (int, gin.H) {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return http.StatusGatewayTimeout, gin.H{
+			"error": "L'analyse a pris trop de temps. Réessayez dans un instant.",
+			"code":  "ai_timeout",
+		}
+	case services.IsTransientAIError(err):
+		return http.StatusServiceUnavailable, gin.H{
+			"error": "Le service IA est très sollicité en ce moment. Réessayez dans une minute.",
+			"code":  "ai_busy",
+		}
+	default:
+		return http.StatusServiceUnavailable, gin.H{
+			"error": "Le service d'analyse est momentanément indisponible. Réessayez plus tard.",
+			"code":  "ai_unavailable",
+		}
+	}
+}
+
 func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 	var req AnalyzeChargeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Requête invalide : catégorie et montant requis."})
+		return
+	}
+
+	category := strings.ToUpper(strings.TrimSpace(req.Category))
+	if !h.isSuggestionRelevant(category) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cette catégorie n'est pas encore prise en charge.", "code": "unsupported_category"})
+		return
+	}
+	if math.IsNaN(req.Amount) || req.Amount <= 0 || req.Amount > 100000 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Indiquez un montant mensuel valide.", "code": "invalid_amount"})
 		return
 	}
 
 	// Defaults
-	country := req.Country
-	if country == "" {
+	country := strings.ToUpper(strings.TrimSpace(req.Country))
+	if !isISOCode(country, 2) {
 		country = "FR"
 	}
-	currency := req.Currency
-	if currency == "" {
+	currency := strings.ToUpper(strings.TrimSpace(req.Currency))
+	if !isISOCode(currency, 3) {
 		currency = "EUR"
 	}
 	householdSize := req.HouseholdSize
 	if householdSize < 1 {
 		householdSize = 1
 	}
+	if householdSize > 20 {
+		householdSize = 20
+	}
 
 	// ✅ LOGGING SÉCURISÉ - Pas de montant ni données personnelles
-	utils.LogAIAnalysis("SingleAnalyze", req.Category, country, 1)
+	utils.LogAIAnalysis("SingleAnalyze", category, country, 1)
 
-	suggestion, err := h.MarketAnalyzer.AnalyzeCharge(
-		c.Request.Context(),
-		req.Category,
-		req.MerchantName,
-		req.Amount,
-		country,
-		currency,
-		householdSize,
-		req.Description,
-	)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), singleAnalysisTimeout)
+	defer cancel()
+
+	suggestion, _, err := h.MarketAnalyzer.Analyze(ctx, services.ChargeAnalysis{
+		Category:      category,
+		MerchantName:  req.MerchantName,
+		Amount:        req.Amount,
+		Country:       country,
+		Currency:      currency,
+		HouseholdSize: householdSize,
+		Description:   req.Description,
+	})
 
 	if err != nil {
 		utils.SafeError("Single charge analysis failed: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Analysis failed",
-			"details": err.Error(),
-		})
+		status, body := marketErrorResponse(err)
+		c.JSON(status, body)
 		return
 	}
 
@@ -308,6 +370,16 @@ func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 		return
 	}
 
+	// Cached offers carry no savings (they depend on the household's amount):
+	// computed when ?amount= is given, otherwise cheapest first.
+	if amount, err := strconv.ParseFloat(c.Query("amount"), 64); err == nil && amount > 0 {
+		h.MarketAnalyzer.PriceForHousehold(suggestion, amount, householdSize)
+	} else {
+		sort.SliceStable(suggestion.Competitors, func(a, b int) bool {
+			return suggestion.Competitors[a].TypicalPrice < suggestion.Competitors[b].TypicalPrice
+		})
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"suggestion": suggestion,
 		"cached":     true,
@@ -317,6 +389,15 @@ func (h *MarketSuggestionsHandler) GetCategorySuggestions(c *gin.Context) {
 // ============================================================================
 // 3. BULK ANALYZE ALL CHARGES IN A BUDGET (ASYNC)
 // POST /api/v1/budgets/:id/suggestions/bulk-analyze
+// ----------------------------------------------------------------------------
+// Répond 202 tout de suite avec le nombre de charges à analyser, puis diffuse
+// sur le WebSocket du budget :
+//   - suggestions_progress {done, total, failed, item?} après chaque charge
+//     (les résultats en cache arrivent en quelques ms) ;
+//   - suggestions_ready {..., total, failed_count, status} à la fin.
+// Les charges sont analysées en parallèle (MARKET_CONCURRENCY, 4 par défaut).
+// Une analyse identique déjà en cours n'est pas relancée ; une analyse
+// différente pour le même budget remplace la précédente.
 // ============================================================================
 
 type ChargeToAnalyze struct {
@@ -331,6 +412,76 @@ type ChargeToAnalyze struct {
 type BulkAnalyzeRequest struct {
 	Charges       []ChargeToAnalyze `json:"charges" binding:"required"`
 	HouseholdSize int               `json:"household_size"`
+	// Force restarts the analysis even if the same one is running (the
+	// client's "Relancer" button, e.g. when a run seems stuck).
+	Force bool `json:"force"`
+}
+
+// bulkRunTimeout bounds a whole bulk analysis.
+const bulkRunTimeout = 4 * time.Minute
+
+// bulkChargeTimeout bounds the analysis of one charge within a bulk run.
+const bulkChargeTimeout = 75 * time.Second
+
+func bulkConcurrency() int {
+	if n, err := strconv.Atoi(os.Getenv("MARKET_CONCURRENCY")); err == nil && n > 0 {
+		return n
+	}
+	return 4
+}
+
+// bulkRegistry tracks the running bulk analysis of each budget.
+type bulkRegistry struct {
+	mu   sync.Mutex
+	runs map[string]*bulkRun
+}
+
+type bulkRun struct {
+	signature string
+	cancel    context.CancelFunc
+}
+
+// start registers a run for the budget. When the same analysis is already
+// running (and force is false) it returns running=true and no context;
+// otherwise any previous run of the budget is cancelled (its results would
+// be stale or it is being restarted) and finish must be called when the new
+// run ends.
+func (r *bulkRegistry) start(budgetID, signature string, force bool) (ctx context.Context, finish func(), running bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if prev, ok := r.runs[budgetID]; ok {
+		if prev.signature == signature && !force {
+			return nil, nil, true
+		}
+		prev.cancel()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), bulkRunTimeout)
+	run := &bulkRun{signature: signature, cancel: cancel}
+	r.runs[budgetID] = run
+	return ctx, func() {
+		cancel()
+		r.mu.Lock()
+		if r.runs[budgetID] == run {
+			delete(r.runs, budgetID)
+		}
+		r.mu.Unlock()
+	}, false
+}
+
+type bulkJob struct {
+	Charge   ChargeToAnalyze
+	Category string
+}
+
+func bulkSignature(jobs []bulkJob, householdSize int, country, currency string) string {
+	data, _ := json.Marshal(struct {
+		Jobs      []bulkJob
+		Household int
+		Country   string
+		Currency  string
+	}{jobs, householdSize, country, currency})
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
@@ -350,113 +501,185 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 		return
 	}
 
+	householdSize := req.HouseholdSize
+	if householdSize < 1 {
+		householdSize = 1
+	}
+
+	country, currency, err := h.getBudgetConfig(c.Request.Context(), budgetID)
+	if err != nil {
+		utils.SafeWarn("Could not fetch budget config, using defaults")
+		country, currency = "FR", "EUR"
+	}
+
+	// 2. Eligible charges, known up front so the client can show "n / total".
+	jobs := []bulkJob{}
+	for _, charge := range req.Charges {
+		// Vérifier/corriger la catégorie
+		category := strings.ToUpper(charge.Category)
+		if category == "LEISURE" || category == "OTHER" || category == "" {
+			if refined := determineCategory(charge.Label); refined != "OTHER" && refined != "LEISURE" {
+				category = refined
+			}
+		}
+		if charge.Amount > 0 && h.isSuggestionRelevant(category) {
+			jobs = append(jobs, bulkJob{Charge: charge, Category: category})
+		}
+	}
+
 	// ✅ LOGGING SÉCURISÉ - Pas d'ID complet ni de montants
 	utils.LogBudgetAction("BulkAnalyze-Start", budgetID, userID)
-	utils.SafeInfo("Bulk analysis requested for %d charges", len(req.Charges))
+	utils.SafeInfo("Bulk analysis requested for %d charges (%d eligible)", len(req.Charges), len(jobs))
 
-	// 2. Respond IMMEDIATELY to prevent timeout (HTTP 202 Accepted)
+	ctx, finish, running := h.bulk.start(budgetID, bulkSignature(jobs, householdSize, country, currency), req.Force)
+	if running {
+		c.JSON(http.StatusAccepted, gin.H{
+			"message": "Analysis already running",
+			"status":  "already_running",
+			"total":   len(jobs),
+		})
+		return
+	}
+
+	// 3. Respond IMMEDIATELY to prevent timeout (HTTP 202 Accepted)
 	c.JSON(http.StatusAccepted, gin.H{
 		"message": "Analysis started in background",
 		"status":  "processing",
+		"total":   len(jobs),
 	})
 
-	// 3. Launch background processing
 	go func() {
-		bgCtx := context.Background()
+		defer finish()
+		h.runBulkAnalysis(ctx, budgetID, userID, jobs, householdSize, country, currency)
+	}()
+}
 
-		// Récupération de la config budget
-		country, currency, err := h.getBudgetConfig(bgCtx, budgetID)
-		if err != nil {
-			utils.SafeWarn("Could not fetch budget config, using defaults")
-			country, currency = "FR", "EUR"
-		}
+func (h *MarketSuggestionsHandler) runBulkAnalysis(ctx context.Context, budgetID, userID string, jobs []bulkJob, householdSize int, country, currency string) {
+	// ✅ LOGGING SÉCURISÉ
+	utils.LogAIAnalysis("BulkAnalyze-Process", "MULTIPLE", country, len(jobs))
 
-		householdSize := req.HouseholdSize
-		if householdSize < 1 {
-			householdSize = 1
-		}
+	var (
+		mu        sync.Mutex
+		wg        sync.WaitGroup
+		results   = make([]*models.ChargeSuggestion, len(jobs))
+		done      int
+		failed    int
+		cacheHits int
+		aiCalls   int
+	)
+	sem := make(chan struct{}, bulkConcurrency())
 
-		// ✅ LOGGING SÉCURISÉ
-		utils.LogAIAnalysis("BulkAnalyze-Process", "MULTIPLE", country, len(req.Charges))
+	for i, job := range jobs {
+		wg.Add(1)
+		go func(i int, job bulkJob) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
+			}
 
-		var suggestions []models.ChargeSuggestion
-		totalSavings := 0.0
-		cacheHits := 0
-		aiCallsMade := 0
-		processedCount := 0
+			chargeCtx, cancel := context.WithTimeout(ctx, bulkChargeTimeout)
+			suggestion, fromCache, err := h.MarketAnalyzer.Analyze(chargeCtx, services.ChargeAnalysis{
+				Category:      job.Category,
+				MerchantName:  job.Charge.MerchantName,
+				Amount:        job.Charge.Amount,
+				Country:       country,
+				Currency:      currency,
+				HouseholdSize: householdSize,
+				Description:   job.Charge.Description,
+			})
+			cancel()
 
-		for _, charge := range req.Charges {
-			// Vérifier/corriger la catégorie
-			analysisCategory := charge.Category
-			if charge.Category == "LEISURE" || charge.Category == "OTHER" || charge.Category == "" {
-				refined := determineCategory(charge.Label)
-				if refined != "OTHER" && refined != "LEISURE" {
-					utils.SafeDebug("Recategorized charge from %s to %s", charge.Category, refined)
-					analysisCategory = refined
+			// Progress is broadcast under the lock so clients see it in order.
+			mu.Lock()
+			defer mu.Unlock()
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return // superseded by a newer analysis: its results are stale
+			}
+			done++
+			var item *models.ChargeSuggestion
+			switch {
+			case err != nil:
+				failed++
+				utils.SafeWarn("Failed to analyze charge: %v", err)
+			default:
+				if fromCache {
+					cacheHits++
+				} else {
+					aiCalls++
+				}
+				if len(suggestion.Competitors) > 0 {
+					item = &models.ChargeSuggestion{
+						ChargeID:    job.Charge.ID,
+						ChargeLabel: job.Charge.Label,
+						Suggestion:  suggestion,
+					}
+					results[i] = item
 				}
 			}
+			h.broadcast(budgetID, "suggestions_progress", map[string]interface{}{
+				"done":   done,
+				"total":  len(jobs),
+				"failed": failed,
+				"item":   item,
+			})
+		}(i, job)
+	}
+	wg.Wait()
 
-			// Vérifier si la catégorie est éligible
-			if !h.isSuggestionRelevant(analysisCategory) {
-				continue
-			}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		utils.SafeInfo("Bulk analysis superseded by a newer one")
+		return
+	}
+	// Timed out: report what was found; charges never analyzed count as failed.
+	failed += len(jobs) - done
 
-			// Petit délai pour éviter de surcharger l'API
-			time.Sleep(100 * time.Millisecond)
-
-			suggestion, err := h.MarketAnalyzer.AnalyzeCharge(
-				bgCtx,
-				analysisCategory,
-				charge.MerchantName,
-				charge.Amount,
-				country,
-				currency,
-				householdSize,
-				charge.Description,
-			)
-
-			if err != nil {
-				utils.SafeWarn("Failed to analyze charge: %v", err)
-				continue
-			}
-
-			if len(suggestion.Competitors) > 0 {
-				bestSavings := suggestion.Competitors[0].PotentialSavings
-				totalSavings += bestSavings
-
-				suggestions = append(suggestions, models.ChargeSuggestion{
-					ChargeID:    charge.ID,
-					ChargeLabel: charge.Label,
-					Suggestion:  suggestion,
-				})
-
-				aiCallsMade++
-			}
-
-			processedCount++
+	suggestions := []models.ChargeSuggestion{}
+	totalSavings := 0.0
+	for _, item := range results {
+		if item != nil {
+			suggestions = append(suggestions, *item)
+			totalSavings += item.Suggestion.Competitors[0].PotentialSavings
 		}
+	}
+	// Biggest savings first.
+	sort.SliceStable(suggestions, func(a, b int) bool {
+		return suggestions[a].Suggestion.Competitors[0].PotentialSavings > suggestions[b].Suggestion.Competitors[0].PotentialSavings
+	})
 
-		// ✅ LOGGING SÉCURISÉ - Pas de montant total exact
-		utils.SafeInfo("Bulk analysis complete: %d charges processed, %d suggestions found", processedCount, len(suggestions))
-		utils.LogBudgetAction("BulkAnalyze-Complete", budgetID, userID)
+	status := "ok"
+	if failed > 0 && failed == len(jobs) {
+		status = "failed"
+	} else if failed > 0 {
+		status = "partial"
+	}
 
-		// 4. Notify Frontend via WebSocket
-		if h.WS != nil {
-			responsePayload := map[string]interface{}{
-				"type": "suggestions_ready",
-				"data": map[string]interface{}{
-					"suggestions":             suggestions,
-					"total_potential_savings": totalSavings,
-					"household_size":          householdSize,
-					"cache_hits":              cacheHits,
-					"ai_calls_made":           aiCallsMade,
-					"currency":                currency,
-				},
-			}
+	// ✅ LOGGING SÉCURISÉ - Pas de montant total exact
+	utils.SafeInfo("Bulk analysis complete: %d charges, %d suggestions, %d failed (%d cached, %d AI)",
+		len(jobs), len(suggestions), failed, cacheHits, aiCalls)
+	utils.LogBudgetAction("BulkAnalyze-Complete", budgetID, userID)
 
-			h.WS.BroadcastJSON(budgetID, responsePayload)
-		}
-	}()
+	// 4. Notify Frontend via WebSocket
+	h.broadcast(budgetID, "suggestions_ready", map[string]interface{}{
+		"suggestions":             suggestions,
+		"total_potential_savings": math.Round(totalSavings*100) / 100,
+		"household_size":          householdSize,
+		"cache_hits":              cacheHits,
+		"ai_calls_made":           aiCalls,
+		"currency":                currency,
+		"total":                   len(jobs),
+		"failed_count":            failed,
+		"status":                  status,
+	})
+}
+
+func (h *MarketSuggestionsHandler) broadcast(budgetID, msgType string, data interface{}) {
+	if h.WS == nil {
+		return
+	}
+	h.WS.BroadcastJSON(budgetID, map[string]interface{}{"type": msgType, "data": data})
 }
 
 // ============================================================================
