@@ -314,6 +314,13 @@ func RunMigrations(db *sql.DB) error {
 		// pricing don't leak across users.
 		`ALTER TABLE market_suggestions ADD COLUMN IF NOT EXISTS currency VARCHAR(3) NOT NULL DEFAULT 'EUR'`,
 		`ALTER TABLE market_suggestions ADD COLUMN IF NOT EXISTS household_size SMALLINT NOT NULL DEFAULT 1`,
+		// Bug: competitor prices are estimated for the consumption implied by the
+		// amount and the user's details, yet one entry answered every amount —
+		// a list found for a 400 €/month bill was served for a 60 € one, so no
+		// offer looked cheaper. variant = price band + details hash. Entries
+		// without one were computed that way: purge them.
+		`ALTER TABLE market_suggestions ADD COLUMN IF NOT EXISTS variant VARCHAR(64) NOT NULL DEFAULT ''`,
+		`DELETE FROM market_suggestions WHERE variant = ''`,
 
 		// ============================================================================
 		// INDEXES CRITIQUES POUR PERFORMANCE
@@ -420,14 +427,14 @@ func RunMigrations(db *sql.DB) error {
 			UNIQUE (connection_id, account_id)`,
 
 		// Market suggestions unique indexes — keyed on the full cache tuple so
-		// (category, country, currency, household_size, merchant_name) is unique.
+		// (category, country, currency, household_size, merchant_name, variant) is unique.
 		`DROP INDEX IF EXISTS idx_unique_market_suggestion_null`,
 		`DROP INDEX IF EXISTS idx_unique_market_suggestion_not_null`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_market_suggestion_null
-			ON market_suggestions (category, country, currency, household_size)
+			ON market_suggestions (category, country, currency, household_size, variant)
 			WHERE merchant_name IS NULL`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_market_suggestion_not_null
-			ON market_suggestions (category, country, currency, household_size, merchant_name)
+			ON market_suggestions (category, country, currency, household_size, merchant_name, variant)
 			WHERE merchant_name IS NOT NULL`,
 
 		// Affiliate links unique index

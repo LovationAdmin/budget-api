@@ -65,6 +65,8 @@ func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *handlers.WSHa
 
 	// Stateless generation, usable both at creation and on an existing budget.
 	rg.POST("/budgets/ai-proposal", advisorHandler.GenerateProposal)
+	// Same, streamed as Server-Sent Events with the real generation progress.
+	rg.POST("/budgets/ai-proposal/stream", advisorHandler.StreamProposal)
 }
 
 func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB, rt *services.RefreshTokenService) {
@@ -177,6 +179,18 @@ func SetupMarketSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *ha
 
 	// FIXED: Updated method name to match handler definition
 	rg.POST("/categorize", handler.CategorizeLabel)
+}
+
+// SetupPublicSuggestionsRoutes exposes the single-charge simulator of the
+// public Smart Tools page and landing widget (no account needed), rate
+// limited since an analysis may call the AI.
+func SetupPublicSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {
+	aiService := services.NewClaudeAIService()
+	marketAnalyzer := services.NewMarketAnalyzerService(db, aiService)
+	handler := handlers.NewMarketSuggestionsHandler(db, marketAnalyzer, nil)
+
+	chain := append(middleware.PublicAIRateLimit(), handler.AnalyzeCharge)
+	rg.POST("/public/suggestions/analyze", chain...)
 }
 
 func SetupAdminSuggestionsRoutes(rg *gin.RouterGroup, db *sql.DB) {

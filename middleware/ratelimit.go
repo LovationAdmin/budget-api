@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -231,6 +232,25 @@ func KeyByIP(c *gin.Context) (string, bool) {
 		return "", true // skip si IP indisponible
 	}
 	return "ip:" + ip, false
+}
+
+// KeyByClientIP identifie le visiteur derrière les proxys de Render. En
+// production c.ClientIP() renvoie l'adresse du proxy (SetTrustedProxies(nil)
+// ne fait confiance à aucun proxy) : tous les visiteurs partageraient le même
+// compteur. Les en-têtes de proxy sont falsifiables : à n'utiliser qu'avec un
+// plafond global qui borne l'abus.
+func KeyByClientIP(c *gin.Context) (string, bool) {
+	for _, h := range []string{"True-Client-IP", "CF-Connecting-IP"} {
+		if ip := strings.TrimSpace(c.GetHeader(h)); net.ParseIP(ip) != nil {
+			return "ip:" + ip, false
+		}
+	}
+	if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
+		if first := strings.TrimSpace(strings.Split(xff, ",")[0]); net.ParseIP(first) != nil {
+			return "ip:" + first, false
+		}
+	}
+	return KeyByIP(c)
 }
 
 // KeyByEmailFromBody lit le champ "email" du body JSON. Utilise une copie

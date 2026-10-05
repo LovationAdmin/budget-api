@@ -36,6 +36,16 @@ type WSSession struct {
 	Conn     *websocket.Conn
 	BudgetID string
 	UserID   string
+	// writeMu serializes writes: a websocket connection supports one writer
+	// at a time, and broadcasts can come from several goroutines.
+	writeMu sync.Mutex
+}
+
+// WriteJSON sends one message on the session's connection.
+func (s *WSSession) WriteJSON(v interface{}) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.Conn.WriteJSON(v)
 }
 
 type WSHandler struct {
@@ -128,7 +138,7 @@ func (h *WSHandler) handleMessages(sessionKey string, session *WSSession) {
 		// Handle ping/pong for keepalive
 		if msgType, ok := data["type"].(string); ok {
 			if msgType == "ping" {
-				session.Conn.WriteJSON(map[string]string{"type": "pong"})
+				session.WriteJSON(map[string]string{"type": "pong"})
 			}
 		}
 	}
@@ -146,7 +156,7 @@ func (h *WSHandler) BroadcastJSON(budgetID string, payload interface{}) {
 	sentCount := 0
 	for _, session := range h.sessions {
 		if session.BudgetID == budgetID {
-			if err := session.Conn.WriteJSON(payload); err != nil {
+			if err := session.WriteJSON(payload); err != nil {
 				utils.SafeWarn("Failed to send WebSocket message: %v", err)
 				continue
 			}
@@ -172,7 +182,7 @@ func (h *WSHandler) BroadcastUpdate(budgetID string, updateType string, userWhoU
 	sentCount := 0
 	for _, session := range h.sessions {
 		if session.BudgetID == budgetID {
-			if err := session.Conn.WriteJSON(payload); err != nil {
+			if err := session.WriteJSON(payload); err != nil {
 				utils.SafeWarn("Failed to send WebSocket message: %v", err)
 				continue
 			}
@@ -198,7 +208,7 @@ func (h *WSHandler) BroadcastUpdateExcludingUser(budgetID string, updateType str
 	sentCount := 0
 	for _, session := range h.sessions {
 		if session.BudgetID == budgetID && session.UserID != userIDToExclude {
-			if err := session.Conn.WriteJSON(payload); err != nil {
+			if err := session.WriteJSON(payload); err != nil {
 				utils.SafeWarn("Failed to send WebSocket message: %v", err)
 				continue
 			}
@@ -218,7 +228,7 @@ func (h *WSHandler) BroadcastToUser(budgetID string, userID string, payload inte
 
 	for _, session := range h.sessions {
 		if session.BudgetID == budgetID && session.UserID == userID {
-			if err := session.Conn.WriteJSON(payload); err != nil {
+			if err := session.WriteJSON(payload); err != nil {
 				utils.SafeWarn("Failed to send WebSocket message to user: %v", err)
 			}
 			return

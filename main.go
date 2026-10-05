@@ -231,6 +231,9 @@ func main() {
 		// FIXED: SetupAdminSuggestionsRoutes ne prend que 2 arguments
 		routes.SetupAdminSuggestionsRoutes(v1, db)
 
+		// Simulateur d'économies public (page Outils IA + widget d'accueil)
+		routes.SetupPublicSuggestionsRoutes(v1, db)
+
 		// 2. Routes Protégées (Nécessitent une authentification)
 		// On crée un groupe protégé qui applique le middleware d'auth
 		protected := v1.Group("/")

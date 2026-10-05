@@ -107,3 +107,26 @@ func VerifyResendRateLimit() gin.HandlerFunc {
 		KeyFunc: KeyByEmailFromBody,
 	})
 }
+
+// PublicAIRateLimit protège le simulateur IA public (sans compte) : chaque
+// analyse peut déclencher un appel IA payant. 15 / heure par visiteur, et un
+// plafond global de 150 / heure : l'IP du visiteur vient d'en-têtes de proxy
+// (falsifiables), le plafond global borne le coût quoi qu'il arrive (vérifié
+// après la limite par visiteur, pour qu'un seul abuseur ne l'épuise pas).
+// Les utilisateurs connectés passent par l'endpoint protégé.
+func PublicAIRateLimit() []gin.HandlerFunc {
+	return []gin.HandlerFunc{
+		NewLimiter(LimiterConfig{
+			Name:    "public_ai",
+			Limit:   15,
+			Window:  1 * time.Hour,
+			KeyFunc: KeyByClientIP,
+		}),
+		NewLimiter(LimiterConfig{
+			Name:    "public_ai_global",
+			Limit:   150,
+			Window:  1 * time.Hour,
+			KeyFunc: func(*gin.Context) (string, bool) { return "all", false },
+		}),
+	}
+}
