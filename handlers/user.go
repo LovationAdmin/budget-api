@@ -36,7 +36,7 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 	err := h.DB.QueryRow(`
 		SELECT id, email, name, 
 		       COALESCE(avatar, ''), 
-		       totp_enabled, email_verified, 
+		       totp_enabled, email_verified, COALESCE(locale, ''),
 		       created_at, updated_at
 		FROM users
 		WHERE id = $1
@@ -47,6 +47,7 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 		&user.Avatar,
 		&user.TOTPEnabled,
 		&user.EmailVerified,
+		&user.Locale,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -101,6 +102,42 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 			"avatar": req.Avatar,
 		},
 	})
+}
+
+// ============================================================================
+// LANGUAGE
+// ============================================================================
+
+type UpdateLocaleRequest struct {
+	Locale string `json:"locale" binding:"required"`
+}
+
+// UpdateLocale saves the account's language ("fr" or "en"): the app's and
+// that of the emails sent to the account.
+func (h *UserHandler) UpdateLocale(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	var req UpdateLocaleRequest
+	locale := ""
+	if err := c.ShouldBindJSON(&req); err == nil {
+		locale = utils.NormalizeLocale(req.Locale)
+	}
+	if locale == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": `locale must be "fr" or "en"`})
+		return
+	}
+
+	if _, err := h.DB.Exec(`UPDATE users SET locale = $1, updated_at = NOW() WHERE id = $2`, locale, userID); err != nil {
+		log.Printf("Error updating locale: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update locale"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"locale": locale})
 }
 
 // ============================================================================

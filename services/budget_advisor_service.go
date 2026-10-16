@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/LovationAdmin/budget-api/utils"
 )
 
 // ============================================================================
@@ -77,6 +79,8 @@ type HouseholdInput struct {
 	AnticipatedLifeEvents []string           `json:"anticipatedLifeEvents,omitempty"`
 	Constraints           string             `json:"constraints,omitempty"`
 	FreeText              string             `json:"freeText"`
+	// Language of the answer's texts: "fr" (default) or "en".
+	Language string `json:"language,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +218,11 @@ func buildAdvisorMessages(input HouseholdInput) ([]ClaudeMessage, error) {
 	}
 	userContent := string(inputJSON) +
 		"\n\nRenvoie un objet BudgetProposal conforme au schéma, en JSON uniquement — commence directement par { et termine par }, sans texte ni balises Markdown autour."
+	// The language directive goes in the last message, so the system prompt
+	// and the few-shot example stay the same (and cached) in every language.
+	if utils.NormalizeLocale(input.Language) == utils.LocaleEN {
+		userContent += advisorEnglishDirective
+	}
 	return []ClaudeMessage{
 		{Role: "user", Content: advisorFewShotInput},
 		{Role: "assistant", Content: advisorFewShotOutput},
@@ -337,21 +346,29 @@ func (e *AdvisorError) Error() string {
 
 func (e *AdvisorError) Unwrap() error { return e.Err }
 
-// UserMessage is the French message shown to the user.
-func (e *AdvisorError) UserMessage() string {
+// UserMessage is the message shown to the user, in French or in English
+// (utils/locale.go).
+func (e *AdvisorError) UserMessage(locale string) string {
+	en := utils.NormalizeLocale(locale) == utils.LocaleEN
+	pick := func(fr, english string) string {
+		if en {
+			return english
+		}
+		return fr
+	}
 	switch e.Code {
 	case AdvisorErrTimeout:
-		return "L'IA a mis trop de temps à répondre. Réessayez dans un instant."
+		return pick("L'IA a mis trop de temps à répondre. Réessayez dans un instant.", "The AI took too long to answer. Try again in a moment.")
 	case AdvisorErrBusy:
-		return "Le service IA est très sollicité en ce moment. Réessayez dans une minute."
+		return pick("Le service IA est très sollicité en ce moment. Réessayez dans une minute.", "The AI service is very busy right now. Try again in a minute.")
 	case AdvisorErrInvalidOutput:
-		return "L'IA a produit une proposition incomplète. Réessayez dans un instant."
+		return pick("L'IA a produit une proposition incomplète. Réessayez dans un instant.", "The AI returned an incomplete proposal. Try again in a moment.")
 	case AdvisorErrRefused:
-		return "L'IA n'a pas pu traiter cette demande. Reformulez la description de votre situation."
+		return pick("L'IA n'a pas pu traiter cette demande. Reformulez la description de votre situation.", "The AI couldn’t handle this request. Try describing your situation differently.")
 	case AdvisorErrCanceled:
-		return "Génération annulée."
+		return pick("Génération annulée.", "Generation canceled.")
 	default:
-		return "Le service IA est momentanément indisponible. Réessayez plus tard."
+		return pick("Le service IA est momentanément indisponible. Réessayez plus tard.", "The AI service is temporarily unavailable. Try again later.")
 	}
 }
 

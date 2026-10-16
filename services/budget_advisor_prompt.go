@@ -145,3 +145,10 @@ const advisorFewShotOutput = `{
   "disclaimer": "Aide à la décision, pas un conseil financier ni juridique. Faites valider les volets fiscal, régime matrimonial et propriété par un professionnel.",
   "summary": "Modèle tout-commun : les deux salaires vont sur un compte joint qui paie les 2239€ de charges, met 1000€ de côté pour vos projets et 500€ dans un pot vacances roulant. Chacun retire ensuite 955€ d'argent de poche — à égalité, alors qu'A gagne plus. Vos revenus variables filent directement à l'épargne pour accélérer l'apport. Config soutenable pour les deux ; à revoir à l'arrivée de l'enfant."
 }`
+
+// advisorEnglishDirective switches the answer's texts to English. It goes in
+// the last user message (see buildAdvisorMessages) and overrides the French
+// output rule of the system prompt.
+const advisorEnglishDirective = `
+
+LANGUE DE SORTIE : ANGLAIS. Ce foyer utilise l'application en anglais. Rédige TOUS les champs textuels de BudgetProposal en anglais naturel et simple (summary, methodRationale, accountRationale, label et notes des lignes, issues, suggestedLevers, variableIncomePolicy, separationHandling.note, lifeEventNotes, vehicleSuggestions, assumptionsMade, openQuestions, disclaimer, noms des enveloppes d'épargne), même si l'exemple précédent est en français : cette consigne remplace « Champs textuels toujours en français ». Les valeurs d'énumération, les identifiants et les catégories restent inchangés. Les libellés de charges donnés par le foyer peuvent être repris tels quels. Pour les placements, adapte-toi au pays du foyer (country) ; s'il n'est pas français, n'utilise pas de produits français (Livret A, PEE, PEL, assurance-vie) mais des catégories génériques (high-yield savings account, retirement account…).`

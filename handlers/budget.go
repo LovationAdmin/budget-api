@@ -235,7 +235,7 @@ func (h *Handler) InviteMember(c *gin.Context) {
 	}
 
 	if budget.OwnerID != userID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only the owner can invite members"})
+		c.JSON(http.StatusForbidden, gin.H{"error": tr(c, "Seul le propriétaire du budget peut inviter des membres", "Only the budget’s owner can invite members")})
 		return
 	}
 
@@ -246,7 +246,7 @@ func (h *Handler) InviteMember(c *gin.Context) {
 		return
 	}
 	if isMember {
-		c.JSON(http.StatusConflict, gin.H{"error": "Cet utilisateur est déjà membre du budget"})
+		c.JSON(http.StatusConflict, gin.H{"error": tr(c, "Cet utilisateur est déjà membre du budget", "This person is already a member of the budget")})
 		return
 	}
 
@@ -272,7 +272,7 @@ func (h *Handler) InviteMember(c *gin.Context) {
 		inviterName = "Un utilisateur"
 	}
 
-	if err := h.emailService.SendInvitation(req.Email, inviterName, budget.Name, invitation.Token); err != nil {
+	if err := h.emailService.SendInvitation(req.Email, inviterName, budget.Name, invitation.Token, requestLocale(c)); err != nil {
 		log.Printf("Failed to send invitation email: %v", err)
 		// Don't fail the request if email fails, but log it
 	}

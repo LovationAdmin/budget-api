@@ -232,3 +232,12 @@ func TestDefaultNames(t *testing.T) {
 		t.Error("en default budget name")
 	}
 }
+
+func TestRecapLocale(t *testing.T) {
+	if got := recapLocale(VerifiedUser{Locale: "en"}, "FR"); got != "en" {
+		t.Errorf("account language first: %q", got)
+	}
+	if got := recapLocale(VerifiedUser{}, "FR"); got != localeForLocation("FR") {
+		t.Errorf("no account language: %q", got)
+	}
+}

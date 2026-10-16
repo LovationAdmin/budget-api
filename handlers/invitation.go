@@ -106,7 +106,7 @@ func (h *InvitationHandler) InviteUser(c *gin.Context) {
 	}
 
 	// Send invitation email
-	err = utils.SendInvitationEmail(req.Email, inviterName, budgetName, token)
+	err = utils.SendInvitationEmail(req.Email, inviterName, budgetName, token, requestLocale(c))
 	if err != nil {
 		// Log error but don't fail the request
 		c.JSON(http.StatusCreated, gin.H{
