@@ -235,7 +235,7 @@ func (h *Handler) InviteMember(c *gin.Context) {
 	}
 
 	if budget.OwnerID != userID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only the owner can invite members"})
+		c.JSON(http.StatusForbidden, gin.H{"error": tr(c, "Seul le propriétaire du budget peut inviter des membres", "Only the budget’s owner can invite members")})
 		return
 	}
 
