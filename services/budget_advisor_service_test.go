@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -238,8 +239,8 @@ func TestGenerate_DeadlineIsReportedAsTimeout(t *testing.T) {
 	if !errors.As(err, &advErr) || advErr.Code != AdvisorErrTimeout {
 		t.Fatalf("want timeout, got %v", err)
 	}
-	if advErr.UserMessage() == "" || advErr.HTTPStatus() != 504 {
-		t.Fatalf("bad user mapping: %q %d", advErr.UserMessage(), advErr.HTTPStatus())
+	if advErr.UserMessage("fr") == "" || advErr.UserMessage("en") == advErr.UserMessage("fr") || advErr.HTTPStatus() != 504 {
+		t.Fatalf("bad user mapping: %q %d", advErr.UserMessage("fr"), advErr.HTTPStatus())
 	}
 }
 
@@ -285,5 +286,30 @@ func TestGenerate_EndlessThinkingIsCutAndRetriedAtLowEffort(t *testing.T) {
 	}
 	if time.Since(start) > 2*time.Second {
 		t.Fatalf("took %v", time.Since(start))
+	}
+}
+
+// English households get their texts in English; the shared prompt prefix
+// (system prompt and few-shot) stays identical so it is cached across languages.
+func TestBuildAdvisorMessages_Language(t *testing.T) {
+	fr, err := buildAdvisorMessages(sampleInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := sampleInput()
+	in.Language = "en"
+	en, err := buildAdvisorMessages(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := func(m []ClaudeMessage) string { return fmt.Sprint(m[len(m)-1].Content) }
+	if strings.Contains(last(fr), "LANGUE DE SORTIE") {
+		t.Error("French request carries the English directive")
+	}
+	if !strings.Contains(last(en), "LANGUE DE SORTIE : ANGLAIS") {
+		t.Error("English request lacks the directive")
+	}
+	if fmt.Sprint(fr[0].Content, fr[1].Content) != fmt.Sprint(en[0].Content, en[1].Content) {
+		t.Error("few-shot prefix differs between languages")
 	}
 }

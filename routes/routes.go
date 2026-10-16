@@ -79,6 +79,7 @@ func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB, rt *services.RefreshTokenS
 	// Profile
 	rg.GET("/user/profile", userHandler.GetProfile)
 	rg.PUT("/user/profile", userHandler.UpdateProfile)
+	rg.PUT("/user/locale", userHandler.UpdateLocale)
 
 	// Security
 	rg.POST("/user/password", userHandler.ChangePassword)

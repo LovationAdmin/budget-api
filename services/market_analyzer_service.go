@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/LovationAdmin/budget-api/models"
+	"github.com/LovationAdmin/budget-api/utils"
 )
 
 // ============================================================================
@@ -170,6 +171,8 @@ type ChargeAnalysis struct {
 	Currency      string
 	HouseholdSize int
 	Description   string
+	// Language of the pros, cons and best offer: "fr" (default) or "en".
+	Language string
 }
 
 // AnalyzeCharge returns cheaper alternatives for a charge (see Analyze).
@@ -213,6 +216,11 @@ func (s *MarketAnalyzerService) Analyze(ctx context.Context, req ChargeAnalysis)
 	description := normalizeDescription(req.Description)
 	effectiveAmount, chargeType := getEffectiveAmount(category, req.Amount, householdSize)
 	variant := cacheVariant(effectiveAmount, description)
+	// The texts are written in one language: English answers get their own cache entries.
+	language := utils.PickLocale(req.Language)
+	if language == utils.LocaleEN {
+		variant += "-en"
+	}
 
 	log.Printf("[MarketAnalyzer] Analyzing: %s (%s), country=%s/%s, household=%d (bucket=%d), variant=%s",
 		category, chargeType, country, currency, householdSize, bucketedHH, variant)
@@ -232,7 +240,7 @@ func (s *MarketAnalyzerService) Analyze(ctx context.Context, req ChargeAnalysis)
 		log.Printf("[MarketAnalyzer] ⚠️ Cache MISS. AI Prompting for %s in %s (%s, hh=%d)...", category, country, currency, bucketedHH)
 		key := strings.Join([]string{category, country, currency, strconv.Itoa(bucketedHH), strings.ToLower(merchantName), variant}, "|")
 		competitors, err := fetchOnce(ctx, key, func(fetchCtx context.Context) ([]models.Competitor, error) {
-			competitors, err := s.searchCompetitors(fetchCtx, category, merchantName, effectiveAmount, country, currency, householdSize, chargeType, description)
+			competitors, err := s.searchCompetitors(fetchCtx, category, merchantName, effectiveAmount, country, currency, householdSize, chargeType, description, language)
 			if err != nil {
 				return nil, err
 			}
@@ -507,9 +515,10 @@ func (s *MarketAnalyzerService) searchCompetitors(
 	householdSize int,
 	chargeType ChargeType,
 	chargeDescription string,
+	language string,
 ) ([]models.Competitor, error) {
 
-	prompt := s.buildPrompt(category, merchantName, effectiveAmount, country, currency, householdSize, chargeType, chargeDescription)
+	prompt := s.buildPrompt(category, merchantName, effectiveAmount, country, currency, householdSize, chargeType, chargeDescription, language)
 
 	res, err := s.AIService.CallStructured(ctx, prompt, competitorsSchema, s.effort, marketMaxTokens)
 	if err != nil {
@@ -540,7 +549,13 @@ func (s *MarketAnalyzerService) buildPrompt(
 	householdSize int,
 	chargeType ChargeType,
 	chargeDescription string,
+	language string,
 ) string {
+	textLanguage := "en français"
+	if language == utils.LocaleEN {
+		textLanguage = "en anglais (English), pour un utilisateur anglophone"
+	}
+
 	familyContext := "individu seul"
 	if householdSize > 1 {
 		familyContext = fmt.Sprintf("foyer de %d personnes", householdSize)
@@ -608,7 +623,7 @@ RÈGLES DE SORTIE:
 4. website_url : URL officielle du fournisseur (obligatoire). phone_number et contact_email : uniquement si tu es certain qu'ils sont exacts, sinon omets-les.
 5. Ne propose PAS le fournisseur actuel (%s).
 6. Si aucune alternative n'est réellement moins chère pour un service équivalent, renvoie une liste vide plutôt que d'inventer un prix.
-7. pros, cons et best_offer en français, concis.`,
+7. pros, cons et best_offer %s, concis.`,
 		country,
 		familyContext,
 		category,
@@ -621,6 +636,7 @@ RÈGLES DE SORTIE:
 		country,
 		currency, priceBasis,
 		currentProvider,
+		textLanguage,
 	)
 }
 

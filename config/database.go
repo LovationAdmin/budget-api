@@ -303,6 +303,9 @@ func RunMigrations(db *sql.DB) error {
 		// "most-consulted" budget as primary; falls back to updated_at when null.
 		`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS last_viewed_at TIMESTAMP`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS has_seen_tutorial BOOLEAN DEFAULT FALSE`,
+		// Language of the account ("fr" | "en"): the app and the emails. NULL on
+		// accounts made before it existed (the app then keeps what they saw).
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS locale VARCHAR(5)`,
 
 		// ============================================================================
 		// MARKET SUGGESTIONS — cache key refinement (currency + household)

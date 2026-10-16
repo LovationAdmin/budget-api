@@ -68,7 +68,7 @@ func TestRecalculateSavings_IndividualChargeCountsEveryMember(t *testing.T) {
 
 func TestBuildPrompt_StatesPriceBasisAndHonesty(t *testing.T) {
 	s := &MarketAnalyzerService{}
-	p := s.buildPrompt("MOBILE", "Orange", 20, "FR", "EUR", 4, ChargeTypeIndividuel, "")
+	p := s.buildPrompt("MOBILE", "Orange", 20, "FR", "EUR", 4, ChargeTypeIndividuel, "", "fr")
 	if !strings.Contains(p, "par personne") || !strings.Contains(p, "liste vide") {
 		t.Fatalf("prompt must state the price basis and allow an empty answer:\n%s", p)
 	}

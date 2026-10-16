@@ -161,6 +161,9 @@ type VerifiedUser struct {
 	ID    string
 	Email string
 	Name  string
+	// Locale is the account's language ("fr" | "en"); empty on accounts made
+	// before languages existed, which keep the budget country's language.
+	Locale string
 }
 
 // budgetSummary is the per-user budget shortlist returned by the SQL.
@@ -175,7 +178,7 @@ type budgetSummary struct {
 // ListVerifiedUsers returns all users with email_verified=true.
 // Use limit > 0 to cap the result set for dry runs.
 func (s *MonthlyRecapService) ListVerifiedUsers(ctx context.Context, limit int) ([]VerifiedUser, error) {
-	q := `SELECT id::text, email, COALESCE(name, '') FROM users WHERE email_verified = TRUE ORDER BY created_at ASC`
+	q := `SELECT id::text, email, COALESCE(name, ''), COALESCE(locale, '') FROM users WHERE email_verified = TRUE ORDER BY created_at ASC`
 	args := []any{}
 	if limit > 0 {
 		q += " LIMIT $1"
@@ -193,7 +196,7 @@ func (s *MonthlyRecapService) ListVerifiedUsers(ctx context.Context, limit int) 
 	out := make([]VerifiedUser, 0)
 	for rows.Next() {
 		var u VerifiedUser
-		if err := rows.Scan(&u.ID, &u.Email, &u.Name); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Locale); err != nil {
 			return nil, err
 		}
 		if u.Email == "" {
@@ -314,7 +317,7 @@ func (s *MonthlyRecapService) BuildRecap(
 		return nil, errors.Wrap(err, "decode budget payload")
 	}
 
-	locale := localeForLocation(bs.Location)
+	locale := recapLocale(user, bs.Location)
 	currency := strings.ToUpper(strings.TrimSpace(bs.Currency))
 	if currency == "" {
 		currency = "EUR"
@@ -807,6 +810,15 @@ func aggregateYearTotals(p *budgetPayload, year int) (income, expenses float64) 
 // ----------------------------------------------------------------------------
 // MISC
 // ----------------------------------------------------------------------------
+
+// recapLocale is the language of a user's recap: their account's, else the
+// one of their budget's country (accounts made before languages existed).
+func recapLocale(user VerifiedUser, location string) string {
+	if l := utils.NormalizeLocale(user.Locale); l != "" {
+		return l
+	}
+	return localeForLocation(location)
+}
 
 // localeForLocation maps a 2-letter ISO country to "fr" for French-speaking
 // regions, "en" otherwise. Anything we don't recognise falls back to English

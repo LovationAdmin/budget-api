@@ -27,6 +27,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/LovationAdmin/budget-api/services"
+	"github.com/LovationAdmin/budget-api/utils"
 )
 
 // advisorDeadline bounds a whole generation, retry included. The web client
@@ -51,13 +52,15 @@ func NewBudgetAdvisorHandler(advisor *services.BudgetAdvisorService) *BudgetAdvi
 func bindHouseholdInput(c *gin.Context) (services.HouseholdInput, bool) {
 	var input services.HouseholdInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Requête invalide : " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": tr(c, "Requête invalide : ", "Invalid request: ") + err.Error()})
 		return input, false
 	}
 	if len(input.Members) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Le foyer doit compter au moins un membre."})
+		c.JSON(http.StatusBadRequest, gin.H{"error": tr(c, "Le foyer doit compter au moins un membre.", "The household needs at least one member.")})
 		return input, false
 	}
+	// The app sends the screen's language; Accept-Language covers older clients.
+	input.Language = utils.PickLocale(input.Language, requestLocale(c))
 	// Non-sensitive metadata only (never freeText or amounts).
 	c.Set("advisor_household_type", input.HouseholdType)
 	return input, true
@@ -75,7 +78,7 @@ func advisorErrorPayload(input services.HouseholdInput, err error) (int, gin.H) 
 	log.Printf("[AI advisor] generation failed (household=%s, members=%d): %v",
 		input.HouseholdType, len(input.Members), err)
 	return advErr.HTTPStatus(), gin.H{
-		"error":     advErr.UserMessage(),
+		"error":     advErr.UserMessage(input.Language),
 		"code":      advErr.Code,
 		"retryable": advErr.Retryable,
 	}

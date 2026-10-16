@@ -14,6 +14,9 @@ type User struct {
 	TOTPSecret    string    `json:"-"`
 	TOTPEnabled   bool      `json:"totp_enabled"`
 	EmailVerified bool      `json:"email_verified"`
+	// Locale is the account's language, "fr" or "en"; empty on accounts made
+	// before languages existed.
+	Locale        string    `json:"locale,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }

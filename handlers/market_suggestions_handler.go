@@ -238,6 +238,8 @@ type AnalyzeChargeRequest struct {
 	Currency      string  `json:"currency"`
 	HouseholdSize int     `json:"household_size"`
 	Description   string  `json:"description"`
+	// Language of the texts ("fr" | "en"); the request's language when absent.
+	Language string `json:"language"`
 }
 
 // singleAnalysisTimeout bounds one synchronous analysis (AI call + retries).
@@ -256,23 +258,23 @@ func isISOCode(s string, n int) bool {
 	return true
 }
 
-// marketErrorResponse maps an analysis failure to a status, code and French
-// message (the provider's raw error never reaches the client).
-func marketErrorResponse(err error) (int, gin.H) {
+// marketErrorResponse maps an analysis failure to a status, code and message
+// in the request's language (the provider's raw error never reaches the client).
+func marketErrorResponse(err error, locale string) (int, gin.H) {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return http.StatusGatewayTimeout, gin.H{
-			"error": "L'analyse a pris trop de temps. Réessayez dans un instant.",
+			"error": say(locale, "L'analyse a pris trop de temps. Réessayez dans un instant.", "The analysis took too long. Try again in a moment."),
 			"code":  "ai_timeout",
 		}
 	case services.IsTransientAIError(err):
 		return http.StatusServiceUnavailable, gin.H{
-			"error": "Le service IA est très sollicité en ce moment. Réessayez dans une minute.",
+			"error": say(locale, "Le service IA est très sollicité en ce moment. Réessayez dans une minute.", "The AI service is very busy right now. Try again in a minute."),
 			"code":  "ai_busy",
 		}
 	default:
 		return http.StatusServiceUnavailable, gin.H{
-			"error": "Le service d'analyse est momentanément indisponible. Réessayez plus tard.",
+			"error": say(locale, "Le service d'analyse est momentanément indisponible. Réessayez plus tard.", "The analysis service is temporarily unavailable. Try again later."),
 			"code":  "ai_unavailable",
 		}
 	}
@@ -281,17 +283,17 @@ func marketErrorResponse(err error) (int, gin.H) {
 func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 	var req AnalyzeChargeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Requête invalide : catégorie et montant requis."})
+		c.JSON(http.StatusBadRequest, gin.H{"error": tr(c, "Requête invalide : catégorie et montant requis.", "Invalid request: category and amount are required.")})
 		return
 	}
 
 	category := strings.ToUpper(strings.TrimSpace(req.Category))
 	if !h.isSuggestionRelevant(category) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Cette catégorie n'est pas encore prise en charge.", "code": "unsupported_category"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": tr(c, "Cette catégorie n'est pas encore prise en charge.", "This category isn’t supported yet."), "code": "unsupported_category"})
 		return
 	}
 	if math.IsNaN(req.Amount) || req.Amount <= 0 || req.Amount > 100000 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Indiquez un montant mensuel valide.", "code": "invalid_amount"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": tr(c, "Indiquez un montant mensuel valide.", "Enter a valid monthly amount."), "code": "invalid_amount"})
 		return
 	}
 
@@ -318,6 +320,7 @@ func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), singleAnalysisTimeout)
 	defer cancel()
 
+	language := utils.PickLocale(req.Language, requestLocale(c))
 	suggestion, _, err := h.MarketAnalyzer.Analyze(ctx, services.ChargeAnalysis{
 		Category:      category,
 		MerchantName:  req.MerchantName,
@@ -326,11 +329,12 @@ func (h *MarketSuggestionsHandler) AnalyzeCharge(c *gin.Context) {
 		Currency:      currency,
 		HouseholdSize: householdSize,
 		Description:   req.Description,
+		Language:      language,
 	})
 
 	if err != nil {
 		utils.SafeError("Single charge analysis failed: %v", err)
-		status, body := marketErrorResponse(err)
+		status, body := marketErrorResponse(err, language)
 		c.JSON(status, body)
 		return
 	}
@@ -473,13 +477,14 @@ type bulkJob struct {
 	Category string
 }
 
-func bulkSignature(jobs []bulkJob, householdSize int, country, currency string) string {
+func bulkSignature(jobs []bulkJob, householdSize int, country, currency, language string) string {
 	data, _ := json.Marshal(struct {
 		Jobs      []bulkJob
 		Household int
 		Country   string
 		Currency  string
-	}{jobs, householdSize, country, currency})
+		Language  string
+	}{jobs, householdSize, country, currency, language})
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
@@ -531,7 +536,8 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 	utils.LogBudgetAction("BulkAnalyze-Start", budgetID, userID)
 	utils.SafeInfo("Bulk analysis requested for %d charges (%d eligible)", len(req.Charges), len(jobs))
 
-	ctx, finish, running := h.bulk.start(budgetID, bulkSignature(jobs, householdSize, country, currency), req.Force)
+	language := requestLocale(c)
+	ctx, finish, running := h.bulk.start(budgetID, bulkSignature(jobs, householdSize, country, currency, language), req.Force)
 	if running {
 		c.JSON(http.StatusAccepted, gin.H{
 			"message": "Analysis already running",
@@ -550,11 +556,11 @@ func (h *MarketSuggestionsHandler) BulkAnalyzeCharges(c *gin.Context) {
 
 	go func() {
 		defer finish()
-		h.runBulkAnalysis(ctx, budgetID, userID, jobs, householdSize, country, currency)
+		h.runBulkAnalysis(ctx, budgetID, userID, jobs, householdSize, country, currency, language)
 	}()
 }
 
-func (h *MarketSuggestionsHandler) runBulkAnalysis(ctx context.Context, budgetID, userID string, jobs []bulkJob, householdSize int, country, currency string) {
+func (h *MarketSuggestionsHandler) runBulkAnalysis(ctx context.Context, budgetID, userID string, jobs []bulkJob, householdSize int, country, currency, language string) {
 	// ✅ LOGGING SÉCURISÉ
 	utils.LogAIAnalysis("BulkAnalyze-Process", "MULTIPLE", country, len(jobs))
 
@@ -589,6 +595,7 @@ func (h *MarketSuggestionsHandler) runBulkAnalysis(ctx context.Context, budgetID
 				Currency:      currency,
 				HouseholdSize: householdSize,
 				Description:   job.Charge.Description,
+				Language:      language,
 			})
 			cancel()
 

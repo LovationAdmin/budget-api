@@ -64,12 +64,14 @@ type SignupRequest struct {
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required,max=72"`
 	Name     string `json:"name" binding:"required,min=2,max=100"`
+	// Locale of the new account; the request's language when absent.
+	Locale string `json:"locale"`
 }
 
 func (h *AuthHandler) Signup(c *gin.Context) {
 	var req SignupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		code, msg := signupBindErrorFR(err)
+		code, msg := signupBindError(err, requestLocale(c))
 		c.JSON(http.StatusBadRequest, authError(code, msg))
 		return
 	}
@@ -79,7 +81,7 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 	// Validation forte du mot de passe (au-delà de la longueur min)
 	if err := utils.ValidatePassword(req.Password, req.Email, req.Name); err != nil {
 		utils.LogAuthAction("Signup", req.Email, false)
-		code, msg := passwordErrorFR(err)
+		code, msg := passwordError(err, requestLocale(c))
 		c.JSON(http.StatusBadRequest, authError(code, msg))
 		return
 	}
@@ -88,26 +90,27 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 	err := h.DB.QueryRow("SELECT id FROM users WHERE email = $1", req.Email).Scan(&existingID)
 	if err == nil {
 		utils.LogAuthAction("Signup", req.Email, false)
-		c.JSON(http.StatusConflict, authError("email_taken", "Un compte existe déjà avec cette adresse e-mail."))
+		c.JSON(http.StatusConflict, authError("email_taken", tr(c, "Un compte existe déjà avec cette adresse e-mail.", "An account already exists with this email address.")))
 		return
 	}
 
 	hashedPassword, err := utils.HashPassword(req.Password)
 	if err != nil {
 		utils.SafeError("Failed to hash password: %v", err)
-		c.JSON(http.StatusInternalServerError, authError("server_error", "La création du compte a échoué. Réessayez dans un instant."))
+		c.JSON(http.StatusInternalServerError, authError("server_error", tr(c, "La création du compte a échoué. Réessayez dans un instant.", "Account creation failed. Try again in a moment.")))
 		return
 	}
 
 	userID := uuid.New().String()
+	locale := utils.PickLocale(req.Locale, requestLocale(c))
 	_, err = h.DB.Exec(`
-		INSERT INTO users (id, email, password_hash, name, email_verified, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, false, NOW(), NOW())
-	`, userID, req.Email, hashedPassword, req.Name)
+		INSERT INTO users (id, email, password_hash, name, email_verified, locale, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, false, $5, NOW(), NOW())
+	`, userID, req.Email, hashedPassword, req.Name, locale)
 
 	if err != nil {
 		utils.SafeError("Failed to insert user: %v", err)
-		c.JSON(http.StatusInternalServerError, authError("server_error", "La création du compte a échoué. Réessayez dans un instant."))
+		c.JSON(http.StatusInternalServerError, authError("server_error", tr(c, "La création du compte a échoué. Réessayez dans un instant.", "Account creation failed. Try again in a moment.")))
 		return
 	}
 
@@ -124,7 +127,7 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 	}
 
 	go func() {
-		if err := h.EmailService.SendVerificationEmail(req.Email, req.Name, verificationToken); err != nil {
+		if err := h.EmailService.SendVerificationEmail(req.Email, req.Name, verificationToken, locale); err != nil {
 			utils.SafeWarn("Failed to send verification email: %v", err)
 		}
 	}()
@@ -134,9 +137,10 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Account created successfully. Please check your email to verify your account.",
 		"user": gin.H{
-			"id":    userID,
-			"email": req.Email,
-			"name":  req.Name,
+			"id":     userID,
+			"email":  req.Email,
+			"name":   req.Name,
+			"locale": locale,
 		},
 	})
 }
@@ -166,35 +170,35 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	err := h.DB.QueryRow(`
 		SELECT id, email, password_hash, name, COALESCE(avatar, ''), 
-		       totp_enabled, totp_secret, email_verified, created_at, updated_at
+		       totp_enabled, totp_secret, email_verified, COALESCE(locale, ''), created_at, updated_at
 		FROM users WHERE email = $1
 	`, req.Email).Scan(
 		&user.ID, &user.Email, &passwordHash, &user.Name, &user.Avatar,
-		&user.TOTPEnabled, &totpSecret, &user.EmailVerified, &user.CreatedAt, &user.UpdatedAt,
+		&user.TOTPEnabled, &totpSecret, &user.EmailVerified, &user.Locale, &user.CreatedAt, &user.UpdatedAt,
 	)
 
 	if err == sql.ErrNoRows {
 		utils.LogAuthAction("Login", req.Email, false)
-		c.JSON(http.StatusUnauthorized, authError("invalid_credentials", "E-mail ou mot de passe incorrect."))
+		c.JSON(http.StatusUnauthorized, authError("invalid_credentials", tr(c, "E-mail ou mot de passe incorrect.", "Incorrect email or password.")))
 		return
 	}
 
 	if err != nil {
 		utils.SafeError("Database error during login: %v", err)
-		c.JSON(http.StatusInternalServerError, authError("server_error", "La connexion a échoué. Réessayez dans un instant."))
+		c.JSON(http.StatusInternalServerError, authError("server_error", tr(c, "La connexion a échoué. Réessayez dans un instant.", "Sign-in failed. Try again in a moment.")))
 		return
 	}
 
 	if !utils.CheckPassword(req.Password, passwordHash) {
 		utils.LogAuthAction("Login", req.Email, false)
-		c.JSON(http.StatusUnauthorized, authError("invalid_credentials", "E-mail ou mot de passe incorrect."))
+		c.JSON(http.StatusUnauthorized, authError("invalid_credentials", tr(c, "E-mail ou mot de passe incorrect.", "Incorrect email or password.")))
 		return
 	}
 
 	if !user.EmailVerified {
 		utils.LogAuthAction("Login-Unverified", req.Email, false)
 		c.JSON(http.StatusForbidden, gin.H{
-			"error":              "Votre adresse e-mail n'est pas encore vérifiée. Cliquez sur le lien reçu par e-mail.",
+			"error":              tr(c, "Votre adresse e-mail n'est pas encore vérifiée. Cliquez sur le lien reçu par e-mail.", "Your email address isn’t confirmed yet. Click the link we emailed you."),
 			"code":               "email_not_verified",
 			"email_not_verified": true,
 		})
@@ -204,7 +208,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	if user.TOTPEnabled && totpSecret.Valid {
 		if req.TOTPCode == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"error":        "Saisissez le code de votre application d'authentification.",
+				"error":        tr(c, "Saisissez le code de votre application d'authentification.", "Enter the code from your authenticator app."),
 				"requires_2fa": true,
 			})
 			return
@@ -213,7 +217,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		valid, err := utils.VerifyTOTP(totpSecret.String, req.TOTPCode)
 		if err != nil || !valid {
 			utils.LogAuthAction("Login-2FA", req.Email, false)
-			c.JSON(http.StatusUnauthorized, authError("invalid_2fa", "Code de vérification incorrect."))
+			c.JSON(http.StatusUnauthorized, authError("invalid_2fa", tr(c, "Code de vérification incorrect.", "Incorrect verification code.")))
 			return
 		}
 	}
@@ -221,7 +225,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	token, err := utils.GenerateAccessToken(user.ID, user.Email)
 	if err != nil {
 		utils.SafeError("Failed to generate token: %v", err)
-		c.JSON(http.StatusInternalServerError, authError("server_error", "La connexion a échoué. Réessayez dans un instant."))
+		c.JSON(http.StatusInternalServerError, authError("server_error", tr(c, "La connexion a échoué. Réessayez dans un instant.", "Sign-in failed. Try again in a moment.")))
 		return
 	}
 
@@ -246,6 +250,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			"name":         user.Name,
 			"avatar":       user.Avatar,
 			"totp_enabled": user.TOTPEnabled,
+			"locale":       user.Locale,
 		},
 	})
 }
@@ -257,7 +262,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 	rawToken := c.Query("token")
 	if rawToken == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Token de vérification manquant"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": tr(c, "Token de vérification manquant", "The confirmation link is missing its code")})
 		return
 	}
 
@@ -275,20 +280,20 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
     `, token).Scan(&userID, &expiresAt)
 
 	if err == sql.ErrNoRows {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Lien de vérification invalide ou déjà utilisé"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": tr(c, "Lien de vérification invalide ou déjà utilisé", "This confirmation link is invalid or was already used")})
 		return
 	}
 
 	if err != nil {
 		utils.SafeError("Database error verifying email: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur lors de la vérification"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": tr(c, "Erreur lors de la vérification", "Something went wrong while confirming your email")})
 		return
 	}
 
 	if time.Now().After(expiresAt) {
 		utils.SafeWarn("Expired verification token used")
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Ce lien de vérification a expiré. Demandez un nouveau lien.",
+			"error":   tr(c, "Ce lien de vérification a expiré. Demandez un nouveau lien.", "This confirmation link has expired. Ask for a new one."),
 			"expired": true,
 		})
 		return
@@ -299,14 +304,14 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 
 	if err != nil {
 		utils.SafeError("Failed to check email_verified status: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erreur lors de la vérification"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": tr(c, "Erreur lors de la vérification", "Something went wrong while confirming your email")})
 		return
 	}
 
 	if alreadyVerified {
 		h.DB.Exec("DELETE FROM email_verification_tokens WHERE token = $1", token)
 		c.JSON(http.StatusOK, gin.H{
-			"message":          "Email déjà vérifié. Vous pouvez vous connecter.",
+			"message":          tr(c, "Email déjà vérifié. Vous pouvez vous connecter.", "Email already confirmed. You can sign in."),
 			"already_verified": true,
 		})
 		return
@@ -315,7 +320,7 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 	_, err = h.DB.Exec(`UPDATE users SET email_verified = true, updated_at = NOW() WHERE id = $1`, userID)
 	if err != nil {
 		utils.SafeError("Failed to update email_verified: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Impossible de vérifier l'email"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": tr(c, "Impossible de vérifier l'email", "Couldn’t confirm the email")})
 		return
 	}
 
@@ -324,7 +329,7 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 	utils.SafeInfo("Email verified successfully for user: %s", userID)
 
 	resp := gin.H{
-		"message": "Email vérifié avec succès !",
+		"message": tr(c, "Email vérifié avec succès !", "Email confirmed!"),
 		"success": true,
 	}
 	// The link proves access to the mailbox: open the session right away so
@@ -355,21 +360,21 @@ func (h *AuthHandler) ResendVerificationEmail(c *gin.Context) {
 
 	utils.SafeInfo("Resend verification email request for: %s", req.Email)
 
-	var userID, name string
+	var userID, name, accountLocale string
 	var emailVerified bool
 
 	err := h.DB.QueryRow(`
-        SELECT id, name, email_verified FROM users WHERE email = $1
-    `, req.Email).Scan(&userID, &name, &emailVerified)
+        SELECT id, name, email_verified, COALESCE(locale, '') FROM users WHERE email = $1
+    `, req.Email).Scan(&userID, &name, &emailVerified, &accountLocale)
 
 	if err == sql.ErrNoRows {
-		c.JSON(http.StatusOK, gin.H{"message": "Si un compte existe, un email de vérification a été envoyé."})
+		c.JSON(http.StatusOK, gin.H{"message": tr(c, "Si un compte existe, un email de vérification a été envoyé.", "If an account exists, a confirmation email has been sent.")})
 		return
 	}
 
 	if emailVerified {
 		c.JSON(http.StatusOK, gin.H{
-			"message":          "Email déjà vérifié. Vous pouvez vous connecter.",
+			"message":          tr(c, "Email déjà vérifié. Vous pouvez vous connecter.", "Email already confirmed. You can sign in."),
 			"already_verified": true,
 		})
 		return
@@ -382,7 +387,7 @@ func (h *AuthHandler) ResendVerificationEmail(c *gin.Context) {
     `, userID).Scan(&lastSentAt)
 
 	if lastSentAt.Valid && time.Since(lastSentAt.Time) < 2*time.Minute {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Veuillez attendre 2 minutes avant de renvoyer un email."})
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": tr(c, "Veuillez attendre 2 minutes avant de renvoyer un email.", "Please wait 2 minutes before sending another email.")})
 		return
 	}
 
@@ -398,12 +403,12 @@ func (h *AuthHandler) ResendVerificationEmail(c *gin.Context) {
 
 	if err != nil {
 		utils.SafeError("Failed to create verification token: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Impossible de générer un nouveau lien"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": tr(c, "Impossible de générer un nouveau lien", "Couldn’t create a new link")})
 		return
 	}
 
 	go func() {
-		if err := h.EmailService.SendVerificationEmail(req.Email, name, verificationToken); err != nil {
+		if err := h.EmailService.SendVerificationEmail(req.Email, name, verificationToken, utils.PickLocale(accountLocale, requestLocale(c))); err != nil {
 			utils.SafeWarn("Failed to send verification email: %v", err)
 		}
 	}()
@@ -411,7 +416,7 @@ func (h *AuthHandler) ResendVerificationEmail(c *gin.Context) {
 	utils.SafeInfo("Verification email resent successfully")
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Email de vérification envoyé avec succès.",
+		"message": tr(c, "Email de vérification envoyé avec succès.", "Confirmation email sent."),
 		"success": true,
 	})
 }
@@ -433,8 +438,8 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 
 	utils.SafeInfo("Password reset request")
 
-	var userID, name string
-	err := h.DB.QueryRow(`SELECT id, name FROM users WHERE email = $1`, req.Email).Scan(&userID, &name)
+	var userID, name, accountLocale string
+	err := h.DB.QueryRow(`SELECT id, name, COALESCE(locale, '') FROM users WHERE email = $1`, req.Email).Scan(&userID, &name, &accountLocale)
 
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"message": "If an account exists with this email, a password reset link has been sent."})
@@ -453,7 +458,7 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 
 	if err != nil {
 		utils.SafeError("Failed to create reset token: %v", err)
-		c.JSON(http.StatusInternalServerError, authError("server_error", "La demande a échoué. Réessayez dans un instant."))
+		c.JSON(http.StatusInternalServerError, authError("server_error", tr(c, "La demande a échoué. Réessayez dans un instant.", "The request failed. Try again in a moment.")))
 		return
 	}
 
@@ -464,7 +469,7 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 	resetLink := frontendURL + "/reset-password?token=" + resetToken
 
 	go func() {
-		if err := h.EmailService.SendPasswordResetEmail(req.Email, name, resetLink); err != nil {
+		if err := h.EmailService.SendPasswordResetEmail(req.Email, name, resetLink, utils.PickLocale(accountLocale, requestLocale(c))); err != nil {
 			utils.SafeWarn("Failed to send password reset email: %v", err)
 		}
 	}()
@@ -484,7 +489,7 @@ type ResetPasswordRequest struct {
 func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	var req ResetPasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, authError("invalid_request", "Le lien ou le mot de passe est incomplet."))
+		c.JSON(http.StatusBadRequest, authError("invalid_request", tr(c, "Le lien ou le mot de passe est incomplet.", "The link or the password is incomplete.")))
 		return
 	}
 
@@ -504,25 +509,25 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	`, cleanReqToken).Scan(&userID, &userEmail, &userName, &expiresAt)
 
 	if err == sql.ErrNoRows {
-		c.JSON(http.StatusBadRequest, authError("reset_invalid", "Ce lien de réinitialisation est invalide ou a déjà servi. Demandez-en un nouveau."))
+		c.JSON(http.StatusBadRequest, authError("reset_invalid", tr(c, "Ce lien de réinitialisation est invalide ou a déjà servi. Demandez-en un nouveau.", "This reset link is invalid or was already used. Ask for a new one.")))
 		return
 	}
 
 	if err != nil {
 		utils.SafeError("Database error: %v", err)
-		c.JSON(http.StatusInternalServerError, authError("server_error", "La demande a échoué. Réessayez dans un instant."))
+		c.JSON(http.StatusInternalServerError, authError("server_error", tr(c, "La demande a échoué. Réessayez dans un instant.", "The request failed. Try again in a moment.")))
 		return
 	}
 
 	if time.Now().After(expiresAt) {
-		c.JSON(http.StatusBadRequest, authError("reset_expired", "Ce lien de réinitialisation a expiré. Demandez-en un nouveau."))
+		c.JSON(http.StatusBadRequest, authError("reset_expired", tr(c, "Ce lien de réinitialisation a expiré. Demandez-en un nouveau.", "This reset link has expired. Ask for a new one.")))
 		return
 	}
 
 	// Validation forte du nouveau mot de passe (avec email+nom pour empêcher
 	// l'utilisateur de réutiliser un mot de passe trivialement lié à son compte)
 	if err := utils.ValidatePassword(req.NewPassword, userEmail, userName); err != nil {
-		code, msg := passwordErrorFR(err)
+		code, msg := passwordError(err, requestLocale(c))
 		c.JSON(http.StatusBadRequest, authError(code, msg))
 		return
 	}
@@ -530,7 +535,7 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	hashedPassword, err := utils.HashPassword(req.NewPassword)
 	if err != nil {
 		utils.SafeError("Failed to hash password: %v", err)
-		c.JSON(http.StatusInternalServerError, authError("server_error", "La réinitialisation a échoué. Réessayez dans un instant."))
+		c.JSON(http.StatusInternalServerError, authError("server_error", tr(c, "La réinitialisation a échoué. Réessayez dans un instant.", "The reset failed. Try again in a moment.")))
 		return
 	}
 
@@ -538,7 +543,7 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 
 	if err != nil {
 		utils.SafeError("Failed to update password: %v", err)
-		c.JSON(http.StatusInternalServerError, authError("server_error", "La réinitialisation a échoué. Réessayez dans un instant."))
+		c.JSON(http.StatusInternalServerError, authError("server_error", tr(c, "La réinitialisation a échoué. Réessayez dans un instant.", "The reset failed. Try again in a moment.")))
 		return
 	}
 
@@ -555,9 +560,9 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 func (h *AuthHandler) sessionAfterVerification(c *gin.Context, userID string) gin.H {
 	var u models.User
 	err := h.DB.QueryRow(`
-		SELECT id, email, name, COALESCE(avatar, ''), totp_enabled
+		SELECT id, email, name, COALESCE(avatar, ''), totp_enabled, COALESCE(locale, '')
 		FROM users WHERE id = $1
-	`, userID).Scan(&u.ID, &u.Email, &u.Name, &u.Avatar, &u.TOTPEnabled)
+	`, userID).Scan(&u.ID, &u.Email, &u.Name, &u.Avatar, &u.TOTPEnabled, &u.Locale)
 	if err != nil || u.TOTPEnabled {
 		return nil
 	}
@@ -577,6 +582,7 @@ func (h *AuthHandler) sessionAfterVerification(c *gin.Context, userID string) gi
 			"name":         u.Name,
 			"avatar":       u.Avatar,
 			"totp_enabled": u.TOTPEnabled,
+			"locale":       u.Locale,
 		},
 	}
 }
