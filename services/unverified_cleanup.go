@@ -192,22 +192,15 @@ func (s *UnverifiedCleanup) delete(ctx context.Context, res *UnverifiedCleanupRe
 }
 
 // deleteOne deletes the account; its own budgets go with it (ON DELETE
-// CASCADE). Three references to users have no ON DELETE rule and would block
-// the delete: they are cleared first.
+// CASCADE). See ClearUserReferences.
 func (s *UnverifiedCleanup) deleteOne(ctx context.Context, id string) (bool, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	for _, q := range []string{
-		`UPDATE budget_data SET updated_by = NULL WHERE updated_by = $1`,
-		`UPDATE audit_logs SET user_id = NULL WHERE user_id = $1`,
-		`UPDATE invitations SET invited_by = NULL WHERE invited_by = $1`,
-	} {
-		if _, err := tx.ExecContext(ctx, q, id); err != nil {
-			return false, err
-		}
+	if err := ClearUserReferences(ctx, tx, id); err != nil {
+		return false, err
 	}
 	r, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = $1 AND NOT email_verified`, id)
 	if err != nil {

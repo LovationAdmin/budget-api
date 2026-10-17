@@ -179,7 +179,7 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 	}
 
 	if !utils.CheckPassword(req.CurrentPassword, currentHash) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Current password is incorrect"})
+		c.JSON(http.StatusForbidden, gin.H{"error": tr(c, "Mot de passe actuel incorrect.", "Current password is incorrect.")})
 		return
 	}
 
@@ -297,7 +297,7 @@ func (h *UserHandler) VerifyTOTP(c *gin.Context) {
 	// ✅ CORRIGÉ : utils.VerifyTOTP retourne (bool, error)
 	valid, err := utils.VerifyTOTP(secret.String, req.Code)
 	if err != nil || !valid {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid TOTP code"})
+		c.JSON(http.StatusForbidden, gin.H{"error": wrongCode(c)})
 		return
 	}
 
@@ -350,14 +350,14 @@ func (h *UserHandler) DisableTOTP(c *gin.Context) {
 	}
 
 	if !utils.CheckPassword(req.Password, passwordHash) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid password"})
+		c.JSON(http.StatusForbidden, gin.H{"error": wrongPassword(c)})
 		return
 	}
 
 	if secret.Valid {
 		valid, err := utils.VerifyTOTP(secret.String, req.Code)
 		if err != nil || !valid {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid 2FA code"})
+			c.JSON(http.StatusForbidden, gin.H{"error": wrongCode(c)})
 			return
 		}
 	}
@@ -389,6 +389,35 @@ type DeleteAccountRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
+// deleteUser deletes the account and what is only theirs (ON DELETE CASCADE),
+// after detaching them from what outlives them (services.ClearUserReferences).
+func deleteUser(c *gin.Context, db *sql.DB, userID string) error {
+	ctx := c.Request.Context()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	if err := services.ClearUserReferences(ctx, tx, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// A wrong password or code to confirm an action is 403, not 401: the session
+// is fine, and the app treats a 401 as an expired session (refresh, then
+// sign-out).
+func wrongPassword(c *gin.Context) string {
+	return tr(c, "Mot de passe incorrect.", "Incorrect password.")
+}
+
+func wrongCode(c *gin.Context) string {
+	return tr(c, "Code de vérification incorrect.", "Incorrect verification code.")
+}
+
 func (h *UserHandler) DeleteAccount(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
@@ -413,15 +442,13 @@ func (h *UserHandler) DeleteAccount(c *gin.Context) {
 	}
 
 	if !utils.CheckPassword(req.Password, passwordHash) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid password"})
+		c.JSON(http.StatusForbidden, gin.H{"error": wrongPassword(c)})
 		return
 	}
 
-	_, err = h.DB.Exec(`DELETE FROM users WHERE id = $1`, userID)
-
-	if err != nil {
+	if err := deleteUser(c, h.DB, userID); err != nil {
 		log.Printf("Error deleting account: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete account"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": tr(c, "La suppression du compte a échoué. Réessayez dans un instant.", "Deleting the account failed. Try again in a moment.")})
 		return
 	}
 
