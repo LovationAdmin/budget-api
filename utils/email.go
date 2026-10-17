@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 )
 
 // ============================================================================
@@ -33,6 +34,10 @@ type accountEmailText struct {
 
 	VerifyTitle, VerifyHeading, VerifyText, VerifyButton, VerifySubject string
 
+	// Unverified account about to be deleted: ExpireText ends with the date.
+	ExpireHeading, ExpireText, ExpireButton, ExpireNotYou string
+	ExpireSubject                                         func(date string) string
+
 	ResetTitle, ResetHello, ResetIntro, ResetAsk, ResetButton, ResetValidity, ResetValidityTime,
 	ResetCopy, ResetNotYou, ResetIgnore, ResetFooter, ResetAuto, ResetSubject string
 }
@@ -50,6 +55,14 @@ var accountEmails = map[string]accountEmailText{
 		VerifyText:    "Veuillez vérifier votre email pour activer votre compte Budget Famille.",
 		VerifyButton:  "Vérifier mon email",
 		VerifySubject: "Vérifiez votre compte Budget Famille",
+
+		ExpireHeading: "Bonjour %s,",
+		ExpireText:    "Votre compte Budget Famille attend toujours la confirmation de votre adresse e-mail. Sans confirmation, le compte et ses données seront supprimés à partir du",
+		ExpireButton:  "Confirmer mon adresse",
+		ExpireNotYou:  "Vous n'avez pas créé ce compte ? Ignorez cet e-mail : il sera supprimé automatiquement.",
+		ExpireSubject: func(date string) string {
+			return fmt.Sprintf("Votre compte Budget Famille sera supprimé à partir du %s", date)
+		},
 
 		ResetTitle:        "Réinitialisation de mot de passe",
 		ResetHello:        "Bonjour",
@@ -77,6 +90,14 @@ var accountEmails = map[string]accountEmailText{
 		VerifyText:    "Please confirm your email address to activate your Budget Famille account.",
 		VerifyButton:  "Confirm my email",
 		VerifySubject: "Confirm your Budget Famille account",
+
+		ExpireHeading: "Hello %s,",
+		ExpireText:    "Your Budget Famille account is still waiting for you to confirm your email address. Without confirmation, the account and its data will be deleted from",
+		ExpireButton:  "Confirm my email",
+		ExpireNotYou:  "Didn’t create this account? Just ignore this email: it will be deleted automatically.",
+		ExpireSubject: func(date string) string {
+			return fmt.Sprintf("Your Budget Famille account will be deleted from %s", date)
+		},
 
 		ResetTitle:        "Password reset",
 		ResetHello:        "Hello",
@@ -247,6 +268,90 @@ func SendVerificationEmail(toEmail, userName, token, locale string) error {
 	}
 
 	return sendEmail(toEmail, t.VerifySubject, htmlBody)
+}
+
+const unverifiedExpiryEmailTemplate = `
+<!DOCTYPE html>
+<html lang="{{.Lang}}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.T.VerifyTitle}}</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f3f4f6;">
+    <table role="presentation" style="width: 100%; border-collapse: collapse;">
+        <tr>
+            <td style="padding: 40px 0; text-align: center; background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: bold;">
+                    💰 Budget Famille
+                </h1>
+            </td>
+        </tr>
+        <tr>
+            <td style="padding: 40px 20px;">
+                <table role="presentation" style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                    <tr>
+                        <td style="padding: 40px;">
+                            <h2 style="margin: 0 0 20px 0; color: #1f2937; font-size: 24px;">{{.Heading}}</h2>
+                            <p style="margin: 0 0 20px 0; color: #4b5563; font-size: 16px; line-height: 1.6;">
+                                {{.T.ExpireText}} <strong>{{.Date}}</strong>.
+                            </p>
+                            <table role="presentation" style="margin: 20px 0;">
+                                <tr>
+                                    <td style="border-radius: 8px; background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                                        <a href="{{.Link}}" style="display: inline-block; padding: 16px 32px; color: #ffffff; text-decoration: none; font-size: 16px; font-weight: 600;">
+                                            {{.T.ExpireButton}}
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+                            <p style="margin: 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                                {{.T.ExpireNotYou}}
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+    `
+
+// SendUnverifiedExpiryEmail warns an account that was never confirmed that it
+// is deleted from deleteFrom on; the link (a fresh verification token) still
+// confirms it until then.
+func SendUnverifiedExpiryEmail(toEmail, userName, token, locale string, deleteFrom time.Time) error {
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3000"
+	}
+
+	t := accountEmailIn(locale)
+	date := FormatLongDate(deleteFrom, locale)
+	htmlBody, err := renderEmail("unverifiedExpiry", unverifiedExpiryEmailTemplate, map[string]interface{}{
+		"Lang":    PickLocale(locale),
+		"T":       t,
+		"Heading": fmt.Sprintf(t.ExpireHeading, userName),
+		"Date":    date,
+		"Link":    fmt.Sprintf("%s/verify-email?token=%s", frontendURL, token),
+	})
+	if err != nil {
+		log.Printf("❌ Error rendering unverified expiry email: %v", err)
+		return err
+	}
+
+	return sendEmail(toEmail, t.ExpireSubject(date), htmlBody)
+}
+
+var frenchMonths = [...]string{"janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"}
+
+// FormatLongDate writes a day in words: "24 octobre 2026" / "24 October 2026".
+func FormatLongDate(d time.Time, locale string) string {
+	if PickLocale(locale) == LocaleEN {
+		return d.Format("2 January 2006")
+	}
+	return fmt.Sprintf("%d %s %d", d.Day(), frenchMonths[d.Month()-1], d.Year())
 }
 
 // ============================================================================

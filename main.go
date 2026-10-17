@@ -78,6 +78,9 @@ func main() {
 	// Annonce « nouveautés + excuses » : envoi unique après le déploiement.
 	go runWhatsNewAnnouncement(db)
 
+	// Comptes jamais confirmés : avertis à 23 jours, supprimés 7 jours après.
+	go scheduleUnverifiedCleanup(db)
+
 	// Initialiser le handler WebSocket
 	wsHandler := handlers.NewWSHandler()
 
@@ -421,6 +424,54 @@ func runWhatsNewAnnouncement(db *sql.DB) {
 	res := handler.RunCampaign(ctx, whatsNewCampaignID, utils.CampaignWhatsNew202610, "verified")
 	utils.SafeInfo("whatsnew: campaign=%s total=%d sent=%d skipped=%d failed=%d duration_ms=%d",
 		whatsNewCampaignID, res.Total, res.Sent, res.Skipped, res.Failed, res.DurationMs)
+}
+
+// unverifiedCleanupLockKey: pg advisory lock, one runner across instances.
+const unverifiedCleanupLockKey = 230007
+
+// scheduleUnverifiedCleanup warns, then deletes, the accounts never confirmed
+// (services/unverified_cleanup.go): 5 minutes after boot, then every 24h.
+// UNVERIFIED_CLEANUP_DISABLED=1 turns it off.
+func scheduleUnverifiedCleanup(db *sql.DB) {
+	if os.Getenv("UNVERIFIED_CLEANUP_DISABLED") == "1" {
+		utils.SafeInfo("unverified-cleanup: disabled")
+		return
+	}
+	cleanup := &services.UnverifiedCleanup{DB: db, Mailer: services.NewEmailService()}
+
+	time.Sleep(5 * time.Minute)
+	runUnverifiedCleanup(db, cleanup)
+
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for range ticker.C {
+		runUnverifiedCleanup(db, cleanup)
+	}
+}
+
+func runUnverifiedCleanup(db *sql.DB, cleanup *services.UnverifiedCleanup) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		utils.SafeWarn("unverified-cleanup: no db connection: %v", err)
+		return
+	}
+	defer conn.Close()
+	var locked bool
+	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", unverifiedCleanupLockKey).Scan(&locked); err != nil || !locked {
+		utils.SafeInfo("unverified-cleanup: another instance is running (locked=%v err=%v)", locked, err)
+		return
+	}
+	defer conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", unverifiedCleanupLockKey) //nolint:errcheck
+
+	res, err := cleanup.Run(ctx)
+	if err != nil {
+		utils.SafeWarn("unverified-cleanup: %v", err)
+	}
+	utils.SafeInfo("unverified-cleanup: warned=%d warn_failed=%d deleted=%d delete_failed=%d",
+		res.Warned, res.WarnFailed, res.Deleted, res.DeleteFailed)
 }
 
 // nextMonthlyRecapTrigger returns the next 1st-of-month 09:00 in the given
