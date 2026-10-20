@@ -456,13 +456,10 @@ func RunMigrations(db *sql.DB) error {
 			PRIMARY KEY (budget_id, user_id, item_id)
 		)`,
 
-		// « Who I am in this budget »: a member's account ↔ a person of the
-		// household, read by the personal overview. NULL: not said yet; '': not
-		// in this household. One account per person, enforced by the index.
-		`ALTER TABLE budget_members ADD COLUMN IF NOT EXISTS person_id VARCHAR(100)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_budget_members_person
-			ON budget_members (budget_id, person_id)
-			WHERE person_id IS NOT NULL AND person_id <> ''`,
+		// Who a member is in a household is now told by their name (the app's
+		// « Ma vue perso »), never chosen: the account ↔ person link stored here
+		// for a few hours (#27) is gone, its unique index with it.
+		`ALTER TABLE budget_members DROP COLUMN IF EXISTS person_id`,
 
 		// ============================================================================
 		// ✅ MIGRATION DES DONNÉES EXISTANTES
