@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -12,7 +11,6 @@ import (
 	"github.com/LovationAdmin/budget-api/utils"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 )
 
 // Broadcaster interface allows us to call WebSocket methods
@@ -357,7 +355,7 @@ func (s *BudgetService) UpdateData(ctx context.Context, budgetID string, data in
 // GetMembers gets all members of a budget (Populates Avatar)
 func (s *BudgetService) GetMembers(ctx context.Context, budgetID string) ([]models.BudgetMember, error) {
 	query := `
-		SELECT bm.id, bm.user_id, bm.role, bm.joined_at, u.name, u.email, COALESCE(u.avatar, ''), bm.person_id
+		SELECT bm.id, bm.user_id, bm.role, bm.joined_at, u.name, u.email, COALESCE(u.avatar, '')
 		FROM budget_members bm
 		JOIN users u ON bm.user_id = u.id
 		WHERE bm.budget_id = $1
@@ -374,7 +372,6 @@ func (s *BudgetService) GetMembers(ctx context.Context, budgetID string) ([]mode
 	for rows.Next() {
 		var member models.BudgetMember
 		var avatar string
-		var personID sql.NullString
 
 		err := rows.Scan(
 			&member.ID,
@@ -384,13 +381,9 @@ func (s *BudgetService) GetMembers(ctx context.Context, budgetID string) ([]mode
 			&member.UserName,
 			&member.UserEmail,
 			&avatar,
-			&personID,
 		)
 		if err != nil {
 			return nil, err
-		}
-		if personID.Valid {
-			member.PersonID = &personID.String
 		}
 		
 		member.User = &models.User{
@@ -404,59 +397,6 @@ func (s *BudgetService) GetMembers(ctx context.Context, budgetID string) ([]mode
 	}
 
 	return members, nil
-}
-
-// ErrPersonTaken: the person is already another member's (one account per person).
-var ErrPersonTaken = errors.New("person already linked to another member")
-
-// ErrUnknownPerson: no such person in the budget's household.
-var ErrUnknownPerson = errors.New("unknown person")
-
-// SetMemberPerson says which person of the household a member's account is,
-// which the personal overview reads: a person id, "" for « not in this
-// household », nil to forget. A person belongs to one account only: the
-// database refuses one already linked to another member (ErrPersonTaken).
-// sql.ErrNoRows when the user is not a member of the budget.
-func (s *BudgetService) SetMemberPerson(ctx context.Context, budgetID, userID string, personID *string) error {
-	if personID != nil && *personID != "" {
-		ok, err := s.hasPerson(ctx, budgetID, *personID)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return ErrUnknownPerson
-		}
-	}
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE budget_members SET person_id = $3 WHERE budget_id = $1 AND user_id = $2`,
-		budgetID, userID, personID)
-	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-			return ErrPersonTaken
-		}
-		return err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
-}
-
-// hasPerson tells whether the budget's household (its data's `people`) has this person.
-func (s *BudgetService) hasPerson(ctx context.Context, budgetID, personID string) (bool, error) {
-	data, err := s.GetData(ctx, budgetID)
-	if err != nil {
-		return false, err
-	}
-	doc, _ := data.(map[string]interface{})
-	people, _ := doc["people"].([]interface{})
-	for _, p := range people {
-		if person, ok := p.(map[string]interface{}); ok && person["id"] == personID {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // CreateInvitation creates an invitation

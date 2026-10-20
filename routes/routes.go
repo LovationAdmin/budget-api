@@ -54,8 +54,6 @@ func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *handlers.WSHa
 	rg.DELETE("/budgets/:id", h.DeleteBudget)
 	rg.GET("/budgets/:id/data", h.GetBudgetData)
 	rg.PUT("/budgets/:id/data", h.UpdateBudgetData)
-	// « Who I am in this budget » (personal overview): one account per person.
-	rg.PUT("/budgets/:id/members/:member_id/person", h.SetMemberPerson)
 
 	// Private items (e.g. names of private personal charges): per user, encrypted, never in the shared blob.
 	privateItems := handlers.NewPrivateItemsHandler(budgetService, services.NewPrivateItemService(db))

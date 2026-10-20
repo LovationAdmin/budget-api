@@ -31,9 +31,6 @@ type BudgetMember struct {
 	JoinedAt    time.Time       `json:"joined_at"`
 	UserName    string          `json:"user_name"`
 	UserEmail   string          `json:"user_email"`
-	// The person of the household this account is (the personal overview):
-	// null when not said yet, "" when not in the household.
-	PersonID *string `json:"person_id"`
 }
 
 type BudgetData struct {
