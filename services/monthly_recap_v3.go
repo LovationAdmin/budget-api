@@ -420,6 +420,7 @@ func (v monthValues) rounded() monthValues {
 // pot, and their pocket money (salary − contribution), which includes their
 // personal charges.
 type RecapMember struct {
+	ID              string
 	Name            string
 	Salary          float64
 	Contribution    float64
@@ -445,7 +446,7 @@ func resolveMembers(p *budgetPayload, year, monthIdx int) []RecapMember {
 			if name == "" {
 				name = names[x.ID]
 			}
-			out = append(out, newRecapMember(name, x.Salary, x.Contribution, personal[x.ID]))
+			out = append(out, newRecapMember(x.ID, name, x.Salary, x.Contribution, personal[x.ID]))
 		}
 		return out
 	}
@@ -461,13 +462,14 @@ func resolveMembers(p *budgetPayload, year, monthIdx int) []RecapMember {
 				own += chargeAmount(c, ym)
 			}
 		}
-		out = append(out, newRecapMember(person.Name, salary, contribution, own))
+		out = append(out, newRecapMember(person.ID, person.Name, salary, contribution, own))
 	}
 	return out
 }
 
-func newRecapMember(name string, salary, contribution, personal float64) RecapMember {
+func newRecapMember(id, name string, salary, contribution, personal float64) RecapMember {
 	return RecapMember{
+		ID:              id,
 		Name:            name,
 		Salary:          roundCents(salary),
 		Contribution:    roundCents(contribution),

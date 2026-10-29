@@ -4,13 +4,14 @@
 // ============================================================================
 // POST /api/v1/admin/campaigns/monthly-recap
 //
-// Sends one monthly recap email per verified user, scoped to the user's most
-// recently updated budget. The same handler is also invoked by the in-process
-// scheduler (main.go) so we keep the work loop in one place.
+// Sends one monthly recap email per verified user who did not opt out, scoped
+// to the user's most recently consulted budget: the month ahead, as pay lands.
+// The same handler is also invoked by the in-process scheduler (main.go) so we
+// keep the work loop in one place.
 //
 // Idempotency: each send is recorded in email_campaign_sends with the
-// campaign_id `monthly_recap_YYYY_MM` (where YYYY_MM is the month that just
-// ended). Re-running the endpoint with skip_sent=true is therefore safe.
+// campaign_id `monthly_recap_YYYY_MM` (where YYYY_MM is the month the recap
+// prepares). Re-running the endpoint with skip_sent=true is therefore safe.
 // ============================================================================
 
 package handlers
@@ -18,7 +19,6 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"net/http"
 	"os"
 	"time"
@@ -52,20 +52,26 @@ type monthlyRecapRequest struct {
 	SkipSent bool `json:"skip_sent"`
 	// Limit caps the number of recipients (useful for tests).
 	Limit int `json:"limit,omitempty"`
-	// Anchor is an optional ISO date ("YYYY-MM-DD") used to set the "now"
-	// reference; defaults to time.Now(). Useful to re-run a past month.
+	// Month is the month the recap prepares ("YYYY-MM"); defaults to the
+	// month after today.
+	Month string `json:"month,omitempty"`
+	// Anchor is the older way to choose it: an ISO date ("YYYY-MM-DD") whose
+	// next month is prepared. Month wins when both are given.
 	Anchor string `json:"anchor,omitempty"`
 }
 
 type monthlyRecapResponse struct {
-	CampaignID string                  `json:"campaign_id"`
-	DryRun     bool                    `json:"dry_run"`
-	Total      int                     `json:"total"`
-	Sent       int                     `json:"sent"`
-	Skipped    int                     `json:"skipped"`
-	Failed     int                     `json:"failed"`
-	DurationMs int64                   `json:"duration_ms"`
-	Failures   []monthlyRecapFailure   `json:"failures,omitempty"`
+	CampaignID string                `json:"campaign_id"`
+	DryRun     bool                  `json:"dry_run"`
+	Total      int                   `json:"total"`
+	Sent       int                   `json:"sent"`
+	Skipped    int                   `json:"skipped"`
+	Failed     int                   `json:"failed"`
+	DurationMs int64                 `json:"duration_ms"`
+	Failures   []monthlyRecapFailure `json:"failures,omitempty"`
+	// Aborted: the run stopped before every user was handled (the user list
+	// could not be read, or the deadline passed).
+	Aborted bool `json:"aborted,omitempty"`
 }
 
 type monthlyRecapFailure struct {
@@ -88,18 +94,23 @@ func (h *AdminMonthlyRecapHandler) SendMonthlyRecap(c *gin.Context) {
 		return
 	}
 
-	anchor := time.Now()
-	if req.Anchor != "" {
+	month := services.RecapTargetMonth(time.Now())
+	if req.Month != "" {
+		t, err := time.Parse("2006-01", req.Month)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": `month must be "YYYY-MM"`})
+			return
+		}
+		month = t
+	} else if req.Anchor != "" {
 		if t, err := time.Parse("2006-01-02", req.Anchor); err == nil {
-			anchor = t
+			month = services.RecapTargetMonth(t)
 		}
 	}
 
 	campaignID := req.CampaignID
 	if campaignID == "" {
-		// The "reporting month" is the month that just ended.
-		prev := anchor.AddDate(0, 0, -1)
-		campaignID = fmt.Sprintf("monthly_recap_%04d_%02d", prev.Year(), int(prev.Month()))
+		campaignID = services.RecapCampaignID(month)
 	}
 
 	result := h.RunMonthlyRecap(c.Request.Context(), MonthlyRecapRunOptions{
@@ -107,7 +118,7 @@ func (h *AdminMonthlyRecapHandler) SendMonthlyRecap(c *gin.Context) {
 		DryRun:     req.DryRun,
 		SkipSent:   req.SkipSent,
 		Limit:      req.Limit,
-		Anchor:     anchor,
+		Month:      month,
 	})
 
 	c.JSON(http.StatusOK, result)
@@ -120,7 +131,8 @@ type MonthlyRecapRunOptions struct {
 	DryRun     bool
 	SkipSent   bool
 	Limit      int
-	Anchor     time.Time
+	// Month is the month the recap prepares (any day in it).
+	Month time.Time
 }
 
 // RunMonthlyRecap drives the send loop. Exported so the scheduler can call it
@@ -137,6 +149,7 @@ func (h *AdminMonthlyRecapHandler) RunMonthlyRecap(ctx context.Context, opts Mon
 		utils.SafeError("monthly-recap: list verified users failed: %v", err)
 		out.Failures = append(out.Failures, monthlyRecapFailure{UserID: "-", Reason: "list verified: " + err.Error()})
 		out.DurationMs = time.Since(start).Milliseconds()
+		out.Aborted = true
 		return out
 	}
 	out.Total = len(users)
@@ -172,7 +185,7 @@ func (h *AdminMonthlyRecapHandler) RunMonthlyRecap(ctx context.Context, opts Mon
 		primary := budgets[0]
 		others := budgets[1:]
 
-		recap, rerr := h.RecapService.BuildRecap(ctx, u, &primary, others, totalCount, opts.Anchor, opts.CampaignID, appURL)
+		recap, rerr := h.RecapService.BuildRecap(ctx, u, &primary, others, totalCount, opts.Month, opts.CampaignID, appURL)
 		if rerr != nil {
 			out.Failed++
 			out.Failures = append(out.Failures, monthlyRecapFailure{UserID: u.ID, Reason: "build recap: " + rerr.Error()})
@@ -181,13 +194,25 @@ func (h *AdminMonthlyRecapHandler) RunMonthlyRecap(ctx context.Context, opts Mon
 		}
 
 		if opts.DryRun {
+			// Rendered all the same: a dry run proves every email would go out.
+			if _, _, err := utils.RenderMonthlyRecapEmail(recap.Locale, recap.Month.ShortLabel, recap.BudgetName, recap); err != nil {
+				out.Failed++
+				out.Failures = append(out.Failures, monthlyRecapFailure{UserID: u.ID, Reason: "render: " + err.Error()})
+				continue
+			}
 			utils.SafeInfo("monthly-recap: dry-run send campaign=%s to=%s", opts.CampaignID, utils.MaskEmailForLog(u.Email))
 			out.Sent++
 			h.throttle(ctx)
 			continue
 		}
 
-		msgID, serr := h.EmailService.SendMonthlyRecapEmail(u.Email, recap.Locale, recap.PreviousMonth.Label, recap.BudgetName, recap)
+		links := utils.UnsubscribeLinksFor(u.ID, utils.EmailListMonthlyRecap)
+		recap.UnsubscribeURL = links.Page
+		recap.PreferencesURL = appURL + "/profile#emails"
+		msgID, serr := h.EmailService.SendMonthlyRecapEmail(u.Email, recap.Locale, recap.Month.ShortLabel, recap.BudgetName, recap, utils.CampaignMessage{
+			Unsubscribe: &links,
+			Ref:         opts.CampaignID + ":" + u.ID,
+		})
 		if serr != nil {
 			out.Failed++
 			out.Failures = append(out.Failures, monthlyRecapFailure{UserID: u.ID, Reason: serr.Error()})
@@ -202,6 +227,7 @@ func (h *AdminMonthlyRecapHandler) RunMonthlyRecap(ctx context.Context, opts Mon
 
 		if err := h.throttle(ctx); err != nil {
 			out.DurationMs = time.Since(start).Milliseconds()
+			out.Aborted = true
 			return out
 		}
 	}

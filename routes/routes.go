@@ -32,6 +32,17 @@ func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB, rt *services.RefreshTokenS
 	rg.POST("/auth/reset-password", middleware.ResetPasswordRateLimit(), authHandler.ResetPassword)
 }
 
+// SetupEmailRoutes: leaving (or coming back to) an email list from the link
+// of an email, signed by its token — no account session needed.
+func SetupEmailRoutes(rg *gin.RouterGroup, db *sql.DB) {
+	h := &handlers.EmailPreferencesHandler{DB: db}
+	limit := middleware.EmailLinkRateLimit()
+	rg.POST("/email/unsubscribe", limit, h.Unsubscribe)
+	rg.GET("/email/unsubscribe", limit, h.OpenUnsubscribe)
+	rg.POST("/email/resubscribe", limit, h.Resubscribe)
+	rg.GET("/email/preferences", limit, h.Get)
+}
+
 // SetupBudgetRoutes sets up protected budget and related routes.
 func SetupBudgetRoutes(rg *gin.RouterGroup, db *sql.DB, wsHandler *handlers.WSHandler) {
 	// Créer les services nécessaires
@@ -80,6 +91,7 @@ func SetupUserRoutes(rg *gin.RouterGroup, db *sql.DB, rt *services.RefreshTokenS
 	rg.GET("/user/profile", userHandler.GetProfile)
 	rg.PUT("/user/profile", userHandler.UpdateProfile)
 	rg.PUT("/user/locale", userHandler.UpdateLocale)
+	rg.PUT("/user/email-preferences", (&handlers.EmailPreferencesHandler{DB: db}).UpdateMine)
 
 	// Security
 	rg.POST("/user/password", userHandler.ChangePassword)

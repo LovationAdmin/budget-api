@@ -17,6 +17,9 @@ type User struct {
 	// Locale is the account's language, "fr" or "en"; empty on accounts made
 	// before languages existed.
 	Locale        string    `json:"locale,omitempty"`
+	// The emails the user receives: the monthly recap, the product news.
+	EmailMonthlyRecap bool `json:"email_monthly_recap"`
+	EmailNews         bool `json:"email_news"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }

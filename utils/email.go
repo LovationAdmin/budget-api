@@ -20,6 +20,9 @@ type EmailRequest struct {
 	To      []string `json:"to"`
 	Subject string   `json:"subject"`
 	HTML    string   `json:"html"`
+	// Text is the text/plain part: an HTML-only email scores worse with
+	// spam filters.
+	Text string `json:"text,omitempty"`
 }
 
 // ============================================================================
@@ -480,6 +483,7 @@ func sendEmail(to, subject, htmlBody string) error {
 		To:      []string{to},
 		Subject: subject,
 		HTML:    htmlBody,
+		Text:    htmlToPlainText(htmlBody),
 	}
 
 	jsonData, err := json.Marshal(emailReq)

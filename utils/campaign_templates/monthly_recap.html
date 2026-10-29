@@ -1,0 +1,511 @@
+{{- $sym := .CurrencySymbol -}}
+{{- $m := .Month -}}
+{{- $e := .Ending -}}
+{{- $mn := mname $m.ShortLabel -}}
+{{- $en := mname $e.ShortLabel -}}
+{{- $c := .CampaignID -}}
+{{- $out := add $m.RecurringCharges $m.ProjectsAllocated -}}
+<!DOCTYPE html>
+<html lang="{{ .Locale }}" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="x-apple-disable-message-reformatting">
+<meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<title>{{ t "title" (deM $m.ShortLabel) }}</title>
+<!--[if mso]>
+<style type="text/css">table, td, div, h1, h2, h3, p, a, span { font-family: Arial, sans-serif !important; }</style>
+<![endif]-->
+<style>
+  :root { color-scheme: light dark; supported-color-schemes: light dark; }
+  a { text-decoration: none; }
+  .bf-u a { text-decoration: underline; }
+  @media only screen and (max-width: 620px) {
+    .px { padding-left: 20px !important; padding-right: 20px !important; }
+    .hero-px { padding-left: 22px !important; padding-right: 22px !important; }
+    .h1 { font-size: 30px !important; }
+    .big { font-size: 42px !important; }
+    .stack { display: block !important; width: 100% !important; }
+    .stack-pad { padding: 0 0 12px 0 !important; }
+    .btn a { display: block !important; }
+  }
+  @media (prefers-color-scheme: dark) {
+    .bf-page { background-color: #0b1220 !important; }
+    .bf-card { background-color: #121b2d !important; border-color: #22304a !important; }
+    .bf-soft { background-color: #18243a !important; border-color: #22304a !important; }
+    .bf-line { border-color: #22304a !important; }
+    .bf-h { color: #f2f6fb !important; }
+    .bf-t { color: #c7d2e1 !important; }
+    .bf-m { color: #8d9ab0 !important; }
+    .bf-good { color: #34d399 !important; }
+    .bf-bad { color: #f87171 !important; }
+    .bf-link { color: #7cc8f2 !important; }
+    .bf-track { background-color: #22304a !important; }
+    .bf-goodbg { background-color: #0f2e24 !important; color: #6ee7b7 !important; }
+    .bf-badbg { background-color: #3a1717 !important; color: #fca5a5 !important; }
+    .bf-chip { background-color: #16304a !important; color: #9fd6f5 !important; }
+  }
+  [data-ogsc] .bf-h { color: #f2f6fb !important; }
+  [data-ogsc] .bf-t { color: #c7d2e1 !important; }
+  [data-ogsc] .bf-m { color: #8d9ab0 !important; }
+  [data-ogsc] .bf-good { color: #34d399 !important; }
+  [data-ogsc] .bf-bad { color: #f87171 !important; }
+  [data-ogsc] .bf-link { color: #7cc8f2 !important; }
+  [data-ogsb] .bf-page { background-color: #0b1220 !important; }
+  [data-ogsb] .bf-card { background-color: #121b2d !important; }
+  [data-ogsb] .bf-soft { background-color: #18243a !important; }
+</style>
+</head>
+<body class="bf-page" style="margin:0; padding:0; background-color:#eef2f7; -webkit-font-smoothing:antialiased; -webkit-text-size-adjust:100%; word-spacing:normal;">
+
+{{- /* Inbox preview line */}}
+<div style="display:none; max-height:0; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:#eef2f7; opacity:0;">
+{{- if and .UsesContributions $m.Members -}}
+  {{- $parts := list -}}{{- range $m.Members -}}{{- $parts = append $parts (printf "%s %s" .Name (formatMoney .Contribution $sym)) -}}{{- end -}}
+  {{ t "preheader.members" (joinNames $parts) (formatMoney $m.NetSavings $sym) }}
+{{- else -}}
+  {{ t "preheader.plain" (formatMoney $m.RecurringCharges $sym) (formatMoney $m.ProjectsAllocated $sym) (formatMoney $m.NetSavings $sym) $mn }}
+{{- end }}
+&#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847;
+</div>
+
+<table role="presentation" class="bf-page" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#eef2f7;">
+<tr><td align="center" style="padding:24px 12px 40px 12px;">
+
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px;">
+
+  <!-- Brand -->
+  <tr>
+    <td style="padding:0 6px 16px 6px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td class="bf-h" style="font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:17px; font-weight:800; color:#14202e;">
+            <span style="display:inline-block; width:30px; height:30px; line-height:30px; text-align:center; border-radius:10px; background-color:#1f9cd9; color:#ffffff; font-size:16px; font-weight:800; vertical-align:middle;">B</span>
+            <span translate="no" style="vertical-align:middle; padding-left:8px;">Budget Famille</span>
+          </td>
+          <td align="right" class="bf-m" style="font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:13px; font-weight:700; color:#5f6878;">{{ $m.Label }}</td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- Hero -->
+  <tr>
+    <td bgcolor="#14202e" style="background-color:#14202e; background-image:linear-gradient(140deg,#101a29 0%,#173554 55%,#1d6ea6 120%); border-radius:26px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td class="hero-px" style="padding:30px 34px 6px 34px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+            <span style="display:inline-block; padding:6px 12px; border-radius:999px; background-color:#24425f; color:#bfe5fa; font-size:12px; font-weight:800; letter-spacing:0.3px;">📅 {{ t "hero.pill" (daysIn $m.Year $m.MonthIdx) $mn }}</span>
+            <p style="margin:18px 0 4px 0; font-size:16px; line-height:1.5; color:#cdd8e6;">{{ t "hero.hello" .UserName }}</p>
+            <h1 class="h1" style="margin:0; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:36px; line-height:1.1; font-weight:800; letter-spacing:-0.8px; color:#ffffff;">{{ t "hero.title" $m.ShortLabel }}</h1>
+            <p style="margin:12px 0 0 0; font-size:15px; line-height:1.6; color:#cdd8e6;">{{ th "hero.lead" .BudgetName }}</p>
+          </td>
+        </tr>
+        <tr>
+          <td class="hero-px" style="padding:22px 22px 22px 22px;">
+            <table role="presentation" class="bf-card" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff; border-radius:20px;">
+              <tr>
+                <td style="padding:22px 22px 20px 22px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+                  <div class="bf-m" style="font-size:12px; font-weight:800; letter-spacing:1.1px; text-transform:uppercase; color:#5f6878;">{{ t "hero.rest" }}</div>
+                  <div class="big {{ if pos $m.NetSavings }}bf-good{{ else }}bf-bad{{ end }}" style="margin:6px 0 10px 0; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:48px; line-height:1.05; font-weight:800; letter-spacing:-1.4px; color:{{ if pos $m.NetSavings }}#0f7a4f{{ else }}#c23a3a{{ end }};">{{ formatMoney $m.NetSavings $sym }}</div>
+                  {{ if pos $m.NetSavings }}
+                  <span class="bf-goodbg" style="display:inline-block; padding:5px 11px; border-radius:999px; background-color:#e3f7ee; color:#0b6b45; font-size:13px; font-weight:800;">{{ t "hero.covered" }}</span>
+                  {{ else }}
+                  <span class="bf-badbg" style="display:inline-block; padding:5px 11px; border-radius:999px; background-color:#fdecec; color:#a32f2f; font-size:13px; font-weight:800;">⚠ {{ t "hero.short" (formatMoney (abs $m.NetSavings) $sym) }}</span>
+                  {{ end }}
+
+                  {{- $pc := pctOf $m.RecurringCharges $m.TotalIncome $out -}}
+                  {{- $ps := pctOf $m.ProjectsAllocated $m.TotalIncome $out -}}
+                  {{- $pr := pctOf $m.NetSavings $m.TotalIncome $out }}
+                  <table role="presentation" class="bf-track" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px; border-radius:999px; background-color:#e7ebf1;">
+                    <tr>
+                      {{ if gt $pc 0 }}<td width="{{ $pc }}%" style="height:12px; line-height:12px; font-size:0; background-color:#f97316; border-radius:999px 0 0 999px;">&nbsp;</td>{{ end }}
+                      {{ if gt $ps 0 }}<td width="{{ $ps }}%" style="height:12px; line-height:12px; font-size:0; background-color:#6366f1;{{ if eq $pc 0 }} border-radius:999px 0 0 999px;{{ end }}">&nbsp;</td>{{ end }}
+                      {{ if gt $pr 0 }}<td width="{{ $pr }}%" style="height:12px; line-height:12px; font-size:0; background-color:#10b981; border-radius:0 999px 999px 0;">&nbsp;</td>{{ end }}
+                      <td style="height:12px; line-height:12px; font-size:0;">&nbsp;</td>
+                    </tr>
+                  </table>
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:12px;">
+                    <tr>
+                      <td width="33%" valign="top" style="padding-right:6px;">
+                        <div class="bf-m" style="font-size:12px; color:#5f6878;"><span style="color:#f97316;">●</span> {{ t "legend.charges" }}</div>
+                        <div class="bf-h" style="margin-top:2px; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:16px; font-weight:800; color:#14202e;">{{ formatMoney $m.RecurringCharges $sym }}</div>
+                      </td>
+                      <td width="33%" valign="top" style="padding-right:6px;">
+                        <div class="bf-m" style="font-size:12px; color:#5f6878;"><span style="color:#6366f1;">●</span> {{ t "legend.savings" }}</div>
+                        <div class="bf-h" style="margin-top:2px; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:16px; font-weight:800; color:#14202e;">{{ formatMoney $m.ProjectsAllocated $sym }}</div>
+                      </td>
+                      <td width="33%" valign="top">
+                        {{ if pos $m.NetSavings }}
+                        <div class="bf-m" style="font-size:12px; color:#5f6878;"><span style="color:#10b981;">●</span> {{ t "legend.rest" }}</div>
+                        <div class="bf-h" style="margin-top:2px; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:16px; font-weight:800; color:#14202e;">{{ formatMoney $m.NetSavings $sym }}</div>
+                        {{ else }}
+                        <div class="bf-m" style="font-size:12px; color:#5f6878;"><span style="color:#c23a3a;">●</span> {{ t "legend.short" }}</div>
+                        <div class="bf-bad" style="margin-top:2px; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:16px; font-weight:800; color:#c23a3a;">{{ formatMoney (abs $m.NetSavings) $sym }}</div>
+                        {{ end }}
+                      </td>
+                    </tr>
+                  </table>
+                  <div class="bf-line" style="margin-top:16px; padding-top:14px; border-top:1px solid #edf0f4;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td class="bf-t" style="font-size:14px; color:#3b4656;">{{ if .UsesContributions }}{{ t "hero.inflow.pot" }}{{ else }}{{ t "hero.inflow.income" }}{{ end }}{{ if gt $m.OneTimeIncome 0.0 }}<br><span class="bf-m" style="font-size:12px; color:#5f6878;">{{ t "hero.oneoff" (formatMoney $m.OneTimeIncome $sym) }}</span>{{ end }}</td>
+                        <td align="right" class="bf-h" style="font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:18px; font-weight:800; color:#14202e;">{{ formatMoney $m.TotalIncome $sym }}</td>
+                      </tr>
+                    </table>
+                  </div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  {{- /* The transfers: what each member pays into the pot */}}
+  {{ if and $m.Members (or .UsesContributions (gt (len $m.Members) 1)) }}
+  <tr><td style="height:16px; line-height:16px; font-size:0;">&nbsp;</td></tr>
+  <tr>
+    <td class="bf-card" style="background-color:#ffffff; border-radius:22px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td class="px" style="padding:26px 30px 6px 30px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+            <h2 class="bf-h" style="margin:0 0 4px 0; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:21px; font-weight:800; letter-spacing:-0.3px; color:#14202e;">💸 {{ t "members.title" }}</h2>
+            <p class="bf-m" style="margin:0; font-size:14px; line-height:1.55; color:#5f6878;">{{ if .UsesContributions }}{{ t "members.lead.pot" $mn }}{{ else }}{{ t "members.lead.salary" $mn }}{{ end }}</p>
+            {{ if .Method }}
+            <div class="bf-chip" style="margin-top:12px; padding:10px 12px; border-radius:12px; background-color:#eaf6fd; color:#145c87; font-size:13px; line-height:1.5;"><strong>🔄 {{ t (print "method." .Method.Method) }}{{ if .Method.Margin }} · {{ t "method.margin" .Method.Margin }}{{ end }}</strong><br>{{ t "method.live" }}</div>
+            {{ end }}
+          </td>
+        </tr>
+        <tr>
+          <td class="px" style="padding:10px 30px 0 30px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              {{ range $i, $p := $m.Members }}
+              <tr>
+                <td class="bf-line" style="padding:14px 0; {{ if $i }}border-top:1px solid #edf0f4;{{ end }}">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+                      <td width="46" valign="middle">
+                        <div style="width:40px; height:40px; line-height:40px; text-align:center; border-radius:14px; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:17px; font-weight:800; {{ avatar $i }}">{{ initial $p.Name }}</div>
+                      </td>
+                      <td valign="middle" style="font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+                        <div class="bf-h" style="font-size:16px; font-weight:700; color:#14202e;">{{ $p.Name }}</div>
+                        {{ if $.UsesContributions }}<div class="bf-m" style="margin-top:2px; font-size:13px; line-height:1.4; color:#5f6878;">{{ t "members.pocket" (formatMoney $p.PocketMoney $sym) }}{{ if gt $p.PersonalCharges 0.0 }} · {{ t "members.personal" (formatMoney $p.PersonalCharges $sym) }}{{ end }}</div>{{ end }}
+                      </td>
+                      <td align="right" valign="middle" style="font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif; white-space:nowrap;">
+                        <div class="bf-good" style="font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:22px; font-weight:800; letter-spacing:-0.4px; color:#0f7a4f;">{{ formatMoney $p.Contribution $sym }}</div>
+                        <div class="bf-m" style="font-size:12px; color:#5f6878;">{{ if $.UsesContributions }}{{ t "members.pays" }}{{ else }}{{ t "members.salary" }}{{ end }}</div>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+              {{ end }}
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td class="px" style="padding:4px 30px 26px 30px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+            {{ if gt (len $m.Members) 1 }}
+            <table role="presentation" class="bf-soft" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f7fa; border-radius:14px;">
+              <tr>
+                <td class="bf-t" style="padding:13px 16px; font-size:14px; font-weight:700; color:#3b4656;">{{ t "members.total" }}</td>
+                <td align="right" class="bf-h" style="padding:13px 16px; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:17px; font-weight:800; color:#14202e;">{{ formatMoney $m.BaseIncome $sym }}</td>
+              </tr>
+            </table>
+            {{ end }}
+            {{ if and (not .Method) .UsesContributions }}
+            <p class="bf-m" style="margin:12px 0 0 0; font-size:13px; line-height:1.5; color:#5f6878;">{{ t "method.manual" }} <a class="bf-link" href="{{ utm .SplitURL $c "split" }}" style="color:#1f7fb4; font-weight:700;">{{ t "method.manual_cta" }} →</a></p>
+            {{ end }}
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+  {{ end }}
+
+  {{- /* What changes from the month ending */}}
+  <tr><td style="height:16px; line-height:16px; font-size:0;">&nbsp;</td></tr>
+  <tr>
+    <td class="bf-card" style="background-color:#ffffff; border-radius:22px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td class="px" style="padding:26px 30px 6px 30px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+            <h2 class="bf-h" style="margin:0 0 4px 0; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:21px; font-weight:800; letter-spacing:-0.3px; color:#14202e;">✨ {{ t "changes.title" $mn }}</h2>
+            {{ if .Changes }}<p class="bf-m" style="margin:0; font-size:14px; line-height:1.55; color:#5f6878;">{{ t "changes.lead" $en }}</p>{{ end }}
+          </td>
+        </tr>
+        <tr>
+          <td class="px" style="padding:8px 30px 24px 30px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+            {{ if .Changes }}
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              {{ range $i, $x := .Changes }}
+              <tr>
+                <td class="bf-line" style="padding:11px 0; {{ if $i }}border-top:1px solid #edf0f4;{{ end }}">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+                      <td width="46" valign="middle"><div class="bf-soft" style="width:36px; height:36px; line-height:36px; text-align:center; border-radius:12px; background-color:#f4f7fa; font-size:17px;">{{ $x.Emoji }}</div></td>
+                      <td valign="middle">
+                        <div class="bf-h" style="font-size:15px; font-weight:700; color:#14202e;">{{ if $x.Private }}{{ t "charges.private" }}{{ else if $x.Label }}{{ $x.Label }}{{ else }}{{ t "changes.oneoff" }}{{ end }}</div>
+                        <div class="bf-m" style="margin-top:1px; font-size:13px; color:#5f6878;">{{ t (print "changes.kind." $x.Kind) }}</div>
+                      </td>
+                      <td align="right" valign="middle" class="{{ if $x.Good }}bf-good{{ else }}bf-bad{{ end }}" style="font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:16px; font-weight:800; white-space:nowrap; color:{{ if $x.Good }}#0f7a4f{{ else }}#c23a3a{{ end }};">{{ signedMoney $x.Delta $sym }}</td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+              {{ end }}
+            </table>
+            {{ $d := sub $m.NetSavings $e.NetSavings }}
+            {{ if ge (abs $d) 1.0 }}
+            <div class="{{ if pos $d }}bf-goodbg{{ else }}bf-badbg{{ end }}" style="margin-top:8px; padding:11px 14px; border-radius:12px; background-color:{{ if pos $d }}#e3f7ee{{ else }}#fdecec{{ end }}; color:{{ if pos $d }}#0b6b45{{ else }}#a32f2f{{ end }}; font-size:13px; font-weight:700; line-height:1.5;">{{ t "changes.effect" (signedMoney $d $sym) $en }}</div>
+            {{ end }}
+            {{ else }}
+            <p class="bf-t" style="margin:6px 0 0 0; font-size:15px; line-height:1.6; color:#3b4656;">{{ t "changes.none" $en }}</p>
+            {{ end }}
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  {{- /* Where the money goes */}}
+  <tr><td style="height:16px; line-height:16px; font-size:0;">&nbsp;</td></tr>
+  <tr>
+    <td class="bf-card" style="background-color:#ffffff; border-radius:22px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td class="px" style="padding:26px 30px 6px 30px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+            <h2 class="bf-h" style="margin:0 0 4px 0; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:21px; font-weight:800; letter-spacing:-0.3px; color:#14202e;">🧾 {{ t "charges.title" }}</h2>
+            <p class="bf-m" style="margin:0; font-size:14px; line-height:1.55; color:#5f6878;">{{ if .Charges }}{{ t "charges.lead" $mn }}{{ else }}{{ t "charges.none" $mn }}{{ end }}</p>
+          </td>
+        </tr>
+        {{ if .Charges }}
+        <tr>
+          <td class="px" style="padding:10px 30px 24px 30px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              {{ range .Charges }}
+              <tr>
+                <td style="padding:9px 0 3px 0;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+                      <td class="bf-h" style="font-size:15px; font-weight:700; color:#14202e;"><span style="padding-right:6px;">{{ .Emoji }}</span>{{ if .Private }}{{ t "charges.private" }}{{ else }}{{ .Label }}{{ end }}{{ if .Note }} <span class="bf-chip" style="display:inline-block; margin-left:4px; padding:2px 8px; border-radius:999px; background-color:#eaf6fd; color:#145c87; font-size:11px; font-weight:800; vertical-align:2px;">{{ t (print "charges.note." .Note) }}</span>{{ end }}</td>
+                      <td align="right" class="bf-h" style="font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:15px; font-weight:800; white-space:nowrap; color:#14202e;">{{ formatMoney .Amount $sym }}</td>
+                    </tr>
+                  </table>
+                  <table role="presentation" class="bf-track" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:7px; background-color:#f1ece6; border-radius:999px;">
+                    <tr>
+                      <td width="{{ .Bar }}%" style="height:6px; line-height:6px; font-size:0; background-color:#f97316; border-radius:999px;">&nbsp;</td>
+                      <td style="height:6px; line-height:6px; font-size:0;">&nbsp;</td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+              {{ end }}
+            </table>
+            <table role="presentation" class="bf-line" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px; border-top:1px solid #edf0f4;">
+              {{ if .MoreCharges }}
+              <tr>
+                <td class="bf-m" style="padding-top:12px; font-size:13px; color:#5f6878;">{{ if eq .MoreCharges 1 }}{{ t "charges.more1" }}{{ else }}{{ t "charges.moreN" .MoreCharges }}{{ end }}</td>
+                <td align="right" class="bf-m" style="padding-top:12px; font-size:13px; font-weight:700; color:#5f6878;">{{ formatMoney .MoreChargesAmount $sym }}</td>
+              </tr>
+              {{ end }}
+              <tr>
+                <td class="bf-t" style="padding-top:12px; font-size:14px; font-weight:700; color:#3b4656;">{{ t "charges.total" }}</td>
+                <td align="right" class="bf-h" style="padding-top:12px; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:17px; font-weight:800; color:#14202e;">{{ formatMoney $m.RecurringCharges $sym }}</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        {{ else }}
+        <tr><td style="height:20px; line-height:20px; font-size:0;">&nbsp;</td></tr>
+        {{ end }}
+      </table>
+    </td>
+  </tr>
+
+  {{- /* Savings pots and general savings */}}
+  {{ if or .Savings .Pot.Now .Pot.After }}
+  <tr><td style="height:16px; line-height:16px; font-size:0;">&nbsp;</td></tr>
+  <tr>
+    <td class="bf-card" style="background-color:#ffffff; border-radius:22px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        {{ if .Savings }}
+        <tr>
+          <td class="px" style="padding:26px 30px 6px 30px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+            <h2 class="bf-h" style="margin:0 0 4px 0; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:21px; font-weight:800; letter-spacing:-0.3px; color:#14202e;">🎯 {{ t "savings.title" }}</h2>
+            <p class="bf-m" style="margin:0; font-size:14px; line-height:1.55; color:#5f6878;">{{ t "savings.lead" $mn }}</p>
+          </td>
+        </tr>
+        <tr>
+          <td class="px" style="padding:8px 30px 4px 30px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+            {{ range .Savings }}
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:10px 0 12px 0;">
+              <tr>
+                <td class="bf-h" style="font-size:15px; font-weight:700; color:#14202e;">{{ .Name }}</td>
+                <td align="right" style="font-size:13px; font-weight:800; white-space:nowrap; color:#4f46e5;">{{ if gt .Allocation 0.0 }}{{ t "savings.month" (formatMoney .Allocation $sym) }}{{ end }}</td>
+              </tr>
+              {{ if .HasTarget }}
+              <tr>
+                <td colspan="2" style="padding-top:8px;">
+                  <table role="presentation" class="bf-track" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ece9fb; border-radius:999px;">
+                    <tr>
+                      {{ if gt .Progress 0 }}<td width="{{ .Progress }}%" style="height:9px; line-height:9px; font-size:0; border-radius:999px; background-color:{{ if ge .Progress 100 }}#10b981{{ else }}#6366f1{{ end }};">&nbsp;</td>{{ end }}
+                      <td style="height:9px; line-height:9px; font-size:0;">&nbsp;</td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+              <tr><td colspan="2" class="bf-m" style="padding-top:6px; font-size:12px; color:#5f6878;">{{ if ge .Progress 100 }}{{ t "savings.done" }} · {{ formatMoney .Balance $sym }}{{ else }}{{ t "savings.of" (formatMoney .Balance $sym) (formatMoney .Target $sym) .Progress }}{{ end }}</td></tr>
+              {{ else }}
+              <tr><td colspan="2" class="bf-m" style="padding-top:4px; font-size:12px; color:#5f6878;">{{ t "savings.saved" (formatMoney .Balance $sym) }}</td></tr>
+              {{ end }}
+            </table>
+            {{ end }}
+          </td>
+        </tr>
+        {{ end }}
+        {{ if or .Pot.Now .Pot.After }}
+        <tr>
+          <td class="px" style="padding:{{ if .Savings }}6px{{ else }}26px{{ end }} 30px 26px 30px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+            <table role="presentation" class="bf-soft" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#eef7fc; border-radius:18px;">
+              <tr>
+                <td style="padding:18px 18px 4px 18px;">
+                  <div class="bf-h" style="font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:17px; font-weight:800; color:#14202e;">🏦 {{ t "pot.title" }}</div>
+                  <div class="bf-m" style="margin-top:2px; font-size:13px; line-height:1.5; color:#5f6878;">{{ t "pot.lead" }}</div>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:12px 18px 18px 18px;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+                      <td width="45%" valign="top">
+                        <div class="bf-m" style="font-size:12px; font-weight:700; color:#5f6878;">{{ t "pot.now" $en }}</div>
+                        <div class="bf-h" style="margin-top:2px; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:20px; font-weight:800; color:#14202e;">{{ formatMoney .Pot.Now $sym }}</div>
+                      </td>
+                      <td class="bf-m" width="10%" valign="middle" align="center" style="font-size:18px; color:#8fa3b8;">→</td>
+                      <td width="45%" valign="top">
+                        <div class="bf-m" style="font-size:12px; font-weight:700; color:#5f6878;">{{ t "pot.after" $mn }}</div>
+                        <div class="{{ if pos .Pot.After }}bf-good{{ else }}bf-bad{{ end }}" style="margin-top:2px; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:20px; font-weight:800; color:{{ if pos .Pot.After }}#0f7a4f{{ else }}#c23a3a{{ end }};">{{ formatMoney .Pot.After $sym }}</div>
+                        {{ if ge (abs .Pot.Rest) 0.5 }}<div class="bf-m" style="margin-top:1px; font-size:12px; font-weight:700; color:#5f6878;">{{ signedMoney .Pot.Rest $sym }}</div>{{ end }}
+                      </td>
+                    </tr>
+                  </table>
+                  {{ if not (pos .Pot.After) }}<p class="bf-bad" style="margin:10px 0 0 0; font-size:13px; line-height:1.5; color:#a32f2f;">{{ t "pot.low" }}</p>{{ end }}
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        {{ else }}
+        <tr><td style="height:12px; line-height:12px; font-size:0;">&nbsp;</td></tr>
+        {{ end }}
+      </table>
+    </td>
+  </tr>
+  {{ end }}
+
+  {{- /* The month's notes */}}
+  {{ if or $m.Comment $m.ProjectNotes }}
+  <tr><td style="height:16px; line-height:16px; font-size:0;">&nbsp;</td></tr>
+  <tr>
+    <td class="bf-card" style="background-color:#ffffff; border-radius:22px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td class="px" style="padding:24px 30px 24px 30px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+            <h2 class="bf-h" style="margin:0 0 10px 0; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:19px; font-weight:800; color:#14202e;">📝 {{ t "notes.title" $mn }}</h2>
+            {{ if $m.Comment }}<p class="bf-t" style="margin:0 0 8px 0; padding-left:12px; border-left:3px solid #6366f1; font-size:15px; line-height:1.6; color:#3b4656; font-style:italic;">« {{ $m.Comment }} »</p>{{ end }}
+            {{ range $m.ProjectNotes }}<p class="bf-t" style="margin:6px 0 0 0; padding-left:12px; border-left:3px solid #f59e0b; font-size:14px; line-height:1.55; color:#3b4656;"><strong class="bf-h" style="color:#14202e;">{{ .Name }}</strong> — <span style="font-style:italic;">{{ .Note }}</span></p>{{ end }}
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+  {{ end }}
+
+  <!-- CTA -->
+  <tr>
+    <td align="center" style="padding:28px 6px 4px 6px;">
+      <table role="presentation" class="btn" cellpadding="0" cellspacing="0" border="0">
+        <tr><td align="center" bgcolor="#1f9cd9" style="border-radius:999px; background-color:#1f9cd9;">
+          <a href="{{ utm .BudgetURL $c "cta" }}" target="_blank" style="display:inline-block; padding:17px 36px; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:16px; font-weight:800; color:#ffffff; border-radius:999px;">{{ t "cta.open" $mn }} →</a>
+        </td></tr>
+      </table>
+      {{ if .UsesContributions }}<p style="margin:14px 0 0 0; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:14px;"><a class="bf-link" href="{{ utm .SplitURL $c "split" }}" style="color:#1f7fb4; font-weight:700;">{{ t "cta.split" }}</a></p>{{ end }}
+    </td>
+  </tr>
+
+  {{- /* Tip */}}
+  {{ if .Tip.Title }}
+  <tr><td style="height:24px; line-height:24px; font-size:0;">&nbsp;</td></tr>
+  <tr>
+    <td bgcolor="#14202e" style="background-color:#14202e; background-image:linear-gradient(135deg,#14202e 0%,#1b3a57 60%,#1f9cd9 150%); border-radius:22px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td class="px" style="padding:22px 26px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+            <div style="font-size:11px; font-weight:800; letter-spacing:1.2px; text-transform:uppercase; color:#8fd3f5; margin-bottom:8px;">{{ t "tip.eyebrow" }}</div>
+            <div style="font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:18px; font-weight:800; color:#ffffff; margin-bottom:6px;">{{ .Tip.Emoji }} {{ .Tip.Title }}</div>
+            <p style="margin:0 0 14px 0; font-size:14px; line-height:1.6; color:#d5dde8;">{{ .Tip.Body }}</p>
+            <a href="{{ utm .Tip.URL $c "tip" }}" style="font-size:14px; font-weight:800; color:#ffffff;">{{ .Tip.CTA }} →</a>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+  {{ end }}
+
+  {{- /* Other budgets */}}
+  {{ if .OtherBudgets }}
+  <tr><td style="height:16px; line-height:16px; font-size:0;">&nbsp;</td></tr>
+  <tr>
+    <td class="bf-card" style="background-color:#ffffff; border-radius:22px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td class="px" style="padding:24px 30px 22px 30px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+            <h2 class="bf-h" style="margin:0 0 2px 0; font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:18px; font-weight:800; color:#14202e;">📂 {{ t "others.title" }}</h2>
+            <p class="bf-m" style="margin:0 0 10px 0; font-size:13px; color:#5f6878;">{{ t "others.lead" (deM $m.ShortLabel) }}</p>
+            {{ range $i, $b := .OtherBudgets }}
+            <table role="presentation" class="bf-line" width="100%" cellpadding="0" cellspacing="0" border="0" style="{{ if $i }}border-top:1px solid #edf0f4;{{ end }}">
+              <tr>
+                <td style="padding:12px 0;">
+                  <div class="bf-h" style="font-size:15px; font-weight:800; color:#14202e;">{{ $b.Name }}</div>
+                  <div class="bf-m" style="margin-top:3px; font-size:13px; color:#5f6878;">{{ t "others.line" (formatMoney $b.Income $b.CurrencySymbol) (formatMoney $b.Charges $b.CurrencySymbol) }} <strong class="{{ if pos $b.Rest }}bf-good{{ else }}bf-bad{{ end }}" style="color:{{ if pos $b.Rest }}#0f7a4f{{ else }}#c23a3a{{ end }};">{{ formatMoney $b.Rest $b.CurrencySymbol }}</strong></div>
+                </td>
+                <td align="right" style="padding:12px 0; font-size:13px; white-space:nowrap;"><a class="bf-link" href="{{ utm $b.URL $c "other_budget" }}" style="color:#1f7fb4; font-weight:700;">{{ t "others.open" }}</a></td>
+              </tr>
+            </table>
+            {{ end }}
+            {{ if gt .HiddenBudgetCount 0 }}<p class="bf-m" style="margin:6px 0 0 0; font-size:12px; color:#5f6878; font-style:italic;">{{ if eq .HiddenBudgetCount 1 }}{{ t "others.hidden1" }}{{ else }}{{ t "others.hiddenN" .HiddenBudgetCount }}{{ end }}</p>{{ end }}
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+  {{ end }}
+
+  <!-- Signature -->
+  <tr>
+    <td class="px" style="padding:28px 30px 0 30px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+      <p class="bf-t" style="margin:0 0 12px 0; font-size:14px; line-height:1.6; color:#4b5565;">{{ t "sign.reply" }}</p>
+      <p class="bf-h" style="margin:0; font-size:15px; line-height:1.5; color:#14202e;"><strong>Libasse</strong><br><span class="bf-m" style="font-size:13px; color:#5f6878;">{{ t "sign.role" }}</span></p>
+    </td>
+  </tr>
+
+  <!-- Footer -->
+  <tr>
+    <td align="center" class="px bf-m bf-u" style="padding:26px 24px 0 24px; font-family:'DM Sans','Segoe UI',Helvetica,Arial,sans-serif; font-size:12px; line-height:1.7; color:#6b7484;">
+      {{ t "footer.why" }}<br>
+      {{ if .UnsubscribeURL }}<a class="bf-m" href="{{ .UnsubscribeURL }}" style="color:#6b7484; text-decoration:underline;">{{ t "footer.unsubscribe" }}</a>{{ end }}{{ if and .UnsubscribeURL .PreferencesURL }} · {{ end }}{{ if .PreferencesURL }}<a class="bf-m" href="{{ .PreferencesURL }}" style="color:#6b7484; text-decoration:underline;">{{ t "footer.prefs" }}</a>{{ end }}<br>
+      © {{ .Year }} <span translate="no">Budget Famille</span> · <a class="bf-m" href="{{ .AppURL }}" style="color:#6b7484;">budgetfamille.com</a>
+    </td>
+  </tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>

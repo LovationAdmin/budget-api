@@ -306,6 +306,10 @@ func RunMigrations(db *sql.DB) error {
 		// Language of the account ("fr" | "en"): the app and the emails. NULL on
 		// accounts made before it existed (the app then keeps what they saw).
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS locale VARCHAR(5)`,
+		// The emails a user can leave (one-click unsubscribe, account page):
+		// the monthly recap and the product news. TRUE until they opt out.
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_monthly_recap BOOLEAN NOT NULL DEFAULT TRUE`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_news BOOLEAN NOT NULL DEFAULT TRUE`,
 
 		// ============================================================================
 		// MARKET SUGGESTIONS — cache key refinement (currency + household)

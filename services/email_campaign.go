@@ -20,21 +20,29 @@ import (
 // variant must be one of:
 //   - utils.CampaignReengagementVerified   (founder note for verified users)
 //   - utils.CampaignReengagementUnverified (relance for unverified users)
-func (s *EmailService) SendReengagementEmail(toEmail, userName, campaignID string, variant utils.CampaignVariant) (string, error) {
+//
+// The email carries a one-click unsubscribe from the product news of userID.
+func (s *EmailService) SendReengagementEmail(toEmail, userID, userName, campaignID string, variant utils.CampaignVariant) (string, error) {
 	subject, html, err := utils.RenderCampaignEmail(variant, userName, campaignID)
 	if err != nil {
 		return "", err
 	}
-	return utils.SendCampaignEmail(toEmail, subject, html)
+	links := utils.UnsubscribeLinksFor(userID, utils.EmailListNews)
+	return utils.SendCampaign(utils.CampaignMessage{
+		To: toEmail, Subject: subject, HTML: html,
+		Unsubscribe: &links, Ref: campaignID + ":" + userID,
+	})
 }
 
 // SendMonthlyRecapEmail renders + sends the monthly recap for a single user.
 // `recap` is the *RecapData built by MonthlyRecapService; we pass it as
 // interface{} into utils.RenderMonthlyRecapEmail to avoid a circular import.
-func (s *EmailService) SendMonthlyRecapEmail(toEmail string, locale, monthLabel, budgetName string, recap interface{}) (string, error) {
+// `msg` carries the recipient's unsubscribe links and the message reference.
+func (s *EmailService) SendMonthlyRecapEmail(toEmail string, locale, monthLabel, budgetName string, recap interface{}, msg utils.CampaignMessage) (string, error) {
 	subject, html, err := utils.RenderMonthlyRecapEmail(locale, monthLabel, budgetName, recap)
 	if err != nil {
 		return "", err
 	}
-	return utils.SendCampaignEmail(toEmail, subject, html)
+	msg.To, msg.Subject, msg.HTML = toEmail, subject, html
+	return utils.SendCampaign(msg)
 }

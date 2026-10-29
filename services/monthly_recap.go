@@ -1,13 +1,13 @@
 // services/monthly_recap.go
 // ============================================================================
-// MONTHLY RECAP — aggregates the previous / current / next month for a budget
-// and produces the template data consumed by monthly_recap_*.html.
+// MONTHLY RECAP — prepares the month ahead for a budget and produces the
+// template data consumed by campaign_templates/monthly_recap.html.
 // ============================================================================
 //
-// Sent once per month (cron + admin trigger) to every verified user, scoped to
-// their most recently updated budget. The aggregation runs against the
-// canonical year-based budget_data shape produced by the UI's
-// convertNewFormatToOld() function.
+// Sent once per month as pay lands, a few days before the month it prepares
+// (monthly_recap_schedule.go), to every verified user who did not opt out,
+// scoped to their most recently consulted budget. The aggregation runs
+// against the stored budget_data (year-based shape + v3 rules).
 //
 // The recap is purely read-only: it never writes back to budget_data.
 // ============================================================================
@@ -51,6 +51,7 @@ type RecapMonth struct {
 	// Members' month (Foyer): contribution and pocket money, personal
 	// charges included. Amounts only — personal charge labels stay private.
 	Members         []RecapMember
+	Salaries        float64
 	PersonalCharges float64
 	// Deep link to this month in the app.
 	URL string
@@ -63,49 +64,51 @@ type ProjectNote struct {
 	Note string
 }
 
-type RecapProject struct {
-	Name         string
-	TargetAmount float64
-	AllocatedYTD float64
-	SpentYTD     float64
-	Progress     float64 // 0..100 (against target if set, else against allocated)
-	Status       string  // on_track | ahead | behind | no_target
-	HasTarget    bool
-}
-
 type RecapData struct {
 	UserName       string
 	BudgetName     string
 	Currency       string
 	CurrencySymbol string
 	Locale         string // "fr" | "en"
-	Year           int
+	Year           int    // year of the month ahead
 	AppURL         string
 	LoginURL       string
 	CampaignID     string
 
-	PreviousMonth RecapMonth
-	CurrentMonth  RecapMonth
-	NextMonth     RecapMonth
-
-	YearIncome   float64
-	YearExpenses float64 // recurring charges + project spend
-	YearSavings  float64 // YearIncome - YearExpenses
+	// Month is the month the recap prepares: it goes out as pay lands, a few
+	// days before it starts. Ending is the month ending as it goes out.
+	Month  RecapMonth
+	Ending RecapMonth
 
 	// UsesContributions is true when members put only part of their salary
 	// in the household pot: income figures are then pot inflows, labelled
-	// accordingly in the templates.
+	// accordingly in the template.
 	UsesContributions bool
+	// Method is the split method the contributions of Month follow (they are
+	// worked out again whenever a charge, a saving or a pay changes); nil
+	// when they are set by hand.
+	Method *RecapMethod
 
-	// BudgetURL opens the budget in the app (current month).
+	// Changes: what moves from Ending to Month, biggest first.
+	Changes []RecapChange
+	// Charges: the household charges of Month, heaviest first; the ones not
+	// listed are summed up in MoreCharges / MoreChargesAmount.
+	Charges           []RecapCharge
+	MoreCharges       int
+	MoreChargesAmount float64
+	// Savings: the pots of Month, with what they will hold at its end.
+	Savings []RecapSaving
+	// Pot: the general savings (what is left of the pot every month).
+	Pot RecapPot
+
+	// BudgetURL opens Month in the app; SplitURL the Foyer split assistant.
 	BudgetURL string
+	SplitURL  string
 	// Tip is a short "did you know" about a feature, rotating every month.
 	Tip RecapTip
 
-	Projects []RecapProject
-
-	// OtherBudgets is a short summary of the user's other budgets (capped
-	// in the caller). Empty when the user has a single budget.
+	// OtherBudgets is a short summary of the user's other budgets for Month
+	// (capped in the caller). Empty when the user has a single budget.
 	OtherBudgets []BudgetSummary
 
 	// OtherBudgetCount is the total number of secondary budgets the user
@@ -118,11 +121,14 @@ type RecapData struct {
 	// the primary + 3 others, HiddenBudgetCount = 4).
 	HiddenBudgetCount int
 
+	// Set per recipient by the sender: the footer's way out of the recap and
+	// the account page where emails are chosen.
+	UnsubscribeURL string
+	PreferencesURL string
+
 	GeneratedAt string
 }
 
-// BudgetSummary is the compact per-budget block we surface at the end of the
-// recap email when the user owns more than one budget.
 // RecapTip is the "did you know" card of the recap.
 type RecapTip struct {
 	Emoji string
@@ -132,14 +138,16 @@ type RecapTip struct {
 	URL   string
 }
 
+// BudgetSummary is the compact per-budget block we surface at the end of the
+// recap email when the user owns more than one budget: its month ahead.
 type BudgetSummary struct {
 	ID             string
 	Name           string
 	Currency       string
 	CurrencySymbol string
-	YearIncome     float64
-	YearExpenses   float64
-	YearSavings    float64
+	Income         float64
+	Charges        float64
+	Rest           float64
 	URL            string
 }
 
@@ -175,10 +183,11 @@ type budgetSummary struct {
 	UpdatedAt time.Time
 }
 
-// ListVerifiedUsers returns all users with email_verified=true.
-// Use limit > 0 to cap the result set for dry runs.
+// ListVerifiedUsers returns the users with email_verified=true who did not
+// leave the recap. Use limit > 0 to cap the result set for dry runs.
 func (s *MonthlyRecapService) ListVerifiedUsers(ctx context.Context, limit int) ([]VerifiedUser, error) {
-	q := `SELECT id::text, email, COALESCE(name, ''), COALESCE(locale, '') FROM users WHERE email_verified = TRUE ORDER BY created_at ASC`
+	q := `SELECT id::text, email, COALESCE(name, ''), COALESCE(locale, '') FROM users
+		WHERE email_verified = TRUE AND email_monthly_recap ORDER BY created_at ASC`
 	args := []any{}
 	if limit > 0 {
 		q += " LIMIT $1"
@@ -288,21 +297,19 @@ func (s *MonthlyRecapService) PickRecapBudget(ctx context.Context, userID string
 	return picked, count, rows.Err()
 }
 
-// BuildRecap reads the budget_data, decrypts it, and produces the recap for
-// the period (previousMonth, currentMonth, nextMonth) anchored on `now`.
-// The previous month is the one that just ended (e.g., running on May 1st
-// yields April / May / June).
+// BuildRecap reads the budget_data, decrypts it, and prepares the recap of
+// `month` (any day in it), the month ending being the one before.
 //
 // `others` contains the user's secondary budgets (already filtered by the
-// caller, e.g. top 3 by updated_at). Their year-to-date totals are read
-// here so we can surface them as compact cards at the end of the email.
+// caller, e.g. top 3 by updated_at). Their month ahead is read here so we can
+// surface them as compact cards at the end of the email.
 func (s *MonthlyRecapService) BuildRecap(
 	ctx context.Context,
 	user VerifiedUser,
 	bs *budgetSummary,
 	others []budgetSummary,
 	otherBudgetCount int,
-	now time.Time,
+	month time.Time,
 	campaignID string,
 	appURL string,
 ) (*RecapData, error) {
@@ -322,33 +329,7 @@ func (s *MonthlyRecapService) BuildRecap(
 	if currency == "" {
 		currency = "EUR"
 	}
-
-	prevTime := firstOfMonth(now).AddDate(0, -1, 0)
-	currTime := firstOfMonth(now)
-	nextTime := firstOfMonth(now).AddDate(0, 1, 0)
-
-	prev := aggregateMonth(payload, prevTime, locale, false)
-	curr := aggregateMonth(payload, currTime, locale, true)
-	next := aggregateMonth(payload, nextTime, locale, false)
-
-	prev.ProjectNotes = aggregateProjectNotes(payload, prevTime, locale)
-	curr.ProjectNotes = aggregateProjectNotes(payload, currTime, locale)
-	next.ProjectNotes = aggregateProjectNotes(payload, nextTime, locale)
-
-	budgetURL := strings.TrimRight(appURL, "/") + "/budget/" + bs.ID + "/complete/month"
-	for _, m := range []*RecapMonth{&prev, &curr, &next} {
-		m.Members = resolveMembers(payload, m.Year, m.MonthIdx)
-		for _, x := range m.Members {
-			m.PersonalCharges += x.PersonalCharges
-		}
-		m.PersonalCharges = roundCents(m.PersonalCharges)
-		m.URL = budgetURL + "?m=" + makeYM(m.Year, m.MonthIdx)
-	}
-
-	projects := aggregateProjects(payload, currTime.Year(), locale)
-	yearIncome, yearExpenses := aggregateYearTotals(payload, currTime.Year())
-
-	loginURL := strings.TrimRight(appURL, "/") + "/login"
+	appURL = strings.TrimRight(appURL, "/")
 
 	displayName := user.Name
 	if displayName == "" {
@@ -362,33 +343,62 @@ func (s *MonthlyRecapService) BuildRecap(
 		budgetName = defaultBudgetName(locale)
 	}
 
-	otherSummaries := s.buildOtherBudgetSummaries(ctx, others, currTime.Year(), appURL)
+	data := buildRecapData(payload, firstOfMonth(month), locale, appURL+"/budget/"+bs.ID)
+	data.UserName = displayName
+	data.BudgetName = budgetName
+	data.Currency = currency
+	data.CurrencySymbol = currencySymbol(currency)
+	data.AppURL = appURL
+	data.LoginURL = appURL + "/login"
+	data.CampaignID = campaignID
+	data.Tip = recapTip(locale, firstOfMonth(month), appURL)
+	data.OtherBudgets = s.buildOtherBudgetSummaries(ctx, others, firstOfMonth(month), appURL)
+	data.OtherBudgetCount = otherBudgetCount - 1
+	data.HiddenBudgetCount = maxInt(0, (otherBudgetCount-1)-len(data.OtherBudgets))
+	data.GeneratedAt = time.Now().Format("2006-01-02")
+	return data, nil
+}
+
+// buildRecapData works out everything the recap says about a budget's
+// `month` (first day), the month ending being the one before. `budgetURL` is
+// the budget's address in the app.
+func buildRecapData(p *budgetPayload, month time.Time, locale, budgetURL string) *RecapData {
+	ending := month.AddDate(0, -1, 0)
+	m := aggregateMonth(p, month, locale, true)
+	e := aggregateMonth(p, ending, locale, false)
+	m.ProjectNotes = aggregateProjectNotes(p, month, locale)
+	monthURL := budgetURL + "/complete/month"
+	for _, x := range []*RecapMonth{&m, &e} {
+		x.Members = resolveMembers(p, x.Year, x.MonthIdx)
+		for _, member := range x.Members {
+			x.PersonalCharges += member.PersonalCharges
+			x.Salaries += member.Salary
+		}
+		x.PersonalCharges = roundCents(x.PersonalCharges)
+		x.Salaries = roundCents(x.Salaries)
+		x.URL = monthURL + "?m=" + makeYM(x.Year, x.MonthIdx)
+	}
+
+	charges, more, moreAmount := recapCharges(p, m.Year, m.MonthIdx)
+	_, generalNow := recapBalances(p, ending)
+	pots, generalAfter := recapBalances(p, month)
 
 	return &RecapData{
-		UserName:          displayName,
-		BudgetName:        budgetName,
-		Currency:          currency,
-		CurrencySymbol:    currencySymbol(currency),
 		Locale:            locale,
-		Year:              currTime.Year(),
-		AppURL:            appURL,
-		LoginURL:          loginURL,
-		CampaignID:        campaignID,
-		PreviousMonth:     prev,
-		CurrentMonth:      curr,
-		NextMonth:         next,
-		YearIncome:        yearIncome,
-		YearExpenses:      yearExpenses,
-		YearSavings:       roundCents(yearIncome - yearExpenses),
-		UsesContributions: usesContributions(payload),
-		BudgetURL:         budgetURL,
-		Tip:               recapTip(locale, currTime, strings.TrimRight(appURL, "/")),
-		Projects:          projects,
-		OtherBudgets:      otherSummaries,
-		OtherBudgetCount:  otherBudgetCount - 1,
-		HiddenBudgetCount: maxInt(0, (otherBudgetCount-1)-len(otherSummaries)),
-		GeneratedAt:       now.Format("2006-01-02"),
-	}, nil
+		Year:              m.Year,
+		Month:             m,
+		Ending:            e,
+		UsesContributions: usesContributions(p),
+		Method:            splitMethodAt(p, makeYM(m.Year, m.MonthIdx), locale),
+		Changes:           recapChanges(p, ending, month, locale),
+		Charges:           charges,
+		MoreCharges:       more,
+		MoreChargesAmount: moreAmount,
+		Savings:           recapSavings(p, month, pots, locale),
+		Pot:               RecapPot{Now: generalNow, After: generalAfter, Rest: roundCents(generalAfter - generalNow)},
+		BudgetURL:         m.URL,
+		SplitURL:          budgetURL + "/complete/members#repartition",
+	}
 }
 
 func maxInt(a, b int) int {
@@ -398,13 +408,13 @@ func maxInt(a, b int) int {
 	return b
 }
 
-// buildOtherBudgetSummaries fetches each secondary budget's data and produces
-// a lightweight year-to-date summary. Failures are logged and skipped so a
-// single corrupt budget never breaks the whole email.
+// buildOtherBudgetSummaries fetches each secondary budget's data and sums up
+// its month ahead. Failures are logged and skipped so a single corrupt budget
+// never breaks the whole email.
 func (s *MonthlyRecapService) buildOtherBudgetSummaries(
 	ctx context.Context,
 	others []budgetSummary,
-	year int,
+	month time.Time,
 	appURL string,
 ) []BudgetSummary {
 	if len(others) == 0 {
@@ -422,7 +432,7 @@ func (s *MonthlyRecapService) buildOtherBudgetSummaries(
 			utils.SafeWarn("monthly-recap: skip other budget %s: decode: %v", b.ID, err)
 			continue
 		}
-		income, expenses := aggregateYearTotals(payload, year)
+		m := aggregateMonth(payload, month, "fr", false)
 
 		name := b.Name
 		if name == "" {
@@ -442,10 +452,10 @@ func (s *MonthlyRecapService) buildOtherBudgetSummaries(
 			Name:           name,
 			Currency:       currency,
 			CurrencySymbol: currencySymbol(currency),
-			YearIncome:     income,
-			YearExpenses:   expenses,
-			YearSavings:    roundCents(income - expenses),
-			URL:            strings.TrimRight(appURL, "/") + "/budget/" + b.ID,
+			Income:         m.TotalIncome,
+			Charges:        m.RecurringCharges,
+			Rest:           m.NetSavings,
+			URL:            appURL + "/budget/" + b.ID + "/complete/month?m=" + makeYM(m.Year, m.MonthIdx),
 		})
 	}
 	return out
@@ -475,6 +485,7 @@ type budgetCharge struct {
 	// whose pocket money pays it.
 	OwnerID   string  `json:"ownerId,omitempty"`
 	Label     string  `json:"label"`
+	Category  string  `json:"category,omitempty"`
 	Amount    float64 `json:"amount"`
 	StartDate string  `json:"startDate,omitempty"`
 	EndDate   string  `json:"endDate,omitempty"`
@@ -535,6 +546,8 @@ type budgetPayload struct {
 	OneTimeIncomes  map[string][]budgetOneTime `json:"oneTimeIncomes"`
 	LockedMonths    map[string]bool            `json:"lockedMonths"`
 	SchemaVersion   int                        `json:"schemaVersion,omitempty"`
+	// The household's split methods over time (budget-ui split.ts).
+	SplitRules splitRuleList `json:"splitRules,omitempty"`
 }
 
 func decodeBudgetPayload(raw interface{}) (*budgetPayload, error) {
@@ -704,65 +717,6 @@ func aggregateMonth(p *budgetPayload, when time.Time, locale string, isCurrent b
 	}
 }
 
-func aggregateProjects(p *budgetPayload, year int, locale string) []RecapProject {
-	yearData, ok := p.YearlyData[fmt.Sprintf("%d", year)]
-	if !ok {
-		return nil
-	}
-
-	out := make([]RecapProject, 0, len(p.Projects))
-	for _, proj := range p.Projects {
-		allocated := 0.0
-		spent := 0.0
-		for i := 0; i < 12; i++ {
-			if i < len(yearData.Months) {
-				allocated += yearData.Months[i][proj.ID]
-			}
-			if i < len(yearData.Expenses) {
-				spent += yearData.Expenses[i][proj.ID]
-			}
-		}
-		hasTarget := proj.TargetAmount > 0
-		progress := 0.0
-		status := "no_target"
-		if hasTarget {
-			progress = (allocated / proj.TargetAmount) * 100
-			if progress > 100 {
-				progress = 100
-			}
-			now := time.Now()
-			expectedProgress := float64(int(now.Month())) / 12.0 * 100
-			if year < now.Year() {
-				expectedProgress = 100
-			} else if year > now.Year() {
-				expectedProgress = 0
-			}
-			switch {
-			case progress >= expectedProgress+10:
-				status = "ahead"
-			case progress < expectedProgress-10:
-				status = "behind"
-			default:
-				status = "on_track"
-			}
-		}
-		name := proj.Label
-		if name == "" {
-			name = defaultProjectName(locale)
-		}
-		out = append(out, RecapProject{
-			Name:         name,
-			TargetAmount: proj.TargetAmount,
-			AllocatedYTD: allocated,
-			SpentYTD:     spent,
-			Progress:     progress,
-			Status:       status,
-			HasTarget:    hasTarget,
-		})
-	}
-	return out
-}
-
 // aggregateProjectNotes returns the per-project notes for the given month,
 // in the order projects are declared in the budget. Empty notes are skipped.
 func aggregateProjectNotes(p *budgetPayload, when time.Time, locale string) []ProjectNote {
@@ -791,20 +745,6 @@ func aggregateProjectNotes(p *budgetPayload, when time.Time, locale string) []Pr
 		out = append(out, ProjectNote{Name: name, Note: note})
 	}
 	return out
-}
-
-func aggregateYearTotals(p *budgetPayload, year int) (income, expenses float64) {
-	for i := 0; i < 12; i++ {
-		v := resolveMonthValues(p, year, i)
-		income += v.Contributions + v.OneOff
-		expenses += v.Charges
-	}
-	if yearData, ok := p.YearlyData[fmt.Sprintf("%d", year)]; ok {
-		for _, m := range yearData.Expenses {
-			expenses += sumMap(m)
-		}
-	}
-	return roundCents(income), roundCents(expenses)
 }
 
 // ----------------------------------------------------------------------------
@@ -885,4 +825,26 @@ func friendlyEmailFallback(email string) string {
 // the package-prefixed logging.
 func (s *MonthlyRecapService) SafeLog(format string, args ...any) {
 	utils.SafeInfo(format, args...)
+}
+
+// PreviewRecap builds the recap of a stored budget blob outside the database
+// (cmd/recap_preview, tests): the recap of `month` for `userName`.
+func PreviewRecap(blob interface{}, month time.Time, locale, userName, appURL, budgetID string) (*RecapData, error) {
+	p, err := decodeBudgetPayload(blob)
+	if err != nil {
+		return nil, err
+	}
+	appURL = strings.TrimRight(appURL, "/")
+	data := buildRecapData(p, firstOfMonth(month), locale, appURL+"/budget/"+budgetID)
+	data.UserName = userName
+	data.BudgetName = p.BudgetTitle
+	if data.BudgetName == "" {
+		data.BudgetName = defaultBudgetName(locale)
+	}
+	data.Currency, data.CurrencySymbol = "EUR", "€"
+	data.AppURL, data.LoginURL = appURL, appURL+"/login"
+	data.CampaignID = RecapCampaignID(month)
+	data.Tip = recapTip(locale, firstOfMonth(month), appURL)
+	data.PreferencesURL = appURL + "/profile#emails"
+	return data, nil
 }

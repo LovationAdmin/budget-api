@@ -108,6 +108,18 @@ func VerifyResendRateLimit() gin.HandlerFunc {
 	})
 }
 
+// EmailLinkRateLimit: the links of the emails (unsubscribe, preferences) are
+// signed, so this only bounds the load. Generous: one-click unsubscribes from
+// a mailbox provider all come from its few servers.
+func EmailLinkRateLimit() gin.HandlerFunc {
+	return NewLimiter(LimiterConfig{
+		Name:    "email_link",
+		Limit:   300,
+		Window:  1 * time.Hour,
+		KeyFunc: KeyByIP,
+	})
+}
+
 // PublicAIRateLimit protège le simulateur IA public (sans compte) : chaque
 // analyse peut déclencher un appel IA payant. 15 / heure par visiteur (IP
 // réelle, voir ConfigureClientIP), et un plafond global de 150 / heure qui

@@ -76,44 +76,62 @@ func TestRecapMembers_ClosedMonthSnapshot(t *testing.T) {
 	}
 }
 
-// Renders the recap from the demo household; EMAIL_PREVIEW_DIR keeps the HTML.
+// Renders the recap of November from the demo household (the yearly
+// property tax falls due); EMAIL_PREVIEW_DIR keeps the HTML and its text.
 func TestRecapRender_DemoHousehold(t *testing.T) {
-	p := loadDemoPayload(t)
-	now := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
-	month := func(at time.Time) RecapMonth {
-		m := aggregateMonth(p, at, "fr", false)
-		m.Members = resolveMembers(p, m.Year, m.MonthIdx)
-		m.URL = "https://budgetfamille.com/budget/b1/complete/month?m=" + makeYM(m.Year, m.MonthIdx)
-		return m
+	raw, err := os.ReadFile("testdata/recap_demo.json")
+	if err != nil {
+		t.Fatal(err)
 	}
-	data := &RecapData{
-		UserName: "Camille", BudgetName: "Famille Martin", Currency: "EUR", CurrencySymbol: "€", Locale: "fr", Year: 2026,
-		AppURL: "https://budgetfamille.com", CampaignID: "monthly_recap_2026_10",
-		PreviousMonth: month(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)),
-		CurrentMonth:  month(time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)),
-		NextMonth:     month(time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)),
-		YearIncome:    27500, YearExpenses: 24100, YearSavings: 3400,
-		UsesContributions: usesContributions(p),
-		BudgetURL:         "https://budgetfamille.com/budget/b1/complete/month",
-		Tip:               recapTip("fr", now, "https://budgetfamille.com"),
-		Projects: []RecapProject{
-			{Name: "Vacances été 2027", TargetAmount: 3000, AllocatedYTD: 500, Progress: 16.7, Status: "on_track", HasTarget: true},
-			{Name: "Fonds d'urgence", TargetAmount: 5000, AllocatedYTD: 1500, Progress: 30, Status: "ahead", HasTarget: true},
-		},
+	var blob map[string]interface{}
+	if err := json.Unmarshal(raw, &blob); err != nil {
+		t.Fatal(err)
 	}
+	blob["splitRules"] = []interface{}{map[string]interface{}{"from": "2026-09", "method": "prorata", "margin": 5, "basis": "month"}}
 	for _, loc := range []string{"fr", "en"} {
-		subject, html, err := utils.RenderMonthlyRecapEmail(loc, data.PreviousMonth.Label, data.BudgetName, data)
+		data, err := PreviewRecap(blob, time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), loc, "Camille", "https://budgetfamille.com", "b1")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if loc == "fr" && (subject != "Votre bilan d’octobre 2026 · Famille Martin" || !strings.Contains(html, "dont 185 € de charges perso")) {
-			t.Errorf("fr subject %q or members block missing", subject)
+		data.UnsubscribeURL = "https://budgetfamille.com/emails/desabonnement?token=x"
+		subject, html, err := utils.RenderMonthlyRecapEmail(loc, data.Month.ShortLabel, data.BudgetName, data)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if strings.Contains(html, "Envoi famille") || strings.Contains(html, "Charge privée") {
+		wants := map[string][]string{
+			"fr": {"Novembre est prêt.", "Du 1ᵉʳ au 30 novembre", "Les virements du mois", "dont 185 € de charges perso",
+				"Au prorata des salaires · marge 5 %", "Recalculé tout seul", "Ce qui change en novembre", "Taxe foncière", "Échéance annuelle",
+				"Où va l’argent", "Vacances été 2027", "Votre épargne générale", "Fin octobre", "Ouvrir novembre dans l’app",
+				"complete/month?m=2026-11&amp;utm_source=email", "complete/members?utm_source=email", "#repartition",
+				"Ne plus recevoir le récap mensuel", "emails/desabonnement?token=x"},
+			"en": {"November is ready.", "November 1 – 30", "This month’s transfers", "incl. 185 € personal bills",
+				"In proportion to pay · 5% margin", "What changes in November", "Yearly bill due", "Where the money goes",
+				"Your general savings", "End of October", "Open November in the app", "Stop the monthly recap"},
+		}[loc]
+		for _, w := range wants {
+			if !strings.Contains(html, w) {
+				t.Errorf("%s: html missing %q", loc, w)
+			}
+		}
+		if loc == "fr" && subject != "Votre mois de novembre est prêt · Famille Martin" {
+			t.Errorf("fr subject %q", subject)
+		}
+		if loc == "en" && subject != "Your November is ready · Famille Martin" {
+			t.Errorf("en subject %q", subject)
+		}
+		if strings.Contains(html, "Envoi famille") || strings.Contains(html, "Salle de sport") || strings.Contains(html, "Charge privée") {
 			t.Error("personal charge labels must never appear in the recap")
+		}
+		if len(html) > 90*1024 {
+			t.Errorf("%s: %d bytes, Gmail clips past 102 KB", loc, len(html))
+		}
+		text := utils.PlainTextOf(html)
+		if strings.Contains(text, "{") || strings.Contains(text, "&#") || !strings.Contains(text, data.Month.ShortLabel) {
+			t.Errorf("%s: text part is not clean text:\n%s", loc, text)
 		}
 		if dir := os.Getenv("EMAIL_PREVIEW_DIR"); dir != "" {
 			_ = os.WriteFile(filepath.Join(dir, "recap_"+loc+".html"), []byte(html), 0o644)
+			_ = os.WriteFile(filepath.Join(dir, "recap_"+loc+".txt"), []byte(text), 0o644)
 		}
 	}
 }

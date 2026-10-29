@@ -171,20 +171,6 @@ func TestV3_OneOffItemsAndLegacyBareNumbers(t *testing.T) {
 	assertMoney(t, "bare number", aggregateMonth(p, month(2025, 2), "fr", false).OneTimeIncome, 150)
 }
 
-func TestV3_YearTotalsFollowTheEngine(t *testing.T) {
-	p := decodeJSON(t, `{
-		"people":[{"id":"a","name":"A","salary":3000,"contributions":[{"from":"2026-01","mode":"fixed","value":2000}]}],
-		"charges":[
-			{"id":"rent","label":"Loyer","amount":1000},
-			{"id":"tax","label":"Taxe","amount":600,"frequency":"yearly","startDate":"2026-10-01"}
-		],
-		"yearlyData":{"2026":{"expenses":[{"car":100}]}}
-	}`)
-	income, expenses := aggregateYearTotals(p, 2026)
-	assertMoney(t, "year inflows", income, 12*2000)
-	assertMoney(t, "year expenses", expenses, 12*1000+600+100)
-}
-
 // legacyAggregate is the pre-v3 recap algorithm, kept to prove that budgets
 // without any v3 field produce exactly the same numbers as before.
 func legacyAggregate(p *budgetPayload, year, monthIdx int) (income, oneTime, charges, allocated float64) {
@@ -261,24 +247,24 @@ func TestV3_LegacyParity(t *testing.T) {
 func TestV3_TemplatesLabelPotInflows(t *testing.T) {
 	data := &RecapData{
 		UserName: "Libasse", BudgetName: "Famille", Currency: "EUR", CurrencySymbol: "€", Locale: "fr", Year: 2026,
-		PreviousMonth: RecapMonth{Label: "Septembre 2026"}, CurrentMonth: RecapMonth{Label: "Octobre 2026"},
-		NextMonth: RecapMonth{Label: "Novembre 2026"}, UsesContributions: true,
+		Month: RecapMonth{Label: "Novembre 2026", ShortLabel: "Novembre", Year: 2026, MonthIdx: 10}, Ending: RecapMonth{Label: "Octobre 2026", ShortLabel: "Octobre"},
+		UsesContributions: true,
 	}
-	_, html, err := utils.RenderMonthlyRecapEmail("fr", "Octobre 2026", "Famille", data)
+	_, html, err := utils.RenderMonthlyRecapEmail("fr", "Novembre", "Famille", data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(html, "Entrées du pot commun") || strings.Contains(html, "Revenus prévus") {
+	if !strings.Contains(html, "Entrées du pot commun") || strings.Contains(html, "Revenus du mois") {
 		t.Error("fr template should label pot inflows when contributions are used")
 	}
 	data.UsesContributions = false
-	_, html, _ = utils.RenderMonthlyRecapEmail("fr", "Octobre 2026", "Famille", data)
-	if !strings.Contains(html, "Revenus prévus") || strings.Contains(html, "pot commun") {
+	_, html, _ = utils.RenderMonthlyRecapEmail("fr", "Novembre", "Famille", data)
+	if !strings.Contains(html, "Revenus du mois") || strings.Contains(html, "Entrées du pot commun") {
 		t.Error("fr template should keep 'Revenus' for legacy budgets")
 	}
 	data.UsesContributions = true
-	_, html, err = utils.RenderMonthlyRecapEmail("en", "October 2026", "Family", data)
-	if err != nil || !strings.Contains(html, "Shared-pot inflows") {
+	_, html, err = utils.RenderMonthlyRecapEmail("en", "November", "Family", data)
+	if err != nil || !strings.Contains(html, "Into the shared pot") {
 		t.Errorf("en template should label pot inflows (err=%v)", err)
 	}
 }
@@ -286,7 +272,8 @@ func TestV3_TemplatesLabelPotInflows(t *testing.T) {
 // TestV3_ParityWithUIEngine replays budgets written by the UI codec
 // (budget-ui/src/lib/budget) and compares each month with the totals the UI
 // engine computed for them: frozen closed months, reopened months, dated
-// steps, overrides, frequencies, contributions and one-off items.
+// steps, overrides, frequencies, contributions and one-off items, and the
+// running balances of the general savings and of every savings pot.
 func TestV3_ParityWithUIEngine(t *testing.T) {
 	raw, err := os.ReadFile("testdata/v3_parity.json")
 	if err != nil {
@@ -299,6 +286,9 @@ func TestV3_ParityWithUIEngine(t *testing.T) {
 			OneOff        float64 `json:"oneOff"`
 			Charges       float64 `json:"charges"`
 			Savings       float64 `json:"savings"`
+			// Running balances at the end of the month.
+			General float64            `json:"general"`
+			Pots    map[string]float64 `json:"pots"`
 		} `json:"months"`
 	}
 	if err := json.Unmarshal(raw, &cases); err != nil {
@@ -321,6 +311,15 @@ func TestV3_ParityWithUIEngine(t *testing.T) {
 				t.Errorf("budget %d %s: UI (%v,%v,%v,%v) vs recap (%v,%v,%v,%v)", i, ym,
 					want.Contributions, want.OneOff, want.Charges, want.Savings,
 					got.BaseIncome, got.OneTimeIncome, got.RecurringCharges, got.ProjectsAllocated)
+			}
+			pots, general := recapBalances(p, month(y, m))
+			if math.Abs(general-want.General) > 0.005 {
+				t.Errorf("budget %d %s: general savings UI %v vs recap %v", i, ym, want.General, general)
+			}
+			for id, balance := range want.Pots {
+				if math.Abs(pots[id]-balance) > 0.005 {
+					t.Errorf("budget %d %s: pot %s UI %v vs recap %v", i, ym, id, balance, pots[id])
+				}
 			}
 		}
 	}
