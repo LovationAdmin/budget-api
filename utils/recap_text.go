@@ -57,7 +57,7 @@ var recapText = map[string]map[string]string{
 		"method.manual_cta":   "Les calculer automatiquement",
 
 		"changes.title":            "Ce qui change en %s",
-		"changes.lead":             "Par rapport à %s.",
+		"changes.lead":             "Par rapport à %s. En vert, ce qui laisse plus d’argent dans le pot ; en rouge, ce qui en laisse moins.",
 		"changes.none":             "Rien ne bouge par rapport à %s : mêmes charges, même épargne. 👌",
 		"changes.effect":           "Effet sur le reste du mois : %s par rapport à %s.",
 		"changes.kind.new":         "Nouvelle charge",
@@ -161,7 +161,7 @@ var recapText = map[string]map[string]string{
 		"method.manual_cta":   "Work them out automatically",
 
 		"changes.title":            "What changes in %s",
-		"changes.lead":             "Compared with %s.",
+		"changes.lead":             "Compared with %s. Green leaves more money in the pot, red leaves less.",
 		"changes.none":             "Nothing moves compared with %s: same bills, same savings. 👌",
 		"changes.effect":           "Effect on what’s left: %s compared with %s.",
 		"changes.kind.new":         "New bill",

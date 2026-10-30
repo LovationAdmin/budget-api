@@ -34,9 +34,10 @@ func TestRecapChanges_Kinds(t *testing.T) {
 		delta float64
 		good  bool
 	}
+	// Each amount is the effect on what is left of the month: + green, − red.
 	want := map[string]c{
-		"Taxe foncière": {"due", 900, false}, "Prime": {"oneoff", 300, true}, "Crédit auto": {"end", -250, true},
-		"Voyage": {"saving_new", 200, false}, "Awa": {"pay_up", 100, true}, "Cantine": {"pause", -90, true},
+		"Taxe foncière": {"due", -900, false}, "Prime": {"oneoff", 300, true}, "Crédit auto": {"end", 250, true},
+		"Voyage": {"saving_new", -200, false}, "Awa": {"pay_up", 100, true}, "Cantine": {"pause", 90, true},
 	}
 	if len(got) != recapMaxChanges {
 		t.Fatalf("want the %d biggest changes, got %+v", recapMaxChanges, got)
@@ -53,6 +54,11 @@ func TestRecapChanges_Kinds(t *testing.T) {
 	}
 	if got[0].Label != "Taxe foncière" {
 		t.Errorf("biggest first, got %s", got[0].Label)
+	}
+	for _, x := range got {
+		if x.Good != (x.Delta > 0) {
+			t.Errorf("%s: the colour follows the sign, got %+v", x.Label, x)
+		}
 	}
 	// The two left out: the rent going up 40, the new 30 gym.
 	p.OneTimeIncomes = nil

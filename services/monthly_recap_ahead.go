@@ -50,9 +50,12 @@ type RecapChange struct {
 	Label   string
 	Private bool
 	Emoji   string
-	// Delta is how much the item moves (month ahead − month ending).
+	// Delta is the change's effect on what is left of the month: + leaves
+	// more money in the pot (a bill that drops or ends, a member paying more,
+	// a one-off income), − leaves less (a new or higher bill, more savings, a
+	// member paying less). Shown green or red by its sign.
 	Delta float64
-	// Good: it leaves more money in the pot.
+	// Good: Delta > 0, it leaves more money in the pot.
 	Good bool
 }
 
@@ -363,7 +366,7 @@ func recapChanges(p *budgetPayload, ending, month time.Time, locale string) []Re
 		}
 		out = append(out, RecapChange{
 			Kind: kind, Label: c.Label, Private: c.Label == privateChargeLabel, Emoji: categoryEmoji(c.Category),
-			Delta: roundCents(b - a), Good: b < a,
+			Delta: roundCents(a - b), Good: b < a,
 		})
 	}
 
@@ -389,7 +392,7 @@ func recapChanges(p *budgetPayload, ending, month time.Time, locale string) []Re
 		if name == "" {
 			name = defaultProjectName(locale)
 		}
-		out = append(out, RecapChange{Kind: kind, Label: name, Emoji: "🎯", Delta: roundCents(b - a), Good: b < a})
+		out = append(out, RecapChange{Kind: kind, Label: name, Emoji: "🎯", Delta: roundCents(a - b), Good: b < a})
 	}
 
 	was := map[string]float64{}
