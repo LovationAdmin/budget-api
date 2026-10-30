@@ -103,48 +103,6 @@ func TestLocaleForLocation(t *testing.T) {
 	}
 }
 
-func TestAggregateProjects_TargetProgressAndStatus(t *testing.T) {
-	year := time.Now().Year()
-	payload := &budgetPayload{
-		Projects: []budgetProject{
-			{ID: "p1", Label: "Vacances", TargetAmount: 1000},
-			{ID: "p2", Label: "Pas de cible"}, // no target
-		},
-		YearlyData: map[string]budgetYear{
-			intToStr(year): {
-				Months: []map[string]float64{
-					{"p1": 1000, "p2": 50},
-				},
-			},
-		},
-	}
-	out := aggregateProjects(payload, year, "fr")
-	if len(out) != 2 {
-		t.Fatalf("expected 2 projects, got %d", len(out))
-	}
-	if out[0].Progress != 100 {
-		t.Errorf("p1 progress: want 100, got %v", out[0].Progress)
-	}
-	if !out[0].HasTarget {
-		t.Error("p1 should have target")
-	}
-	if out[1].Status != "no_target" {
-		t.Errorf("p2 status: want no_target, got %s", out[1].Status)
-	}
-}
-
-func intToStr(n int) string {
-	out := ""
-	if n == 0 {
-		return "0"
-	}
-	for n > 0 {
-		out = string(rune('0'+n%10)) + out
-		n /= 10
-	}
-	return out
-}
-
 func TestFriendlyEmailFallback(t *testing.T) {
 	cases := map[string]string{
 		"alice@example.com": "Alice",

@@ -37,6 +37,7 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 		SELECT id, email, name, 
 		       COALESCE(avatar, ''), 
 		       totp_enabled, email_verified, COALESCE(locale, ''),
+		       email_monthly_recap, email_news,
 		       created_at, updated_at
 		FROM users
 		WHERE id = $1
@@ -48,6 +49,8 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 		&user.TOTPEnabled,
 		&user.EmailVerified,
 		&user.Locale,
+		&user.EmailMonthlyRecap,
+		&user.EmailNews,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)

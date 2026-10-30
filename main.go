@@ -10,7 +10,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"os"
 	"time"
 
@@ -224,6 +223,7 @@ func main() {
 
 		// 1. Routes Publiques (Auth, Admin)
 		routes.SetupAuthRoutes(v1, db, refreshService)
+		routes.SetupEmailRoutes(v1, db)
 		routes.SetupAdminRoutes(v1, db)
 
 		// FIXED: SetupAdminSuggestionsRoutes ne prend que 2 arguments
@@ -344,41 +344,72 @@ func cleanExpiredCache(db *sql.DB) {
 	}
 }
 
-// scheduleMonthlyRecap déclenche l'envoi du récap mensuel le 1er de chaque
-// mois à 09:00 Europe/Paris. Idempotent grâce à email_campaign_sends
-// (campaign_id, user_id), on peut donc relancer le scheduler sans dupliquer.
+// monthlyRecapLockKey: pg advisory lock, one sender across instances.
+const monthlyRecapLockKey = 230008
+
+// scheduleMonthlyRecap sends the recap of the coming month when pay lands:
+// the 27th at 09:00 Europe/Paris (services/monthly_recap_schedule.go). An
+// instance booting between then and the end of the month sends what is
+// missing: email_campaign_sends skips the users already served.
+// MONTHLY_RECAP_DISABLED=1 turns it off.
 func scheduleMonthlyRecap(db *sql.DB) {
+	if os.Getenv("MONTHLY_RECAP_DISABLED") == "1" {
+		utils.SafeInfo("monthly-recap: disabled")
+		return
+	}
 	loc, err := time.LoadLocation("Europe/Paris")
 	if err != nil {
 		utils.SafeWarn("monthly-recap: Europe/Paris timezone unavailable, falling back to UTC: %v", err)
 		loc = time.UTC
 	}
-
+	day := services.RecapSendDay()
 	handler := routes.NewMonthlyRecapHandlerForScheduler(db)
 
+	// Let the deploy settle (health checks, the previous instance draining).
+	time.Sleep(2 * time.Minute)
 	for {
-		nextRun := nextMonthlyRecapTrigger(time.Now().In(loc), loc)
-		wait := time.Until(nextRun)
-		utils.SafeInfo("monthly-recap: next run scheduled at %s (in %s)", nextRun.Format(time.RFC3339), wait.Truncate(time.Minute))
-
-		timer := time.NewTimer(wait)
-		<-timer.C
-
-		now := time.Now().In(loc)
-		prev := now.AddDate(0, 0, -1)
-		campaignID := fmt.Sprintf("monthly_recap_%04d_%02d", prev.Year(), int(prev.Month()))
-
-		// 4-hour budget for the loop (Resend throttling + decryption).
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Hour)
-		result := handler.RunMonthlyRecap(ctx, handlers.MonthlyRecapRunOptions{
-			CampaignID: campaignID,
-			SkipSent:   true,
-			Anchor:     now,
-		})
-		cancel()
-		utils.SafeInfo("monthly-recap: campaign=%s total=%d sent=%d skipped=%d failed=%d duration_ms=%d",
-			result.CampaignID, result.Total, result.Sent, result.Skipped, result.Failed, result.DurationMs)
+		retry := false
+		if target, open := services.RecapWindow(time.Now(), day, loc); open {
+			retry = !runMonthlyRecap(db, handler, target)
+		}
+		wait := time.Until(services.NextRecapRun(time.Now(), day, loc))
+		if retry && wait > 15*time.Minute {
+			// Another instance holds the send, or it was cut short: look
+			// again soon, while the window is still open.
+			wait = 15 * time.Minute
+		}
+		utils.SafeInfo("monthly-recap: next check in %s", wait.Truncate(time.Minute))
+		time.Sleep(wait)
 	}
+}
+
+// runMonthlyRecap sends the recap of `target` to the users not served yet.
+// It returns false when it could not run to the end.
+func runMonthlyRecap(db *sql.DB, handler *handlers.AdminMonthlyRecapHandler, target time.Time) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Hour)
+	defer cancel()
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		utils.SafeWarn("monthly-recap: no db connection: %v", err)
+		return false
+	}
+	defer conn.Close()
+	var locked bool
+	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", monthlyRecapLockKey).Scan(&locked); err != nil || !locked {
+		utils.SafeInfo("monthly-recap: another instance is sending (locked=%v err=%v)", locked, err)
+		return false
+	}
+	defer conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", monthlyRecapLockKey) //nolint:errcheck
+
+	result := handler.RunMonthlyRecap(ctx, handlers.MonthlyRecapRunOptions{
+		CampaignID: services.RecapCampaignID(target),
+		SkipSent:   true,
+		Month:      target,
+	})
+	utils.SafeInfo("monthly-recap: campaign=%s total=%d sent=%d skipped=%d failed=%d duration_ms=%d aborted=%v",
+		result.CampaignID, result.Total, result.Sent, result.Skipped, result.Failed, result.DurationMs, result.Aborted)
+	return !result.Aborted
 }
 
 // whatsNewCampaign is the one-off "what's new + apology" announcement sent to
@@ -472,16 +503,6 @@ func runUnverifiedCleanup(db *sql.DB, cleanup *services.UnverifiedCleanup) {
 	}
 	utils.SafeInfo("unverified-cleanup: warned=%d warn_failed=%d deleted=%d delete_failed=%d",
 		res.Warned, res.WarnFailed, res.Deleted, res.DeleteFailed)
-}
-
-// nextMonthlyRecapTrigger returns the next 1st-of-month 09:00 in the given
-// location, strictly after `from`.
-func nextMonthlyRecapTrigger(from time.Time, loc *time.Location) time.Time {
-	candidate := time.Date(from.Year(), from.Month(), 1, 9, 0, 0, 0, loc)
-	if !candidate.After(from) {
-		candidate = time.Date(from.Year(), from.Month()+1, 1, 9, 0, 0, 0, loc)
-	}
-	return candidate
 }
 
 // scheduleRefreshTokenCleanup tourne toutes les 24h et purge les tokens

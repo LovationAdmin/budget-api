@@ -228,7 +228,7 @@ func (h *AdminCampaignsHandler) runSegment(ctx context.Context, in segmentInput)
 			continue
 		}
 
-		msgID, sendErr := h.EmailService.SendReengagementEmail(t.Email, t.Name, in.CampaignID, in.Variant)
+		msgID, sendErr := h.EmailService.SendReengagementEmail(t.Email, t.ID, t.Name, in.CampaignID, in.Variant)
 		if sendErr != nil {
 			res.Failed++
 			res.Failures = append(res.Failures, failureEntry{UserID: t.ID, Reason: sendErr.Error()})
@@ -259,7 +259,7 @@ func (h *AdminCampaignsHandler) listTargets(ctx context.Context, segment string,
 	q := `
 		SELECT id::text, email, COALESCE(name, '')
 		FROM users
-		WHERE email_verified = $1
+		WHERE email_verified = $1 AND email_news
 		ORDER BY created_at ASC
 	`
 	args := []any{segment == "verified"}

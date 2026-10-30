@@ -15,10 +15,13 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"html"
 	"html/template"
 	"math"
 	"net/http"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -36,8 +39,6 @@ type CampaignVariant string
 const (
 	CampaignReengagementVerified   CampaignVariant = "reengagement_verified"
 	CampaignReengagementUnverified CampaignVariant = "reengagement_unverified"
-	CampaignMonthlyRecapFR         CampaignVariant = "monthly_recap_fr"
-	CampaignMonthlyRecapEN         CampaignVariant = "monthly_recap_en"
 	// What's new + apology after the 2026 outage (one-off announcement).
 	CampaignWhatsNew202610 CampaignVariant = "whatsnew_2026_10"
 )
@@ -45,8 +46,6 @@ const (
 var campaignTemplateFiles = map[CampaignVariant]string{
 	CampaignReengagementVerified:   "campaign_templates/reengagement_founder.html",
 	CampaignReengagementUnverified: "campaign_templates/reengagement_unverified.html",
-	CampaignMonthlyRecapFR:         "campaign_templates/monthly_recap_fr.html",
-	CampaignMonthlyRecapEN:         "campaign_templates/monthly_recap_en.html",
 	CampaignWhatsNew202610:         "campaign_templates/whatsnew_2026_10.html",
 }
 
@@ -54,16 +53,6 @@ var campaignSubjects = map[CampaignVariant]string{
 	CampaignReengagementVerified:   "Budget Famille : navigation repensée 👋",
 	CampaignReengagementUnverified: "Votre compte Budget Famille est encore en attente",
 	CampaignWhatsNew202610:         "On vous doit des excuses (et quelques belles surprises)",
-}
-
-// monthlyRecapSubject returns a subject line tailored to the locale and the
-// month being reviewed (the month that just ended), so the inbox shows the
-// right month rather than a generic "Monthly recap" string.
-func monthlyRecapSubject(locale, monthLabel, budgetName string) string {
-	if locale == "fr" {
-		return fmt.Sprintf("Votre bilan %s · %s", deMonth(monthLabel), budgetName)
-	}
-	return fmt.Sprintf("Your %s review · %s", monthLabel, budgetName)
 }
 
 // ============================================================================
@@ -122,7 +111,7 @@ func formatMoney(amount float64, symbol string) string {
 	}
 	integer := int64(amount + 0.5)
 	rendered := groupedThousands(integer)
-	if negative {
+	if negative && integer > 0 {
 		return "−" + rendered + " " + symbol
 	}
 	return rendered + " " + symbol
@@ -193,37 +182,34 @@ func pctOf(part, totalA, totalB float64) int {
 	return v
 }
 
-// RenderMonthlyRecapEmail renders the locale-appropriate monthly recap
-// template. `data` should be a *services.RecapData (or any struct exposing the
-// same exported fields the template references). We accept `interface{}` to
-// avoid importing the services package from utils.
-//
-// `locale` should be "fr" or "en"; anything else falls back to English.
-func RenderMonthlyRecapEmail(locale, monthLabel, budgetName string, data interface{}) (subject string, html string, err error) {
-	variant := CampaignMonthlyRecapEN
-	if locale == "fr" {
-		variant = CampaignMonthlyRecapFR
-	}
+// monthlyRecapTemplate is the recap of every language (words: recap_text.go).
+const monthlyRecapTemplate = "campaign_templates/monthly_recap.html"
 
-	file, ok := campaignTemplateFiles[variant]
-	if !ok {
-		return "", "", fmt.Errorf("unknown monthly recap variant: %q", variant)
+// RenderMonthlyRecapEmail renders the monthly recap in `locale` ("fr", or
+// English for anything else). `data` should be a *services.RecapData (or any
+// struct exposing the same exported fields the template references). We
+// accept `interface{}` to avoid importing the services package from utils.
+// `monthLabel` is the month the recap prepares ("Novembre"), for the subject.
+func RenderMonthlyRecapEmail(locale, monthLabel, budgetName string, data interface{}) (subject string, html string, err error) {
+	if locale != LocaleFR {
+		locale = LocaleEN
 	}
-	raw, err := campaignTemplates.ReadFile(file)
+	raw, err := campaignTemplates.ReadFile(monthlyRecapTemplate)
 	if err != nil {
-		return "", "", fmt.Errorf("read template %s: %w", file, err)
+		return "", "", fmt.Errorf("read template %s: %w", monthlyRecapTemplate, err)
 	}
-	tmpl, err := template.New(string(variant)).Funcs(monthlyRecapFuncs()).Parse(string(raw))
+	funcs := recapFuncs(locale)
+	tmpl, err := template.New("monthly_recap").Funcs(funcs).Parse(string(raw))
 	if err != nil {
-		return "", "", fmt.Errorf("parse template %s: %w", file, err)
+		return "", "", fmt.Errorf("parse template %s: %w", monthlyRecapTemplate, err)
 	}
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", "", fmt.Errorf("execute template %s: %w", file, err)
+		return "", "", fmt.Errorf("execute template %s: %w", monthlyRecapTemplate, err)
 	}
-
-	return monthlyRecapSubject(locale, monthLabel, budgetName), buf.String(), nil
+	subject, err = recapT(locale, "subject", funcs["deM"].(func(string) string)(monthLabel), budgetName)
+	return subject, buf.String(), err
 }
 
 // ============================================================================
@@ -247,14 +233,32 @@ type campaignEmailResponse struct {
 	ID string `json:"id"`
 }
 
+// CampaignMessage is one campaign email.
+type CampaignMessage struct {
+	To, Subject, HTML string
+	// Unsubscribe, when set, gives mail clients the one-click unsubscribe
+	// Gmail and Yahoo expect from bulk mail (RFC 8058); without it, replying
+	// "STOP" is the only way out.
+	Unsubscribe *UnsubscribeLinks
+	// Ref is unique per email: Gmail then never folds monthly emails with the
+	// same subject into one conversation (X-Entity-Ref-ID).
+	Ref string
+}
+
 // SendCampaignEmail dispatches a single campaign email via Resend.
+func SendCampaignEmail(toEmail, subject, htmlBody string) (msgID string, err error) {
+	return SendCampaign(CampaignMessage{To: toEmail, Subject: subject, HTML: htmlBody})
+}
+
+// SendCampaign dispatches a campaign email via Resend, with its text part and
+// list headers.
 //
 // FROM and Reply-To are read from env vars dedicated to campaigns so they
 // don't collide with the existing FROM_EMAIL used for transactional flows:
 //
 //	CAMPAIGN_FROM_EMAIL  default: "Libasse — Budget Famille <libasse@budgetfamille.com>"
 //	CAMPAIGN_REPLY_TO    default: "lovation.pro@gmail.com"
-func SendCampaignEmail(toEmail, subject, htmlBody string) (msgID string, err error) {
+func SendCampaign(msg CampaignMessage) (msgID string, err error) {
 	apiKey := os.Getenv("RESEND_API_KEY")
 	if apiKey == "" {
 		return "", fmt.Errorf("RESEND_API_KEY not set")
@@ -271,39 +275,76 @@ func SendCampaignEmail(toEmail, subject, htmlBody string) (msgID string, err err
 
 	body, err := json.Marshal(campaignEmailRequest{
 		From:    from,
-		To:      []string{toEmail},
-		Subject: subject,
-		HTML:    htmlBody,
-		Text:    htmlToPlainText(htmlBody),
+		To:      []string{msg.To},
+		Subject: msg.Subject,
+		HTML:    msg.HTML,
+		Text:    htmlToPlainText(msg.HTML),
 		ReplyTo: replyTo,
-		Headers: map[string]string{"List-Unsubscribe": "<mailto:" + mailboxAddress(replyTo) + "?subject=STOP>"},
+		Headers: campaignHeaders(msg, mailboxAddress(replyTo)),
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost,
-		"https://api.resend.com/emails", bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
+	return postToResend(apiKey, body)
+}
 
+// resendURL is Resend's send endpoint (a test server stands in for it).
+var resendURL = "https://api.resend.com/emails"
+
+// resendRetryDelays: waits before each new try when Resend asks to slow down
+// (429, beyond its requests-per-second limit) or fails on its side (5xx).
+var resendRetryDelays = []time.Duration{time.Second, 3 * time.Second, 8 * time.Second}
+
+// postToResend sends one email, trying again when Resend says to slow down
+// (honouring Retry-After) or answers with a server error, so a campaign never
+// loses emails to the rate limit.
+func postToResend(apiKey string, body []byte) (string, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("http: %w", err)
-	}
-	defer resp.Body.Close()
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequest(http.MethodPost, resendURL, bytes.NewReader(body))
+		if err != nil {
+			return "", fmt.Errorf("build request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("Content-Type", "application/json")
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("resend status %d", resp.StatusCode)
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("http: %w", err)
+		}
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+			var parsed campaignEmailResponse
+			_ = json.NewDecoder(resp.Body).Decode(&parsed)
+			resp.Body.Close()
+			return parsed.ID, nil
+		}
+		resp.Body.Close()
+		retryable := resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
+		if !retryable || attempt >= len(resendRetryDelays) {
+			return "", fmt.Errorf("resend status %d", resp.StatusCode)
+		}
+		wait := resendRetryDelays[attempt]
+		if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s > 0 && s <= 60 {
+			wait = time.Duration(s) * time.Second
+		}
+		time.Sleep(wait)
 	}
+}
 
-	var parsed campaignEmailResponse
-	_ = json.NewDecoder(resp.Body).Decode(&parsed)
-	return parsed.ID, nil
+// campaignHeaders: the unsubscribe headers (one-click https first, the reply
+// mailbox as a fallback) and the message reference.
+func campaignHeaders(msg CampaignMessage, mailbox string) map[string]string {
+	mailto := "<mailto:" + mailbox + "?subject=STOP>"
+	h := map[string]string{"List-Unsubscribe": mailto}
+	if msg.Unsubscribe != nil && msg.Unsubscribe.OneClick != "" {
+		h["List-Unsubscribe"] = "<" + msg.Unsubscribe.OneClick + ">, " + mailto
+		h["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+	}
+	if msg.Ref != "" {
+		h["X-Entity-Ref-ID"] = msg.Ref
+	}
+	return h
 }
 
 // mailboxAddress extracts "a@b.c" from "Name <a@b.c>" (or returns it as is).
@@ -320,49 +361,49 @@ func mailboxAddress(s string) string {
 // PLAINTEXT FALLBACK
 // ============================================================================
 
-// htmlToPlainText produces a basic text/plain alternative from the HTML body.
-// Helps spam scores on emails sent without an explicit text part.
-func htmlToPlainText(html string) string {
-	repl := strings.NewReplacer(
-		"<br>", "\n", "<br/>", "\n", "<br />", "\n",
-		"</p>", "\n\n", "</div>", "\n", "</tr>", "\n",
-		"</li>", "\n", "</h1>", "\n\n", "</h2>", "\n\n", "</h3>", "\n\n",
-	)
-	s := repl.Replace(html)
+var (
+	reDropBlocks = regexp.MustCompile(`(?is)<!--.*?-->|<head\b.*?</head>|<style\b.*?</style>|<script\b.*?</script>|<title\b.*?</title>`)
+	// The inbox preview line: shown by the inbox, not part of the message.
+	reHidden   = regexp.MustCompile(`(?is)<div[^>]*display:\s*none[^>]*>.*?</div>`)
+	reLink     = regexp.MustCompile(`(?is)<a\b[^>]*\bhref="([^"]*)"[^>]*>(.*?)</a>`)
+	reBreak    = regexp.MustCompile(`(?i)<br\s*/?>`)
+	reBlockEnd = regexp.MustCompile(`(?i)</(p|div|tr|li|h[1-6]|table)>`)
+	reCellEnd  = regexp.MustCompile(`(?i)</td>`)
+	reTag      = regexp.MustCompile(`(?s)<[^>]*>`)
+	reSpaces   = regexp.MustCompile(`[ \t\x{00a0}\x{202f}]+`)
+	invisibles = strings.NewReplacer("\u034f", "", "\u200b", "", "\u200c", "", "\u200d", "", "\ufeff", "", "\u00ad", "")
+)
 
-	// Strip remaining tags.
-	var out strings.Builder
-	in := false
-	for _, r := range s {
-		switch {
-		case r == '<':
-			in = true
-		case r == '>':
-			in = false
-		case !in:
-			out.WriteRune(r)
+// htmlToPlainText produces the text/plain alternative of an HTML email: the
+// words in reading order, links spelled out, no styles nor hidden preview.
+// A clean text part matching the HTML is part of what spam filters weigh.
+func htmlToPlainText(htmlBody string) string {
+	s := reDropBlocks.ReplaceAllString(htmlBody, "")
+	s = reHidden.ReplaceAllString(s, "")
+	s = reLink.ReplaceAllStringFunc(s, func(m string) string {
+		parts := reLink.FindStringSubmatch(m)
+		href := html.UnescapeString(parts[1])
+		label := strings.TrimSpace(reSpaces.ReplaceAllString(html.UnescapeString(reTag.ReplaceAllString(parts[2], "")), " "))
+		if !strings.HasPrefix(href, "http") || label == "" || label == href {
+			return label + " " + href
 		}
-	}
+		return label + " : " + href
+	})
+	s = reBreak.ReplaceAllString(s, "\n")
+	s = reBlockEnd.ReplaceAllString(s, "\n")
+	s = reCellEnd.ReplaceAllString(s, " ")
+	s = reTag.ReplaceAllString(s, "")
+	s = invisibles.Replace(html.UnescapeString(s))
 
-	decoded := strings.NewReplacer(
-		"&nbsp;", " ",
-		"&amp;", "&",
-		"&lt;", "<",
-		"&gt;", ">",
-		"&quot;", `"`,
-		"&#39;", "'",
-		"&hellip;", "…",
-	).Replace(out.String())
-
-	// Collapse multi-blank lines.
-	lines := strings.Split(decoded, "\n")
+	// One space between words, at most one blank line between blocks.
+	lines := strings.Split(s, "\n")
 	cleaned := make([]string, 0, len(lines))
 	blanks := 0
 	for _, l := range lines {
-		l = strings.TrimSpace(l)
+		l = strings.TrimSpace(reSpaces.ReplaceAllString(l, " "))
 		if l == "" {
 			blanks++
-			if blanks <= 1 {
+			if blanks == 1 && len(cleaned) > 0 {
 				cleaned = append(cleaned, "")
 			}
 			continue
@@ -393,3 +434,6 @@ func MaskEmailForLog(e string) string {
 	}
 	return e[:2] + strings.Repeat("*", at-2) + e[at:]
 }
+
+// PlainTextOf is the text/plain part sent with an HTML email.
+func PlainTextOf(htmlBody string) string { return htmlToPlainText(htmlBody) }

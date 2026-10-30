@@ -2,7 +2,8 @@
 //   npx esbuild services/testdata/v3_parity.gen.ts --bundle --platform=node --format=esm \
 //     --alias:@=<budget-ui>/src --outfile=/tmp/gen.mjs && TZ=Europe/Paris node /tmp/gen.mjs v3_parity.json 15
 // Random v3 budgets go through the real UI codec (decode → auto-close → encode),
-// and the UI engine month totals are recorded next to the stored blob.
+// and the UI engine month totals and running balances (general savings, each
+// savings pot) are recorded next to the stored blob.
 import { decodeBudget, autoCloseMonths, encodeBudget } from '@/lib/budget/codec';
 import { BudgetEngine } from '@/lib/budget/engine';
 import { writeFileSync } from 'node:fs';
@@ -73,7 +74,8 @@ for (let n = 0; n < Number(process.argv[3] ?? 15); n++) {
   const months: Record<string, any> = {};
   for (const y of [2025, 2026, 2027]) for (let m = 1; m <= 12; m++) {
     const t = engine.month(ym(y, m)).totals;
-    months[ym(y, m)] = { contributions: t.contributions, oneOff: t.oneOff, charges: t.charges, savings: t.savings };
+    const pots = Object.fromEntries(model.projects.filter((p) => p.id !== 'epargne').map((p) => [p.id, engine.savingBalance(p.id, ym(y, m))]));
+    months[ym(y, m)] = { contributions: t.contributions, oneOff: t.oneOff, charges: t.charges, savings: t.savings, general: engine.generalBalance(ym(y, m)), pots };
   }
   out.push({ blob, months });
 }

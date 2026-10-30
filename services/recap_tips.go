@@ -17,7 +17,7 @@ type tipText struct {
 var recapTipsFR = []tipText{
 	{"🧾", "Les charges perso", "Un impôt, un envoi d'argent à la famille ? Ajoutez-le en charge perso : il se déduit de votre argent de poche, jamais du pot commun. En privé, son nom n'est visible que par vous.", "Ajouter une charge perso", "/dashboard"},
 	{"🎯", "Un objectif, une date", "Indiquez combien il vous faut et pour quand : Budget Famille calcule le montant à mettre de côté chaque mois et vérifie qu'il est tenable.", "Créer une cagnotte", "/dashboard"},
-	{"⚖️", "Une répartition juste", "50/50, au prorata des salaires ou même argent de poche : l'assistant « Répartir le pot commun » calcule la part de chacun sur le mois réel.", "Répartir le pot commun", "/dashboard"},
+	{"⚖️", "Une répartition qui suit vos charges", "50/50, au prorata des salaires ou même argent de poche : appliquez une méthode une fois dans Foyer, et la part de chacun se recalcule toute seule dès qu'une charge, une épargne ou un salaire change.", "Répartir le pot commun", "/dashboard"},
 	{"🤖", "Le Budget IA", "Décrivez votre foyer et vos objectifs : l'IA propose une répartition et un plan d'épargne. Rien ne change tant que vous ne validez pas.", "Essayer le Budget IA", "/dashboard"},
 	{"🌙", "Le mode sombre", "Plus doux le soir, plus lisible au soleil : choisissez clair, sombre ou automatique depuis le menu de votre compte.", "Ouvrir Budget Famille", "/dashboard"},
 	{"↩️", "Le droit à l'erreur", "Chaque modification s'enregistre en une seconde, et le bouton « Annuler » la défait aussi vite. Les mois clôturés, eux, ne bougent plus.", "Ouvrir mon budget", "/dashboard"},
@@ -26,7 +26,7 @@ var recapTipsFR = []tipText{
 var recapTipsEN = []tipText{
 	{"🧾", "Personal charges", "A tax or money sent to family? Add it as a personal charge: it comes out of your spending money, never out of the shared pot. Set it private and only you can see its name.", "Add a personal charge", "/dashboard"},
 	{"🎯", "A goal, a date", "Say how much you need and by when: Budget Famille works out the monthly amount and checks it fits your budget.", "Create a savings pot", "/dashboard"},
-	{"⚖️", "A fair split", "50/50, in proportion to salaries or equal spending money: the split assistant works out everyone's share on the real month.", "Split the pot", "/dashboard"},
+	{"⚖️", "A split that follows your bills", "50/50, in proportion to pay or equal spending money: apply a method once in Household, and everyone's share is worked out again whenever a bill, a saving or a pay changes.", "Split the pot", "/dashboard"},
 	{"🤖", "AI Budget", "Describe your household and goals: the AI suggests a split and a savings plan. Nothing changes until you approve it.", "Try AI Budget", "/dashboard"},
 	{"🌙", "Dark mode", "Easier on the eyes at night: pick light, dark or automatic from your account menu.", "Open Budget Famille", "/dashboard"},
 	{"↩️", "Undo anything", "Every change is saved in a second, and « Undo » reverts it just as fast. Closed months never move.", "Open my budget", "/dashboard"},
