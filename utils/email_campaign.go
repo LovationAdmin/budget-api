@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -285,28 +286,50 @@ func SendCampaign(msg CampaignMessage) (msgID string, err error) {
 		return "", fmt.Errorf("marshal: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost,
-		"https://api.resend.com/emails", bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
+	return postToResend(apiKey, body)
+}
 
+// resendURL is Resend's send endpoint (a test server stands in for it).
+var resendURL = "https://api.resend.com/emails"
+
+// resendRetryDelays: waits before each new try when Resend asks to slow down
+// (429, beyond its requests-per-second limit) or fails on its side (5xx).
+var resendRetryDelays = []time.Duration{time.Second, 3 * time.Second, 8 * time.Second}
+
+// postToResend sends one email, trying again when Resend says to slow down
+// (honouring Retry-After) or answers with a server error, so a campaign never
+// loses emails to the rate limit.
+func postToResend(apiKey string, body []byte) (string, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("http: %w", err)
-	}
-	defer resp.Body.Close()
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequest(http.MethodPost, resendURL, bytes.NewReader(body))
+		if err != nil {
+			return "", fmt.Errorf("build request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("Content-Type", "application/json")
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("resend status %d", resp.StatusCode)
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("http: %w", err)
+		}
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+			var parsed campaignEmailResponse
+			_ = json.NewDecoder(resp.Body).Decode(&parsed)
+			resp.Body.Close()
+			return parsed.ID, nil
+		}
+		resp.Body.Close()
+		retryable := resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
+		if !retryable || attempt >= len(resendRetryDelays) {
+			return "", fmt.Errorf("resend status %d", resp.StatusCode)
+		}
+		wait := resendRetryDelays[attempt]
+		if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s > 0 && s <= 60 {
+			wait = time.Duration(s) * time.Second
+		}
+		time.Sleep(wait)
 	}
-
-	var parsed campaignEmailResponse
-	_ = json.NewDecoder(resp.Body).Decode(&parsed)
-	return parsed.ID, nil
 }
 
 // campaignHeaders: the unsubscribe headers (one-click https first, the reply

@@ -1,10 +1,14 @@
 package utils
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestFormatMoney(t *testing.T) {
@@ -165,5 +169,41 @@ func TestRecapTextBothLanguages(t *testing.T) {
 		if _, ok := recapText[LocaleFR][key]; !ok {
 			t.Errorf("%q missing in French", key)
 		}
+	}
+}
+
+// Resend's rate limit (429) or a hiccup on its side (5xx) never loses an
+// email: the send waits and tries again; other errors fail at once.
+func TestPostToResend_RetriesWhenThrottled(t *testing.T) {
+	var calls atomic.Int32
+	statuses := []int{http.StatusTooManyRequests, http.StatusBadGateway, http.StatusOK}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := calls.Add(1)
+		if r.Header.Get("Authorization") != "Bearer k" {
+			t.Errorf("missing API key")
+		}
+		code := statuses[int(n)-1]
+		if code == http.StatusTooManyRequests {
+			w.Header().Set("Retry-After", "1")
+		}
+		w.WriteHeader(code)
+		if code == http.StatusOK {
+			w.Write([]byte(`{"id":"msg_1"}`))
+		}
+	}))
+	defer srv.Close()
+	oldURL, oldDelays := resendURL, resendRetryDelays
+	resendURL, resendRetryDelays = srv.URL, []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
+	defer func() { resendURL, resendRetryDelays = oldURL, oldDelays }()
+
+	id, err := postToResend("k", []byte(`{}`))
+	if err != nil || id != "msg_1" || calls.Load() != 3 {
+		t.Fatalf("id=%q err=%v calls=%d", id, err, calls.Load())
+	}
+
+	calls.Store(0)
+	statuses = []int{http.StatusUnprocessableEntity}
+	if _, err := postToResend("k", []byte(`{}`)); err == nil || calls.Load() != 1 {
+		t.Errorf("a refused email is not retried: err=%v calls=%d", err, calls.Load())
 	}
 }
