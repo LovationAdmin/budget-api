@@ -28,7 +28,10 @@ type GrowthStats struct {
 }
 
 // FunnelStats counts users at each step, from signup to collaboration.
-// "Active" means one of their budgets was opened or changed in 30 days.
+// "Active" means the person has a budget and opened the app in the period —
+// a session issued or renewed then (access tokens last 15 minutes, so any
+// visit renews it). Counted per person: a shared budget opened by one member
+// doesn't make the others active.
 type FunnelStats struct {
 	SignedUp      int `json:"signed_up"`
 	Verified      int `json:"verified"`
@@ -58,13 +61,6 @@ type CampaignStat struct {
 	LastAt string `json:"last_at"`
 }
 
-const activeBudgetUsersSQL = `
-	SELECT COUNT(DISTINCT m.user_id)
-	FROM budget_members m
-	JOIN budgets b ON b.id = m.budget_id
-	LEFT JOIN budget_data d ON d.budget_id = b.id
-	WHERE b.last_viewed_at > NOW() - $1::interval OR d.updated_at > NOW() - $1::interval`
-
 func (h *AdminStatsHandler) growth(ctx context.Context) (GrowthStats, error) {
 	var g GrowthStats
 	q := h.DB.QueryRowContext(ctx, `
@@ -76,23 +72,21 @@ func (h *AdminStatsHandler) growth(ctx context.Context) (GrowthStats, error) {
 					SELECT 1 FROM budget_members m
 					WHERE m.user_id = u.id
 					  AND (SELECT COUNT(*) FROM budget_members x WHERE x.budget_id = m.budget_id) >= 2
-				) AS collaborating
+				) AS collaborating,
+				(SELECT MAX(t.issued_at) FROM refresh_tokens t WHERE t.user_id = u.id) AS seen_at
 			FROM users u
 		)
 		SELECT COUNT(*),
 			COUNT(*) FILTER (WHERE email_verified),
 			COUNT(*) FILTER (WHERE has_budget),
 			COUNT(*) FILTER (WHERE collaborating),
-			COUNT(*) FILTER (WHERE NOT email_verified AND created_at < NOW() - INTERVAL '7 days')
+			COUNT(*) FILTER (WHERE NOT email_verified AND created_at < NOW() - INTERVAL '7 days'),
+			COUNT(*) FILTER (WHERE has_budget AND seen_at > NOW() - INTERVAL '30 days'),
+			COUNT(*) FILTER (WHERE has_budget AND seen_at > NOW() - INTERVAL '7 days')
 		FROM u`)
-	if err := q.Scan(&g.Funnel.SignedUp, &g.Funnel.Verified, &g.Funnel.WithBudget, &g.Funnel.Collaborating, &g.UnverifiedOver7Days); err != nil {
+	if err := q.Scan(&g.Funnel.SignedUp, &g.Funnel.Verified, &g.Funnel.WithBudget, &g.Funnel.Collaborating,
+		&g.UnverifiedOver7Days, &g.ActiveUsers30Days, &g.ActiveUsers7Days); err != nil {
 		return g, errors.Wrap(err, "funnel")
-	}
-	if err := h.DB.QueryRowContext(ctx, activeBudgetUsersSQL, "30 days").Scan(&g.ActiveUsers30Days); err != nil {
-		return g, errors.Wrap(err, "active 30 days")
-	}
-	if err := h.DB.QueryRowContext(ctx, activeBudgetUsersSQL, "7 days").Scan(&g.ActiveUsers7Days); err != nil {
-		return g, errors.Wrap(err, "active 7 days")
 	}
 	g.Funnel.Active30Days = g.ActiveUsers30Days
 
