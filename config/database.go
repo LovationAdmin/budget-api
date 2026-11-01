@@ -465,6 +465,18 @@ func RunMigrations(db *sql.DB) error {
 		// for a few hours (#27) is gone, its unique index with it.
 		`ALTER TABLE budget_members DROP COLUMN IF EXISTS person_id`,
 
+		// Acquisition: anonymous counts of free-template downloads and of
+		// signups, by the search engine or site the visitor first came from.
+		// No account, IP or identifier: a source, a file or landing page, a date.
+		`CREATE TABLE IF NOT EXISTS acquisition_events (
+			id BIGSERIAL PRIMARY KEY,
+			kind VARCHAR(16) NOT NULL,
+			source VARCHAR(24) NOT NULL,
+			detail VARCHAR(120) NOT NULL DEFAULT '',
+			created_at TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_acquisition_events_created ON acquisition_events (created_at)`,
+
 		// ============================================================================
 		// ✅ MIGRATION DES DONNÉES EXISTANTES
 		// ============================================================================
