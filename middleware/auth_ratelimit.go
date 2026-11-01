@@ -120,6 +120,17 @@ func EmailLinkRateLimit() gin.HandlerFunc {
 	})
 }
 
+// TrackRateLimit bounds the anonymous download counter: 30 / hour per IP is
+// far above anyone downloading templates, and keeps a script from inflating it.
+func TrackRateLimit() gin.HandlerFunc {
+	return NewLimiter(LimiterConfig{
+		Name:    "track",
+		Limit:   30,
+		Window:  1 * time.Hour,
+		KeyFunc: KeyByIP,
+	})
+}
+
 // PublicAIRateLimit protège le simulateur IA public (sans compte) : chaque
 // analyse peut déclencher un appel IA payant. 15 / heure par visiteur (IP
 // réelle, voir ConfigureClientIP), et un plafond global de 150 / heure qui

@@ -32,6 +32,13 @@ func SetupAuthRoutes(rg *gin.RouterGroup, db *sql.DB, rt *services.RefreshTokenS
 	rg.POST("/auth/reset-password", middleware.ResetPasswordRateLimit(), authHandler.ResetPassword)
 }
 
+// SetupTrackingRoutes: the anonymous count of free-template downloads, by the
+// source of the visitor's first visit (handlers/acquisition.go).
+func SetupTrackingRoutes(rg *gin.RouterGroup, db *sql.DB) {
+	h := &handlers.AcquisitionHandler{DB: db}
+	rg.POST("/track/download", middleware.TrackRateLimit(), h.TrackDownload)
+}
+
 // SetupEmailRoutes: leaving (or coming back to) an email list from the link
 // of an email, signed by its token — no account session needed.
 func SetupEmailRoutes(rg *gin.RouterGroup, db *sql.DB) {

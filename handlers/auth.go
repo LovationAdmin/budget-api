@@ -66,6 +66,9 @@ type SignupRequest struct {
 	Name     string `json:"name" binding:"required,min=2,max=100"`
 	// Locale of the new account; the request's language when absent.
 	Locale string `json:"locale"`
+	// Where the visitor first came from, counted anonymously (acquisition.go):
+	// never stored with the account.
+	Acquisition *AcquisitionTouch `json:"acquisition"`
 }
 
 func (h *AuthHandler) Signup(c *gin.Context) {
@@ -112,6 +115,10 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 		utils.SafeError("Failed to insert user: %v", err)
 		c.JSON(http.StatusInternalServerError, authError("server_error", tr(c, "La création du compte a échoué. Réessayez dans un instant.", "Account creation failed. Try again in a moment.")))
 		return
+	}
+
+	if req.Acquisition != nil {
+		recordAcquisition(c.Request.Context(), h.DB, "signup", req.Acquisition.Source, normalizeLanding(req.Acquisition.Landing))
 	}
 
 	verificationToken := uuid.New().String()

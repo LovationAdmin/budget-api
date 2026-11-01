@@ -18,13 +18,38 @@ import (
 
 // GrowthStats answers "are we growing, and where do people drop off?".
 type GrowthStats struct {
-	Funnel              FunnelStats     `json:"funnel"`
-	Weekly              []WeekPoint     `json:"weekly"`
-	ActiveUsers7Days    int             `json:"active_users_7_days"`
-	ActiveUsers30Days   int             `json:"active_users_30_days"`
-	UnverifiedOver7Days int             `json:"unverified_over_7_days"`
-	Locations           []LocationCount `json:"locations"`
-	Campaigns           []CampaignStat  `json:"campaigns"`
+	Funnel              FunnelStats      `json:"funnel"`
+	Weekly              []WeekPoint      `json:"weekly"`
+	ActiveUsers7Days    int              `json:"active_users_7_days"`
+	ActiveUsers30Days   int              `json:"active_users_30_days"`
+	UnverifiedOver7Days int              `json:"unverified_over_7_days"`
+	Locations           []LocationCount  `json:"locations"`
+	Campaigns           []CampaignStat   `json:"campaigns"`
+	Acquisition         AcquisitionStats `json:"acquisition"`
+}
+
+// AcquisitionStats: over the last 90 days, what each source (search engine,
+// AI assistant, social network…) brought, from anonymous events
+// (acquisition.go). Since is the first event's day ("" before any).
+type AcquisitionStats struct {
+	Since    string           `json:"since"`
+	Sources  []AcquisitionRow `json:"sources"`
+	Landings []LandingRow     `json:"landings"`
+}
+
+// AcquisitionRow is one source: template downloads (PDF, Excel) and signups.
+type AcquisitionRow struct {
+	Source         string `json:"source"`
+	Downloads      int    `json:"downloads"`
+	DownloadsPDF   int    `json:"downloads_pdf"`
+	DownloadsExcel int    `json:"downloads_excel"`
+	Signups        int    `json:"signups"`
+}
+
+// LandingRow is the first page seen by people who then signed up.
+type LandingRow struct {
+	Page    string `json:"page"`
+	Signups int    `json:"signups"`
 }
 
 // FunnelStats counts users at each step, from signup to collaboration.
@@ -125,7 +150,44 @@ func (h *AdminStatsHandler) growth(ctx context.Context) (GrowthStats, error) {
 	if err := json.Unmarshal(campaigns, &g.Campaigns); err != nil {
 		return g, errors.Wrap(err, "campaigns json")
 	}
+	acquisition, err := h.acquisition(ctx)
+	if err != nil {
+		return g, err
+	}
+	g.Acquisition = acquisition
 	return g, nil
+}
+
+func (h *AdminStatsHandler) acquisition(ctx context.Context) (AcquisitionStats, error) {
+	a := AcquisitionStats{Sources: []AcquisitionRow{}, Landings: []LandingRow{}}
+	var sources, landings []byte
+	if err := h.DB.QueryRowContext(ctx, `
+		WITH e AS (SELECT * FROM acquisition_events WHERE created_at > NOW() - INTERVAL '90 days')
+		SELECT
+			COALESCE((SELECT to_char(MIN(created_at), 'YYYY-MM-DD') FROM acquisition_events), ''),
+			COALESCE((SELECT json_agg(t ORDER BY t.signups DESC, t.downloads DESC, t.source) FROM (
+				SELECT source,
+					COUNT(*) FILTER (WHERE kind = 'download') AS downloads,
+					COUNT(*) FILTER (WHERE kind = 'download' AND detail LIKE '%.pdf') AS downloads_pdf,
+					COUNT(*) FILTER (WHERE kind = 'download' AND detail LIKE '%.xlsx') AS downloads_excel,
+					COUNT(*) FILTER (WHERE kind = 'signup') AS signups
+				FROM e GROUP BY source
+			) t), '[]'),
+			COALESCE((SELECT json_agg(t ORDER BY t.signups DESC, t.page) FROM (
+				SELECT detail AS page, COUNT(*) AS signups
+				FROM e WHERE kind = 'signup' AND detail <> ''
+				GROUP BY detail ORDER BY COUNT(*) DESC, detail LIMIT 6
+			) t), '[]')
+	`).Scan(&a.Since, &sources, &landings); err != nil {
+		return a, errors.Wrap(err, "acquisition")
+	}
+	if err := json.Unmarshal(sources, &a.Sources); err != nil {
+		return a, errors.Wrap(err, "acquisition sources json")
+	}
+	if err := json.Unmarshal(landings, &a.Landings); err != nil {
+		return a, errors.Wrap(err, "acquisition landings json")
+	}
+	return a, nil
 }
 
 // attachGrowth fills resp.Growth, logging (not failing) on error.

@@ -224,6 +224,7 @@ func main() {
 		// 1. Routes Publiques (Auth, Admin)
 		routes.SetupAuthRoutes(v1, db, refreshService)
 		routes.SetupEmailRoutes(v1, db)
+		routes.SetupTrackingRoutes(v1, db)
 		routes.SetupAdminRoutes(v1, db)
 
 		// FIXED: SetupAdminSuggestionsRoutes ne prend que 2 arguments
