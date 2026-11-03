@@ -174,14 +174,64 @@ func (s *BudgetService) GetUserBudgets(ctx context.Context, userID string) ([]mo
 		if err != nil {
 			return nil, err
 		}
-
-		members, _ := s.GetMembers(ctx, budget.ID)
-		budget.Members = members
-
 		budgets = append(budgets, budget)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Members of every budget in one query, not one per budget (N+1). As
+	// before, a failure here leaves the members out rather than failing the list.
+	if members, err := s.getMembersOfUserBudgets(ctx, userID); err == nil {
+		for i := range budgets {
+			budgets[i].Members = members[budgets[i].ID]
+		}
 	}
 
 	return budgets, nil
+}
+
+// getMembersOfUserBudgets returns, per budget ID, the members of every budget
+// userID belongs to, each list ordered by joined_at like GetMembers.
+func (s *BudgetService) getMembersOfUserBudgets(ctx context.Context, userID string) (map[string][]models.BudgetMember, error) {
+	query := `
+		SELECT bm.budget_id, bm.id, bm.user_id, bm.role, bm.joined_at, u.name, u.email, COALESCE(u.avatar, '')
+		FROM budget_members bm
+		JOIN users u ON bm.user_id = u.id
+		WHERE bm.budget_id IN (SELECT budget_id FROM budget_members WHERE user_id = $1)
+		ORDER BY bm.joined_at
+	`
+	rows, err := s.db.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	byBudget := make(map[string][]models.BudgetMember)
+	for rows.Next() {
+		var budgetID, avatar string
+		var member models.BudgetMember
+		if err := rows.Scan(
+			&budgetID,
+			&member.ID,
+			&member.UserID,
+			&member.Role,
+			&member.JoinedAt,
+			&member.UserName,
+			&member.UserEmail,
+			&avatar,
+		); err != nil {
+			return nil, err
+		}
+		member.User = &models.User{
+			ID:     member.UserID,
+			Name:   member.UserName,
+			Email:  member.UserEmail,
+			Avatar: avatar,
+		}
+		byBudget[budgetID] = append(byBudget[budgetID], member)
+	}
+	return byBudget, rows.Err()
 }
 
 // Update updates a budget name

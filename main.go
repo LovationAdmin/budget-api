@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"net/http"
 	"os"
 	"time"
 
@@ -132,6 +133,10 @@ func main() {
 			"Sec-WebSocket-Key",
 			"Sec-WebSocket-Version",
 			"Sec-WebSocket-Extensions",
+			// Trace propagation from the browser (Sentry): links a slow
+			// screen to the API request that made it slow.
+			"sentry-trace",
+			"baggage",
 		},
 		ExposeHeaders: []string{
 			"Content-Length",
@@ -253,7 +258,17 @@ func main() {
 	// ============================================================================
 	utils.SafeInfo("Server starting on port %s", port)
 
-	if err := router.Run(":" + port); err != nil {
+	// ReadHeaderTimeout drops clients that never finish sending headers;
+	// IdleTimeout closes idle keep-alive connections. No Read/WriteTimeout:
+	// they would cut the AI proposal SSE stream and the WebSockets, whose
+	// handlers bound their own durations.
+	server := &http.Server{
+		Addr:              ":" + port,
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	if err := server.ListenAndServe(); err != nil {
 		utils.SafeError("Server failed to start: %v", err)
 		os.Exit(1)
 	}

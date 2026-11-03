@@ -41,6 +41,32 @@ func SentryMiddleware() gin.HandlerFunc {
 		hub.Scope().SetTag("http.path", c.FullPath()) // pattern, pas URL réelle
 		hub.Scope().SetRequest(c.Request)
 
+		// Performance : une transaction par requête, nommée par sa route
+		// (« GET /api/v1/budgets/:id »), qui prolonge la trace du navigateur
+		// (en-têtes sentry-trace/baggage). Le taux d'échantillonnage vient de
+		// SENTRY_TRACES_RATE (0 par défaut = rien n'est envoyé). Ni /health ni
+		// les WebSockets : une connexion ouverte n'est pas une requête lente.
+		if utils.IsSentryEnabled() && c.Request.URL.Path != "/health" && !c.IsWebsocket() {
+			route := c.FullPath()
+			if route == "" {
+				route = "unmatched route" // jamais l'URL brute : elle contient des IDs
+			}
+			tx := sentry.StartTransaction(
+				sentry.SetHubOnContext(c.Request.Context(), hub),
+				c.Request.Method+" "+route,
+				sentry.WithOpName("http.server"),
+				sentry.WithTransactionSource(sentry.SourceRoute),
+				sentry.ContinueFromRequest(c.Request),
+			)
+			c.Request = c.Request.WithContext(tx.Context())
+			defer func() {
+				status := c.Writer.Status()
+				tx.Status = sentry.HTTPtoSpanStatus(status)
+				tx.SetData("http.response.status_code", status)
+				tx.Finish()
+			}()
+		}
+
 		// Recovery : si la handler panique, on capture et on répond 500
 		defer func() {
 			if r := recover(); r != nil {
