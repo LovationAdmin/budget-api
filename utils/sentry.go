@@ -69,6 +69,9 @@ func InitSentry(appName, version string) func() {
 		Environment:      environment,
 		Release:          release,
 		TracesSampleRate: tracesRate,
+		// Without EnableTracing the SDK drops every transaction, whatever
+		// the rate: SENTRY_TRACES_RATE > 0 is what turns tracing on.
+		EnableTracing: tracesRate > 0,
 		// AttachStacktrace : ajoute une stack trace même quand on capture un
 		// message simple (pas qu'une erreur). Très utile pour le debug.
 		AttachStacktrace: true,

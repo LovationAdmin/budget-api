@@ -161,8 +161,8 @@ func RunMigrations(db *sql.DB) error {
 			CONSTRAINT email_campaign_sends_unique UNIQUE (campaign_id, user_id)
 		)`,
 
-		`CREATE INDEX IF NOT EXISTS idx_email_campaign_sends_campaign
-			ON email_campaign_sends (campaign_id)`,
+		// Covered by the UNIQUE (campaign_id, user_id) index: dropped (writes are cheaper).
+		dropIndexCoveredByUnique("idx_email_campaign_sends_campaign", "email_campaign_sends", "campaign_id"),
 
 		`CREATE INDEX IF NOT EXISTS idx_email_campaign_sends_status
 			ON email_campaign_sends (status)`,
@@ -334,7 +334,7 @@ func RunMigrations(db *sql.DB) error {
 		// ============================================================================
 
 		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens(token_hash)`,
+		dropIndexCoveredByUnique("idx_refresh_tokens_hash", "refresh_tokens", "token_hash"),
 		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_family ON refresh_tokens(family_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_active ON refresh_tokens(user_id) WHERE revoked_at IS NULL`,
@@ -348,7 +348,7 @@ func RunMigrations(db *sql.DB) error {
 
 		// Indexes invitations
 		`CREATE INDEX IF NOT EXISTS idx_invitations_email ON invitations(email)`,
-		`CREATE INDEX IF NOT EXISTS idx_invitations_token ON invitations(token)`,
+		dropIndexCoveredByUnique("idx_invitations_token", "invitations", "token"),
 		`CREATE INDEX IF NOT EXISTS idx_invitations_budget_id ON invitations(budget_id)`,
 
 		// Indexes audit_logs
@@ -357,7 +357,7 @@ func RunMigrations(db *sql.DB) error {
 
 		// Indexes sessions
 		`CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_sessions_refresh_token ON sessions(refresh_token)`,
+		dropIndexCoveredByUnique("idx_sessions_refresh_token", "sessions", "refresh_token"),
 
 		// Indexes email_verifications
 		// FIXED: Index name updated to match new table name
@@ -366,13 +366,13 @@ func RunMigrations(db *sql.DB) error {
 
 		// Indexes password_resets
 		// FIXED: Index name updated to match new table name
-		`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token)`,
+		dropIndexCoveredByUnique("idx_password_reset_tokens_token", "password_reset_tokens", "token"),
 		`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires_at ON password_reset_tokens(expires_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_used ON password_reset_tokens(used)`,
 
 		// Indexes users
-		`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
+		dropIndexCoveredByUnique("idx_users_email", "users", "email"),
 		`CREATE INDEX IF NOT EXISTS idx_users_country ON users(country)`,
 
 		// Indexes budgets
@@ -388,7 +388,7 @@ func RunMigrations(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_bank_accounts_connection ON bank_accounts(connection_id)`,
 
 		// Indexes label_mappings
-		`CREATE INDEX IF NOT EXISTS idx_label_mappings_label ON label_mappings(normalized_label)`,
+		dropIndexCoveredByUnique("idx_label_mappings_label", "label_mappings", "normalized_label"),
 
 		// Indexes banking_connections
 		`CREATE INDEX IF NOT EXISTS idx_banking_connections_user_budget ON banking_connections(user_id, budget_id)`,
@@ -478,6 +478,16 @@ func RunMigrations(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_acquisition_events_created ON acquisition_events (created_at)`,
 
 		// ============================================================================
+		// INDEXES FOR LOOKUPS BY USER (2026-11)
+		// ============================================================================
+		// « Ma vue perso » and the data export read private_items by user_id
+		// alone, which the (budget_id, user_id, item_id) key can't serve.
+		`CREATE INDEX IF NOT EXISTS idx_private_items_user ON private_items (user_id)`,
+		// Deleting an account (and the daily unverified cleanup) cascades
+		// here by user_id; one row per user and campaign, every month.
+		`CREATE INDEX IF NOT EXISTS idx_email_campaign_sends_user ON email_campaign_sends (user_id)`,
+
+		// ============================================================================
 		// ✅ MIGRATION DES DONNÉES EXISTANTES
 		// ============================================================================
 
@@ -522,4 +532,20 @@ func RunMigrations(db *sql.DB) error {
 	}
 
 	return nil
+}
+
+// dropIndexCoveredByUnique drops a plain index on table(column) when a UNIQUE
+// index already leads with that column: the duplicate only slows writes. On a
+// database where that unique index is missing, the plain one is kept.
+func dropIndexCoveredByUnique(index, table, column string) string {
+	return fmt.Sprintf(`DO $$ BEGIN
+		IF EXISTS (
+			SELECT 1 FROM pg_index i
+			JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = i.indkey[0]
+			WHERE i.indrelid = '%[2]s'::regclass AND a.attname = '%[3]s'
+			  AND i.indisunique AND i.indexrelid::regclass::text <> '%[1]s'
+		) THEN
+			DROP INDEX IF EXISTS %[1]s;
+		END IF;
+	END $$`, index, table, column)
 }

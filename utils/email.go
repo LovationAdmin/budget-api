@@ -501,7 +501,9 @@ func sendEmail(to, subject, htmlBody string) error {
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{}
+	// Same bound as the campaign sender (email_campaign.go): a stalled Resend
+	// call must not hold a goroutine and a connection forever.
+	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("❌ Error sending email via Resend: %v", err)
