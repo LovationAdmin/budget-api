@@ -16,7 +16,8 @@
 //   - SENTRY_DSN          : DSN du projet Sentry (obligatoire pour activer)
 //   - SENTRY_ENVIRONMENT  : "production", "staging", "development" (auto-set
 //                           depuis ENVIRONMENT si non précisé)
-//   - SENTRY_RELEASE      : tag de release pour les sourcemaps (optionnel)
+//   - SENTRY_RELEASE      : tag de release (optionnel ; défaut :
+//                           budget-api@<commit déployé> sur Render, cf. sentryRelease)
 //   - SENTRY_TRACES_RATE  : sampling rate des traces, 0.0 à 1.0 (default 0.0)
 // ============================================================================
 
@@ -40,7 +41,7 @@ var sentryEnabled bool
 //
 // Retourne une fonction de flush à appeler dans un defer pour s'assurer
 // que les events en attente sont envoyés avant l'arrêt du processus.
-func InitSentry(appName, version string) func() {
+func InitSentry(version string) func() {
 	dsn := os.Getenv("SENTRY_DSN")
 	if dsn == "" {
 		SafeInfo("Sentry: disabled (SENTRY_DSN not set)")
@@ -59,10 +60,7 @@ func InitSentry(appName, version string) func() {
 		}
 	}
 
-	release := os.Getenv("SENTRY_RELEASE")
-	if release == "" {
-		release = fmt.Sprintf("%s@%s", appName, version)
-	}
+	release := sentryRelease(version)
 
 	err := sentry.Init(sentry.ClientOptions{
 		Dsn:              dsn,
@@ -101,6 +99,20 @@ func InitSentry(appName, version string) func() {
 	return func() {
 		sentry.Flush(2 * time.Second)
 	}
+}
+
+// sentryRelease names the release each error is filed under, so Sentry can
+// tell which deploy introduced or fixed it: SENTRY_RELEASE when set, else the
+// deployed commit (Render sets RENDER_GIT_COMMIT on every deploy), else the
+// app version outside Render. Same shape as the frontend's budget-ui@<commit>.
+func sentryRelease(version string) string {
+	if r := os.Getenv("SENTRY_RELEASE"); r != "" {
+		return r
+	}
+	if commit := os.Getenv("RENDER_GIT_COMMIT"); len(commit) >= 7 {
+		return "budget-api@" + commit[:7]
+	}
+	return "budget-api@" + version
 }
 
 // IsSentryEnabled retourne si Sentry est actif. Utile pour conditionner

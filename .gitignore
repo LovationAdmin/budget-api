@@ -24,6 +24,10 @@ go.work
 .env.local
 .env.*.local
 
+# Private keys (Enable Banking key: ENABLE_BANKING_PRIVATE_KEY_BASE64 in prod,
+# a local file named by ENABLE_BANKING_PRIVATE_KEY_PATH in dev, never committed)
+*.pem
+
 # IDE files
 .idea/
 .vscode/

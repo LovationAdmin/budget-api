@@ -66,7 +66,7 @@ func main() {
 	}
 
 	// Init Sentry (no-op si SENTRY_DSN n'est pas défini)
-	flushSentry := utils.InitSentry(AppName, AppVersion)
+	flushSentry := utils.InitSentry(AppVersion)
 	defer flushSentry()
 
 	// Démarrer le nettoyage automatique du cache
