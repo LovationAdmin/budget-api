@@ -77,6 +77,7 @@ func main() {
 
 	// Annonce « nouveautés + excuses » : envoi unique après le déploiement.
 	go runWhatsNewAnnouncement(db)
+	go runInviteAnnouncement(db)
 
 	// Comptes jamais confirmés : avertis à 23 jours, supprimés 7 jours après.
 	go scheduleUnverifiedCleanup(db)
@@ -471,6 +472,60 @@ func runWhatsNewAnnouncement(db *sql.DB) {
 	res := handler.RunCampaign(ctx, whatsNewCampaignID, utils.CampaignWhatsNew202610, "verified")
 	utils.SafeInfo("whatsnew: campaign=%s total=%d sent=%d skipped=%d failed=%d duration_ms=%d",
 		whatsNewCampaignID, res.Total, res.Sent, res.Skipped, res.Failed, res.DurationMs)
+}
+
+// inviteCampaign is the one-off "share your budget" email sent to every
+// verified user who accepts news, once, right after the deploy that ships it.
+const (
+	inviteCampaignID = "invite_2026_11"
+	inviteLockKey    = 202611 // pg advisory lock: one sender across instances
+)
+
+// inviteNotBefore holds the email until the morning in France (9:30 in Paris),
+// whatever the hour of the deploy; inviteDeadline stops it from going out on
+// later restarts.
+var (
+	inviteNotBefore = time.Date(2026, 11, 13, 8, 30, 0, 0, time.UTC)
+	inviteDeadline  = time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+)
+
+// runInviteAnnouncement sends the invitation email once, with the same
+// safeguards as runWhatsNewAnnouncement: already-sent users are skipped, an
+// advisory lock keeps a single sender, and nothing is sent before
+// inviteNotBefore, after inviteDeadline or when INVITE_CAMPAIGN_DISABLED=1.
+func runInviteAnnouncement(db *sql.DB) {
+	if os.Getenv("INVITE_CAMPAIGN_DISABLED") == "1" || time.Now().After(inviteDeadline) {
+		return
+	}
+	// Let the deploy settle (health checks, the previous instance draining),
+	// and wait for the morning.
+	time.Sleep(3 * time.Minute)
+	if wait := time.Until(inviteNotBefore); wait > 0 {
+		utils.SafeInfo("invite: waiting %s before sending", wait.Round(time.Minute))
+		time.Sleep(wait)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		utils.SafeWarn("invite: no db connection: %v", err)
+		return
+	}
+	defer conn.Close()
+	var locked bool
+	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", inviteLockKey).Scan(&locked); err != nil || !locked {
+		utils.SafeInfo("invite: another instance is sending (locked=%v err=%v)", locked, err)
+		return
+	}
+	defer conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", inviteLockKey) //nolint:errcheck
+
+	handler := handlers.NewAdminCampaignsHandler(db, services.NewEmailService())
+	// Written in French: accounts set to English are left out.
+	res := handler.RunCampaignExcept(ctx, inviteCampaignID, utils.CampaignInvite202611, "verified", "en")
+	utils.SafeInfo("invite: campaign=%s total=%d sent=%d skipped=%d failed=%d duration_ms=%d",
+		inviteCampaignID, res.Total, res.Sent, res.Skipped, res.Failed, res.DurationMs)
 }
 
 // unverifiedCleanupLockKey: pg advisory lock, one runner across instances.
