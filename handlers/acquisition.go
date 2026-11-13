@@ -30,10 +30,12 @@ var acquisitionSources = map[string]bool{
 
 // templateFiles are the free templates (public/telechargements in the site).
 var templateFiles = map[string]bool{
-	"tableau-budget-familial-budgetfamille.xlsx": true,
-	"tableau-budget-familial-a-imprimer.pdf":     true,
-	"budget-template.xlsx":                       true,
-	"budget-template-printable.pdf":              true,
+	"tableau-budget-familial-budgetfamille.xlsx":    true,
+	"tableau-budget-familial-a-imprimer.pdf":        true,
+	"budget-template.xlsx":                          true,
+	"budget-template-printable.pdf":                 true,
+	"plantilla-presupuesto-familiar.xlsx":           true,
+	"plantilla-presupuesto-familiar-imprimible.pdf": true,
 }
 
 // AcquisitionTouch is the first visit's source and landing page, as the site sends it.
