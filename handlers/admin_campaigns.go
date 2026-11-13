@@ -173,6 +173,9 @@ type segmentInput struct {
 	DryRun     bool
 	SkipSent   bool
 	Limit      int
+	// ExcludeLocale leaves out the accounts set to this language ("en" for an
+	// email written in French only); empty keeps everyone.
+	ExcludeLocale string
 }
 
 type targetUser struct {
@@ -192,7 +195,7 @@ func (h *AdminCampaignsHandler) runSegment(ctx context.Context, in segmentInput)
 		DryRun:     in.DryRun,
 	}
 
-	targets, err := h.listTargets(ctx, in.Segment, in.Limit)
+	targets, err := h.listTargets(ctx, in.Segment, in.Limit, in.ExcludeLocale)
 	if err != nil {
 		utils.SafeError("admin/campaigns: list targets failed: %v", err)
 		res.Failures = append(res.Failures, failureEntry{UserID: "-", Reason: "list targets: " + err.Error()})
@@ -255,16 +258,17 @@ func (h *AdminCampaignsHandler) runSegment(ctx context.Context, in segmentInput)
 // DB QUERIES (raw SQL, matching the codebase pattern)
 // ============================================================================
 
-func (h *AdminCampaignsHandler) listTargets(ctx context.Context, segment string, limit int) ([]targetUser, error) {
+func (h *AdminCampaignsHandler) listTargets(ctx context.Context, segment string, limit int, excludeLocale string) ([]targetUser, error) {
 	q := `
 		SELECT id::text, email, COALESCE(name, '')
 		FROM users
 		WHERE email_verified = $1 AND email_news
+		  AND ($2 = '' OR COALESCE(locale, '') <> $2)
 		ORDER BY created_at ASC
 	`
-	args := []any{segment == "verified"}
+	args := []any{segment == "verified", excludeLocale}
 	if limit > 0 {
-		q += " LIMIT $2"
+		q += " LIMIT $3"
 		args = append(args, limit)
 	}
 
@@ -348,11 +352,18 @@ type CampaignRunResult struct {
 // already received it (email_campaign_sends). Used by one-off announcements
 // triggered at startup.
 func (h *AdminCampaignsHandler) RunCampaign(ctx context.Context, campaignID string, variant utils.CampaignVariant, segment string) CampaignRunResult {
+	return h.RunCampaignExcept(ctx, campaignID, variant, segment, "")
+}
+
+// RunCampaignExcept is RunCampaign without the accounts set to excludeLocale:
+// an email written in French only is not sent to accounts set to English.
+func (h *AdminCampaignsHandler) RunCampaignExcept(ctx context.Context, campaignID string, variant utils.CampaignVariant, segment, excludeLocale string) CampaignRunResult {
 	res := h.runSegment(ctx, segmentInput{
-		CampaignID: campaignID,
-		Variant:    variant,
-		Segment:    segment,
-		SkipSent:   true,
+		CampaignID:    campaignID,
+		Variant:       variant,
+		Segment:       segment,
+		SkipSent:      true,
+		ExcludeLocale: excludeLocale,
 	})
 	return CampaignRunResult{Total: res.Total, Sent: res.Sent, Skipped: res.Skipped, Failed: res.Failed, DurationMs: res.DurationMs}
 }

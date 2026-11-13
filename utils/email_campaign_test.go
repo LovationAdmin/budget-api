@@ -69,6 +69,37 @@ func TestRenderWhatsNew202610(t *testing.T) {
 	}
 }
 
+func TestRenderInvite202611(t *testing.T) {
+	t.Setenv("FRONTEND_URL", "https://budgetfamille.com")
+	subject, html, err := RenderCampaignEmail(CampaignInvite202611, "Alice", "invite_2026_11")
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+	if subject == "" {
+		t.Error("missing subject")
+	}
+	for _, w := range []string{
+		"Bonjour Alice",
+		"Inviter un membre",
+		"Foyer",
+		"https://budgetfamille.com/dashboard?utm_source=email&amp;utm_medium=campaign&amp;utm_campaign=invite_2026_11&amp;utm_content=invite",
+		"https://budgetfamille.com/tableau-budget-familial-gratuit?utm_source=email",
+		"répondez «&nbsp;STOP&nbsp;»",
+	} {
+		if !strings.Contains(html, w) {
+			t.Errorf("html missing %q", w)
+		}
+	}
+	_, html, _ = RenderCampaignEmail(CampaignInvite202611, "", "invite_2026_11")
+	if !strings.Contains(html, "Bonjour à vous") {
+		t.Error("empty name should fall back to « Bonjour à vous »")
+	}
+	if dir := os.Getenv("EMAIL_PREVIEW_DIR"); dir != "" {
+		_, html, _ = RenderCampaignEmail(CampaignInvite202611, "Camille", "invite_2026_11")
+		_ = os.WriteFile(filepath.Join(dir, "invite.html"), []byte(html), 0o644)
+	}
+}
+
 func TestMailboxAddress(t *testing.T) {
 	cases := map[string]string{
 		"lovation.pro@gmail.com":                    "lovation.pro@gmail.com",

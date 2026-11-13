@@ -41,18 +41,22 @@ const (
 	CampaignReengagementUnverified CampaignVariant = "reengagement_unverified"
 	// What's new + apology after the 2026 outage (one-off announcement).
 	CampaignWhatsNew202610 CampaignVariant = "whatsnew_2026_10"
+	// Invitation to share a budget (partner, roommate) and pass the free template on.
+	CampaignInvite202611 CampaignVariant = "invite_2026_11"
 )
 
 var campaignTemplateFiles = map[CampaignVariant]string{
 	CampaignReengagementVerified:   "campaign_templates/reengagement_founder.html",
 	CampaignReengagementUnverified: "campaign_templates/reengagement_unverified.html",
 	CampaignWhatsNew202610:         "campaign_templates/whatsnew_2026_10.html",
+	CampaignInvite202611:           "campaign_templates/invite_2026_11.html",
 }
 
 var campaignSubjects = map[CampaignVariant]string{
 	CampaignReengagementVerified:   "Budget Famille : navigation repensée 👋",
 	CampaignReengagementUnverified: "Votre compte Budget Famille est encore en attente",
 	CampaignWhatsNew202610:         "On vous doit des excuses (et quelques belles surprises)",
+	CampaignInvite202611:           "Un budget se tient mieux à plusieurs : invitez qui vous voulez",
 }
 
 // ============================================================================
